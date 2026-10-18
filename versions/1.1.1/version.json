@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.1.1",
+  "createdAt": "2026-10-18T05:44:46.875Z",
+  "node": ">=20.3",
+  "files": 49,
+  "bytes": 462941,
+  "note": "A patch that makes the \"one folder per version\" rule airtight, adds the examples folder, and fixes the four things writing those examples uncovered."
+}

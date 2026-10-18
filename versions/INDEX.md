@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 1.1.1 | 2026-10-18 05:44 | 49 | A patch that makes the "one folder per version" rule airtight, adds the examples folder, and fixes the four things writing those examples uncovered. |
 | 1.1.0 | 2026-10-18 05:01 | 41 | Built for small local models that run out of context and for endpoints that only partly implement the OpenAI API. Everything below is visible and adjustable… |
 
 Written by `npm run release` (`scripts/version.mjs`).
