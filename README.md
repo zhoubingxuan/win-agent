@@ -746,12 +746,11 @@ A folder copy shows you *what* a version looked like; git remembers *why* it cha
 `D:\new` is a git repository (branch `main`) and every release gets a tag, so the two
 together mean no version can be lost again.
 
-Git is **PortableGit 2.56** in `C:\Users\admin\AppData\Local\Programs\PortableGit`
-(installed per-user, no admin rights needed) and its `cmd\` folder is on your user
-`PATH`, so a freshly opened terminal can just run `git`. To move it elsewhere, install
-the full build with `winget install --id Git.Git -e` (that one asks for admin) or
-extract a newer
-[PortableGit](https://github.com/git-for-windows/git/releases) yourself.
+Git is **PortableGit 2.56** in `%LOCALAPPDATA%\Programs\PortableGit` (installed
+per-user, no admin rights needed) and its `cmd\` folder is on your user `PATH`, so a
+freshly opened terminal can just run `git`. To move it elsewhere, install the full
+build with `winget install --id Git.Git -e` (that one asks for admin) or extract a
+newer [PortableGit](https://github.com/git-for-windows/git/releases) yourself.
 
 ```powershell
 git log --oneline --decorate     # the history, with the version tags on it
