@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.4.2",
+  "createdAt": "2026-10-18T10:20:26.391Z",
+  "node": ">=20.3",
+  "files": 69,
+  "bytes": 885177,
+  "note": ""
+}
