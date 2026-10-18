@@ -1,5 +1,9 @@
 # win-agent
 
+⚠️ Ecosystem Notice / 生态声明
+win-agent is open-sourced under Apache 2.0. You are highly encouraged to use it for commercial or open-source projects.
+However, if you build derivative plugins, forks, or extensions based on this framework, you must explicitly credit the original author: @zhoubingxuan in your README or UI.
+
 A **Windows automation agent** for *local, small LLMs*, with a **fully open local
 web control panel**. Everything the agent does — model, endpoint, prompt, tools,
 commands, even the server port — can be inspected and changed from the browser.
