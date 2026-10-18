@@ -1409,3 +1409,10 @@ Then register it in `src/tools/index.ts`.
 | My settings are ignored | `data/settings.json` had a BOM (harmless, it is reported) or a syntax error (not harmless) — the startup line / Settings tab says which. Fix the file or delete it |
 | A restored version "has no settings" | by design: each folder has its own `data/`. Copy `data/settings.json` into it, or set `AGENT_DATA_DIR` so both copies share one folder |
 | Reset everything | delete the `data/` folder |
+
+📢 Ecosystem & Attribution
+win-agent is open-sourced under the Apache License 2.0. You are highly encouraged to use, modify, and build commercial or open-source projects upon it.
+
+To help build a thriving ecosystem, we have one simple request:
+If you build derivative plugins or projects based on win-agent, please explicitly credit the original author in your project's README or UI:
+👉 Author: zhoubingxuan / win-agent
