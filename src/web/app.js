@@ -70,6 +70,22 @@ const I18N = {
     "settings.openOnStart": "Open browser on start",
     "settings.stream": "Stream replies",
     "settings.webSearchUrl": "Web search page",
+    "settings.mode": "Agent mode — how closely the model is supervised",
+    "settings.modeHint":
+      "Guided mode is built for small local models: the prompt gets a numbered operating procedure, every tool lists its required arguments, and the model may call only one tool per step (so it cannot guess ahead). Normal mode is the plain prompt, enough for a large model.",
+    "settings.modeGuided": "guided",
+    "settings.modeNormal": "normal",
+    "settings.modeStateGuided": "now: guided — one tool per step, explicit procedure",
+    "settings.modeStateNormal": "now: normal — plain prompt, parallel tool calls allowed",
+    "settings.windows": "Windows",
+    "settings.windowsHint":
+      "What the agent is actually driving. Elevation decides whether services, the firewall and machine-wide settings can be changed at all.",
+    "settings.winShell": "PowerShell",
+    "settings.winAdmin": "administrator",
+    "settings.psEnglishErrors": "Always report PowerShell errors in English (easier for the model)",
+    "settings.adminYes": "yes",
+    "settings.adminNo": "no — service, firewall and machine-wide changes will be refused",
+    "settings.adminUnknown": "unknown",
     "settings.enabledTools": "Enabled tools",
     "settings.enabledToolsHint": "Turn a tool off with its switch to hide it from the model. All on = all enabled.",
     "settings.customCommands": "Custom commands",
@@ -266,6 +282,21 @@ const I18N = {
     "settings.openOnStart": "启动时打开浏览器",
     "settings.stream": "流式输出回复",
     "settings.webSearchUrl": "网页搜索地址",
+    "settings.mode": "智能体模式 —— 对模型的监督程度",
+    "settings.modeHint":
+      "高监督模式是给本地小模型用的：提示词里会附加一份编号操作规范，每个工具都会列出必填参数，并且模型每一步只能调用一个工具（防止它瞎猜着一次做一堆）。普通模式就是原始提示词，大模型够用。",
+    "settings.modeGuided": "高监督",
+    "settings.modeNormal": "普通",
+    "settings.modeStateGuided": "当前：高监督 —— 每步只调用一个工具，附操作规范",
+    "settings.modeStateNormal": "当前：普通 —— 原始提示词，允许一次调用多个工具",
+    "settings.windows": "Windows",
+    "settings.windowsHint": "这里是智能体实际驱动的环境。是否有管理员权限，决定了能不能改服务、防火墙和系统级设置。",
+    "settings.winShell": "PowerShell",
+    "settings.winAdmin": "管理员",
+    "settings.psEnglishErrors": "PowerShell 报错一律用英文（模型更容易看懂）",
+    "settings.adminYes": "是",
+    "settings.adminNo": "否 —— 服务、防火墙、系统级修改都会被拒绝",
+    "settings.adminUnknown": "未知",
     "settings.enabledTools": "启用的工具",
     "settings.enabledToolsHint": "关掉开关即可对模型隐藏该工具。全部打开 = 全部启用。",
     "settings.customCommands": "自定义命令",
@@ -432,6 +463,7 @@ let state = {
   context: null,
   version: "",
   mcp: null,
+  windows: null,
 };
 /** Local endpoints found by the last model refresh (LM Studio / Ollama). */
 let discovered = { endpoints: null, merged: null, sync: false };
@@ -505,6 +537,8 @@ function applyLanguage() {
   if (state.settings && state.settings.profiles) renderRuntime(state.settings);
   renderMcp();
   renderFleet();
+  renderModeState();
+  renderWindows();
 }
 
 async function setLanguage(value, persist = true) {
@@ -1517,11 +1551,32 @@ function fillSettingsForm(s) {
   el("s-stream").checked = s.stream !== false;
   el("s-remember").checked = !!s.remember;
   el("s-syncLocalModels").checked = s.syncLocalModels !== false;
+  el("s-guided").checked = (s.agentMode ?? "guided") === "guided";
+  el("s-psEnglishErrors").checked = s.psEnglishErrors !== false;
+  renderModeState();
   customTools = (s.customTools ?? []).map((c) => ({ ...c }));
   renderCustomTools();
   renderToolChecks(s.enabledTools);
   renderMcp();
   renderFleet();
+}
+
+/** What the mode switch currently means, spelled out under it. */
+function renderModeState() {
+  const guided = el("s-guided").checked;
+  setText(el("s-modeState"), t(guided ? "settings.modeStateGuided" : "settings.modeStateNormal"));
+}
+
+/** Which PowerShell is behind the tools, and whether it can change the machine. */
+function renderWindows() {
+  const info = state.windows;
+  if (!info) return;
+  const version = info.version ? ` ${info.version}${info.edition ? ` (${info.edition})` : ""}` : "";
+  setText(el("w-shell"), `${info.exe}${version}${info.found ? "" : " — NOT FOUND"}`);
+  setText(
+    el("w-admin"),
+    t(info.elevated === true ? "settings.adminYes" : info.elevated === false ? "settings.adminNo" : "settings.adminUnknown"),
+  );
 }
 
 function renderToolChecks(enabled) {
@@ -1599,6 +1654,8 @@ async function saveSettings() {
     stream: el("s-stream").checked,
     remember: el("s-remember").checked,
     syncLocalModels: el("s-syncLocalModels").checked,
+    agentMode: el("s-guided").checked ? "guided" : "normal",
+    psEnglishErrors: el("s-psEnglishErrors").checked,
     enabledTools: allChecked ? null : enabled,
     customTools,
   };
@@ -1640,9 +1697,11 @@ async function refreshState() {
   state.settings = data.settings;
   state.version = data.version ?? state.version;
   state.mcp = data.mcp ?? state.mcp;
+  state.windows = data.windows ?? state.windows;
   setText(el("version"), state.version ? `v${state.version}` : "");
   renderRuntime(data.settings);
   renderMcp();
+  renderWindows();
   renderMemory(data.settings, data.memory);
   renderUsage(data.usage);
   renderContext(data.context);
@@ -1974,6 +2033,9 @@ el("dryRun").addEventListener("change", () =>
 el("autoApprove").addEventListener("change", () =>
   api("/api/settings", "POST", { autoApprove: el("autoApprove").checked }),
 );
+
+// The mode switch explains itself immediately; "Save settings" persists it.
+el("s-guided").addEventListener("change", renderModeState);
 
 el("c-add").addEventListener("click", () => {
   const name = el("c-name").value.trim();

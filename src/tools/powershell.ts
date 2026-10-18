@@ -1,5 +1,5 @@
 import { arg, argBool, type Tool } from "./registry.js";
-import { runPowerShell } from "../util/ps.js";
+import { explainPowerShellError, runPowerShell } from "../util/ps.js";
 
 /**
  * Escape hatch: run an arbitrary PowerShell script. Only use when no structured
@@ -40,6 +40,8 @@ export const powershellTool: Tool = {
     const { code, stdout, stderr } = await runPowerShell(script);
     const output = `${stdout}${stderr}`.trim();
     const body = output || "(no output)";
-    return code === 0 ? body : `PowerShell exited with code ${code}:\n${body}`;
+    // The escape hatch is exactly where a Windows hint matters most: "access is
+    // denied" is obvious to a human and a dead end for a model.
+    return code === 0 ? body : `PowerShell exited with code ${code}:\n${explainPowerShellError(body)}`;
   },
 };

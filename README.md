@@ -10,6 +10,9 @@ translates that into correct, safely-quoted Windows commands.
 
 What that means in practice:
 
+- **Two agent modes** — `guided` (the default) supervises small local models with an
+  explicit operating procedure and one tool call per step; `normal` uses the plain
+  prompt. One slider in Settings, `/mode` in the terminal.
 - **Switchable endpoints** — flip between a local model server (LM Studio, Ollama,
   llama.cpp) and a cloud API; each keeps its own URL, key and model.
 - **Multi-model selection** — the model dropdown is filled from the endpoint's own
@@ -30,6 +33,9 @@ What that means in practice:
   another server switches the endpoint with it.
 - **Chat toolbar** — the working directory (with a folder picker), the endpoint and
   the model sit above the composer, one click each.
+- **Windows-hardened** — PowerShell 5.1 *and* 7, errors always in English, editors
+  that wrote UTF-16 files still read correctly, hung commands are killed with their
+  whole process tree, and "access denied" becomes a sentence that says what to do.
 - **Streaming replies you can stop** — answers appear token by token; hit **Stop**
   (or `Esc`, or `/stop`) to abort a runaway task mid-sentence.
 - **记忆化 / memory** — the conversation survives page reloads, restarts and model
@@ -85,6 +91,8 @@ No other runtime dependency: the web UI is plain HTML/CSS/JS served by `node:htt
 [`examples/`](examples/) has copy-paste material for everything:
 [one worked tool call per tool](examples/tool-calls.md),
 [ready-to-send tasks](examples/prompts.md) (English + 中文),
+[the two agent modes](examples/modes.md),
+[Windows compatibility notes](examples/windows.md),
 [custom commands](examples/custom-commands.md),
 [MCP servers](examples/mcp.md),
 [HTTP API scripts](examples/api.md) and
@@ -132,6 +140,8 @@ PS C:\Windows\Temp> /tools
 
 ### Settings
 A form for **every** setting, plus:
+- **Agent mode** — the local ↔ guided slider for small models (see
+  [Agent modes](#agent-modes--guided-vs-normal)).
 - **Endpoints** — switch the whole agent between a local model server and a cloud
   API with one click (a local ↔ API slider when adding one), and pick the model
   from the list the endpoint actually reports.
@@ -139,6 +149,8 @@ A form for **every** setting, plus:
   Ollama (see [below](#local-model-sync--lm-studio--ollama)).
 - **MCP** — a master switch, one switch per server, and a form to add more
   (see [MCP](#mcp--tools-from-other-programs)).
+- **Windows** — which PowerShell is being driven, whether the agent is elevated, and
+  the switch that keeps PowerShell errors in English.
 - **Memory** — keep the conversation across restarts.
 - **Stream replies** — off, the answer arrives in one piece; on (default), token by token.
 - **Web search page** — the search engine the `web` tool queries.
@@ -148,6 +160,46 @@ A form for **every** setting, plus:
 
 Every field here has a matching terminal command (`/model`, `/set`, `/enable`, …):
 see [Internal commands](#internal-commands--changing-things-from-the-web-terminal).
+
+---
+
+## Agent modes — guided vs. normal
+
+A 7B model and a GPT-4-class model need different amounts of hand-holding, so the
+agent has **two modes**. One slider (normal ↔ guided) on the Settings tab, or
+`/mode guided` / `/mode normal` in the terminal, or the `agentMode` setting.
+
+| | `guided` (default) | `normal` |
+| --- | --- | --- |
+| System prompt | your prompt, the language rule, **plus a numbered operating procedure** | your prompt and the language rule |
+| Tool catalogue | every tool also lists its **required arguments** | tool names, actions and descriptions |
+| Tool calls per step | **exactly one** — extra calls are skipped and answered with a note | as many as the model emits |
+| Best for | LM Studio / Ollama 3B–14B models | cloud models (GPT-4 class, Claude, DeepSeek) |
+
+What the guided procedure actually says (English and Chinese versions ship in the
+box — the language follows the `language` setting):
+
+1. Call **one** tool per step, with a single JSON object of arguments.
+2. Wait for the result and read it before deciding the next step.
+3. Only use the listed tool names; if none fits, say so in plain text.
+4. Use exactly the documented argument names.
+5. On `Error:`, fix the arguments and retry the **same** tool — twice, then explain
+   the problem and stop.
+6. Write paths exactly as the user gave them; never guess.
+7. Announce a destructive step in one sentence before doing it.
+8. When the task is done, answer in plain text without calling a tool.
+
+Why it helps: small models are excellent at "one tool, one result" and poor at
+planning six calls ahead. Forcing one call per step keeps every decision anchored to
+a real tool result instead of a guessed one, and the explicit rules remove the
+"invent a tool that does not exist" and "answer as if the command succeeded"
+failure modes.
+
+Switch to `normal` when you are driving a big model and want it to batch
+independent calls; nothing else changes — same tools, same approvals, same memory.
+
+`examples/modes.md` shows both prompts side by side and how to measure which one
+your model prefers.
 
 ---
 
@@ -561,6 +613,7 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/prompt <text>` | the system prompt | next turn |
 | `/workdir <path>` | working directory (`chdir` + terminal cwd) | immediately |
 | `/powershell <exe>` | `powershell.exe` or `pwsh.exe` | next command |
+| `/mode <guided\|normal>` · `/mode` | supervision level for the model; bare `/mode` prints the current one | next turn |
 | `/enable <name...>` · `/disable <name...>` · `/enable all` | which tools the model may use | immediately |
 | `/custom add <name> <ps>` | adds a custom command | immediately |
 | `/custom remove <name>` | deletes a custom command | immediately |
@@ -591,7 +644,7 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | Command | Shows / does |
 | --- | --- |
 | `/help` · `/?` | the full command list, in your language |
-| `/status` | model, endpoint, flags, tool counts, version, context window |
+| `/status` | model, endpoint, flags, tool counts, version, context window, the PowerShell binary in use, elevation, agent mode |
 | `/config [key]` | every setting, or a single one |
 | `/get <key>` | one setting |
 | `/tools` | tools, with `[x]` = enabled |
@@ -657,10 +710,12 @@ with a message and nothing changes.
 | `activeProfile` | string | `local` | which endpoint is in use |
 | `maxSteps` | number | `12` | tool-calling rounds per user turn (1–100) |
 | `temperature` | number | `0` | 0–2 |
+| `agentMode` | `"guided"` \| `"normal"` | `guided` | supervision for small local models (see [Agent modes](#agent-modes--guided-vs-normal)) |
 | `language` | `"en"` \| `"zh"` | `zh` | interface text **and** the language the agent replies in |
 | `systemPrompt` | string | *(built-in)* | the agent's instructions |
 | `workdir` | string | process cwd | relative paths resolve here; applied via `chdir` |
 | `powershell` | string | `powershell.exe` | use `pwsh.exe` for PowerShell 7 |
+| `psEnglishErrors` | boolean | `true` | pin PowerShell's UI culture to en-US so error *text* is always English (dates and numbers keep your format) |
 | `webPort` | number | `8787` | changing it rebinds the server live (1–65535) |
 | `autoOpenBrowser` | boolean | `true` | open the browser on start |
 | `dryRun` | boolean | `false` | describe actions instead of doing them |
@@ -684,7 +739,9 @@ from the UI/terminal updates that profile, and switching profile rewrites them.
 
 **Where settings come from (in order):** built-in defaults → the settings file →
 environment variables. Runtime changes from the UI/terminal are written to the
-settings file and take effect immediately.
+settings file and take effect immediately. Environment variables use the upper-case
+key name with an `AGENT_` prefix — e.g. `AGENT_MODE=normal`,
+`AGENT_PS_ENGLISH_ERRORS=false`, `AGENT_LANGUAGE=en`.
 
 **Settings file:** `data/settings.json` in the installation folder (override with
 `AGENT_SETTINGS_FILE`, or move the whole folder with `AGENT_DATA_DIR`). It contains
@@ -757,6 +814,96 @@ run.
 
 ---
 
+## Windows compatibility
+
+The agent is meant to survive a *real* Windows machine, not a clean one. Every item
+below was a bug that showed up on an ordinary Windows 11 box and is covered by
+`npm run test:windows` (55 checks that run against the machine you are on).
+
+### PowerShell 5.1 and PowerShell 7
+
+`powershell.exe` (Windows PowerShell 5.1) ships with Windows; `pwsh.exe`
+(PowerShell 7) does not. The agent works with either — set it in Settings →
+**PowerShell binary** (or `/powershell pwsh.exe`).
+
+- The binary is resolved through `PATH` and `PATHEXT`, then through the well-known
+  install locations, so a bare `pwsh.exe` works even when it is not on `PATH`.
+  `/status` and Settings → **Windows** show the binary *and version* actually used.
+- If no binary exists at all, the failure says so (instead of `spawn ENOENT`).
+- Cmdlets that were **renamed or removed** between the two are not used:
+  `ping` asks .NET's `Ping` class (5.1's `-ComputerName` does not exist on 7, and
+  7's `-TargetName` does not exist on 5.1), `port_check` uses a `TcpClient` with an
+  explicit timeout, `connections` falls back to `netstat -ano` when the `NetTCPIP`
+  module is missing, and `services` falls back to the `Win32_Service` CIM class when
+  `Get-Service` has no `StartType` (pre-Windows 10 1709).
+
+### Errors you can read
+
+Two Windows quirks made every failure look like a broken tool:
+
+- **Errors were localized.** A Chinese Windows answers `Access is denied` in
+  Chinese. A small model cannot use that, and neither could the agent's own hints.
+  The launcher pins PowerShell's *UI* culture to English (`psEnglishErrors`, on by
+  default), so error **text** is always English while dates and numbers keep your
+  format. Turn it off in Settings → **Windows** if you prefer your own language.
+- **PowerShell 5.1 wrapped redirected errors in CLIXML** — the error arrived as
+  `#< CLIXML <Objs ...><S S="Error">...</S>`. That is now decoded back to plain
+  text, and the console-only filler (the localized location line, the source echo,
+  `CategoryInfo`) is dropped, leaving the message and *then* one actionable hint:
+
+  ```
+  Error: Access to the path 'C:\Program Files\app' is denied.
+  (this needs administrator rights and win-agent is NOT elevated - restart
+  win-agent from an elevated PowerShell, or ask the user to do it)
+  ```
+
+  The three common cases get a hint: permission denied (with your elevation state),
+  "not recognized"/"cannot find the path" (check the path), and unknown service
+  names (use the short name).
+
+### Elevation
+
+Whether the agent is elevated decides what it *can* do: starting services, adding
+firewall rules, machine-wide environment variables and registry keys all need
+administrator rights. `/status`, `system info` (`IsAdmin`) and Settings → **Windows**
+report it, and the boot banner says it out loud. Run the agent from an elevated
+terminal when you want those, and remember that the approval prompt still keeps the
+model from doing it on its own.
+
+### Encodings: UTF-16 files are normal here
+
+Notepad's "Unicode" and Windows PowerShell 5.1's `Out-File` both write **UTF-16**,
+and plenty of tools write a **UTF-8 BOM**. Reading those as UTF-8 gives
+`h\0e\0l\0l\0o` — the classic "the file tool is broken" report. `files read`,
+`grep`, `edit` and `write` now detect the encoding (BOM or the NUL pattern):
+
+- `read` returns clean text, and refuses binary files with a message instead of
+  dumping NULs into the conversation.
+- `edit` and `append` write the file back in **its own** encoding, so editing a
+  UTF-16 file does not silently convert it to UTF-8.
+- `grep` skips binary files and searches UTF-16 files correctly.
+- `data/settings.json` written as UTF-16 by Notepad is read too.
+
+### Hung commands, killed properly
+
+`child.kill()` on Windows kills `powershell.exe` but not what it started, so a stuck
+`robocopy` or `Test-Connection` kept running after a timeout. A timeout now kills the
+whole process tree (`taskkill /T /F`), and the result says the command was killed.
+
+### Fixed along the way
+
+- `scheduled_tasks create` ignored the `time` argument (the start time was computed
+  from `$t` one line *before* `$t` was set), so every task started five minutes from
+  now. The script is now built by a tested function, and the reply reports the next
+  run time Task Scheduler computed.
+- `network port_check` printed the literal string `OPEN: ${host}:${port}`
+  (PowerShell does not interpolate inside single quotes) and took seconds through
+  `Test-NetConnection`.
+- `system info` now reports the PowerShell version/edition/path, elevation, time zone
+  and current time.
+
+---
+
 ## CLI
 
 ```powershell
@@ -779,7 +926,7 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/state` | running flag, cwd, enabled tools, all tool names, catalog, version, settings, chat history, context budget, endpoint capabilities, memory info, usage totals, data folder |
+| `GET` | `/api/state` | running flag, cwd, enabled tools, all tool names, catalog, version, settings, chat history, context budget, endpoint capabilities, memory info, usage totals, data folder, `windows` (PowerShell binary, version, edition, elevation, English-errors flag) |
 | `GET` | `/api/usage` | token totals of the open conversation, all-time totals, per-call list |
 | `GET` | `/api/data` | data folder paths, open conversation, usage, archived conversation list |
 | `GET` | `/api/conversations` | `{ conversations: [...], current }` |
@@ -843,8 +990,12 @@ src/
     files.ts system.ts processes.ts services.ts network.ts web.ts
     automation.ts ui.ts powershell.ts custom.ts
     index.ts      assembles the tool set from settings
-  util/ps.ts      PowerShell runner (-EncodedCommand) + JSON helpers
+  util/ps.ts      PowerShell runner (-EncodedCommand) + JSON helpers, culture pin,
+                  CLIXML decoding, elevation probe, process-tree timeouts
   util/json.ts    reads JSON files the way Windows writes them (BOM-tolerant)
+  util/text.ts    text encodings the way Windows writes them (UTF-8/UTF-16 BOM,
+                  BOM-less UTF-16, binary detection)
+  util/exec.ts    resolving an executable through PATH + PATHEXT + known locations
 scripts/
   clean.mjs       empties dist/ before a build
   copy-assets.mjs copies the web UI into dist/
@@ -854,6 +1005,8 @@ scripts/
   test-mcp.mjs        MCP client checks (stdio + HTTP) against a mock MCP server
   test-models.mjs     local model discovery: LM Studio / Ollama routes, merging
   test-isolation.mjs  two copies never share data or a version number
+  test-mode.mjs       agent modes + JSON repair + encodings (model-free, any platform)
+  test-windows.mjs    live Windows checks: PowerShell, elevation, files, services
   fixtures/
     mock-mcp-server.mjs  a tiny MCP server used by test-mcp.mjs
 examples/         copy-paste examples: tool calls, prompts, custom commands,
@@ -889,6 +1042,8 @@ npm run test:providers      # endpoint compatibility checks against a mock serve
 npm run test:mcp            # MCP client checks against a mock MCP server (stdio + HTTP)
 npm run test:models         # local model sync: LM Studio / Ollama discovery + merging
 npm run test:isolation      # two copies never share data or a version number
+npm run test:mode           # agent modes, JSON repair, encodings (no model needed)
+npm run test:windows        # live Windows checks: PowerShell, elevation, files, services
 npm run test:all            # all of the above
 ```
 

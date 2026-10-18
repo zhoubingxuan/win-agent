@@ -1,5 +1,5 @@
 import type { CustomTool } from "../settings.js";
-import { psQuote, runPowerShell } from "../util/ps.js";
+import { explainPowerShellError, psQuote, runPowerShell } from "../util/ps.js";
 import { argEnum, argOpt, type Tool } from "./registry.js";
 
 /**
@@ -43,7 +43,7 @@ export function createCustomTool(tools: CustomTool[]): Tool {
       const script = `$arg = ${psQuote(argValue)}; ${tool.script}`;
       const res = await runPowerShell(script);
       const output = `${res.stdout}${res.stderr}`.trim() || "(no output)";
-      return res.code === 0 ? output : `exit code ${res.code}\n${output}`;
+      return res.code === 0 ? output : `exit code ${res.code}\n${explainPowerShellError(output)}`;
     },
   };
 }

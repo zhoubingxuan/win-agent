@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { psQuote, runPs } from "../util/ps.js";
+import { decodeText, encodeText, type DecodedText } from "../util/text.js";
 import { arg, argBool, argEnum, argNum, argOpt, type Tool } from "./registry.js";
 
 const ACTIONS = [
@@ -33,6 +34,23 @@ async function statSafe(target: string): Promise<{ size: number; mtime: string }
   } catch {
     return null;
   }
+}
+
+/**
+ * Read a text file the way Windows wrote it (UTF-8, or UTF-16 with a BOM - see
+ * util/text.ts) and remember the encoding, so an edit can write it back the same
+ * way. Notepad's "Unicode", PowerShell 5.1's `Out-File` and most Windows tools
+ * still produce UTF-16, and reading those as UTF-8 gives `h\0e\0l\0l\0o`.
+ */
+async function readText(target: string): Promise<DecodedText> {
+  return decodeText(await fs.readFile(target));
+}
+
+/** Write text back in the encoding the file already had (UTF-8 for new files). */
+async function writeTextLike(target: string, text: string, like: DecodedText | null): Promise<void> {
+  const encoding = like?.encoding ?? "utf8";
+  const withBom = like?.bom != null;
+  await fs.writeFile(target, encodeText(text, encoding, withBom));
 }
 
 /** A short unified-style diff of the changed lines, for the edit action. */
@@ -163,7 +181,12 @@ export const filesTool: Tool = {
 
       case "read": {
         const target = resolvePath(arg(args, "path"));
-        const content = await fs.readFile(target, "utf8");
+        const file = await readText(target);
+        if (file.binary) {
+          const size = (await statSafe(target))?.size ?? 0;
+          return `Refused: ${target} looks like a binary file (${size} bytes), so printing it would only produce noise. Use "hash" or "list" instead.`;
+        }
+        const content = file.text;
         const offset = Math.max(argNum(args, "offset", 0), 0);
         const max = argNum(args, "max", 20_000);
         const slice = content.slice(offset, offset + max);
@@ -182,7 +205,9 @@ export const filesTool: Tool = {
         }
         if (ctx.dryRun) return `DRY RUN: would write ${content.length} chars to ${target}`;
         await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.writeFile(target, content, "utf8");
+        // Overwriting a file that Windows wrote as UTF-16 keeps it UTF-16.
+        const previous = existing ? await readText(target).catch(() => null) : null;
+        await writeTextLike(target, content, previous);
         return `Wrote ${content.length} characters to ${target}`;
       }
 
@@ -191,7 +216,11 @@ export const filesTool: Tool = {
         const content = argOpt(args, "content") ?? "";
         if (ctx.dryRun) return `DRY RUN: would append ${content.length} chars to ${target}`;
         await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.appendFile(target, content, "utf8");
+        // Appending bytes to a UTF-16 file in UTF-8 would corrupt it, so read the
+        // existing text and rewrite the whole file in its own encoding.
+        const existing = await readText(target).catch(() => null);
+        if (existing) await writeTextLike(target, existing.text + content, existing);
+        else await fs.appendFile(target, encodeText(content, "utf8", false));
         return `Appended ${content.length} characters to ${target}`;
       }
 
@@ -200,7 +229,8 @@ export const filesTool: Tool = {
         const find = arg(args, "find");
         const replace = argOpt(args, "replace") ?? "";
         const all = argBool(args, "all", false);
-        const original = await fs.readFile(target, "utf8");
+        const file = await readText(target);
+        const original = file.text;
 
         const at = original.indexOf(find);
         if (at < 0) {
@@ -216,7 +246,7 @@ export const filesTool: Tool = {
         if (ctx.dryRun) {
           return `DRY RUN: would replace ${replaced} occurrence(s) in ${target}\n${diffPreview(original, updated)}`;
         }
-        await fs.writeFile(target, updated, "utf8");
+        await writeTextLike(target, updated, file);
         const leftover =
           occurrences > replaced
             ? `\nnote: ${occurrences} occurrences existed, only ${replaced} replaced — pass all=true to replace every one`
@@ -300,7 +330,12 @@ export const filesTool: Tool = {
           if (item.size > 1_000_000) continue;
           let text: string;
           try {
-            text = await fs.readFile(path.join(dir, item.rel), "utf8");
+            // UTF-16 (a very common Windows encoding) would look like binary
+            // noise if it were read as UTF-8; decode it properly, and skip
+            // anything that is not text at all.
+            const file = decodeText(await fs.readFile(path.join(dir, item.rel)));
+            if (file.binary) continue;
+            text = file.text;
           } catch {
             continue;
           }

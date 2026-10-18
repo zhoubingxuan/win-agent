@@ -1,4 +1,5 @@
 import type { ToolSchema } from "../llm.js";
+import { parseToolArguments } from "../util/json.js";
 
 /** Per-execution context handed to every tool. */
 export interface ToolContext {
@@ -70,6 +71,23 @@ export function argEnum<T extends string>(
 
 export type Approval = (summary: string) => Promise<boolean>;
 
+/** Levenshtein distance, used only for "did you mean" hints. */
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
+    }
+    previous = current;
+  }
+  return previous[b.length];
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, Tool>();
 
@@ -101,14 +119,27 @@ export class ToolRegistry {
   }
 
   /** Markdown-ish catalog injected into the system prompt to guide small models. */
-  describe(): string {
+  describe(options: { verbose?: boolean } = {}): string {
     const lines: string[] = ["Available tools (call them exactly by name):"];
     for (const tool of this.tools.values()) {
       const fn = tool.schema.function;
-      const props = fn.parameters.properties as Record<string, { enum?: string[] }> | undefined;
-      const actions = props?.action?.enum;
+      const params = fn.parameters as {
+        properties?: Record<string, { enum?: string[]; description?: string }>;
+        required?: string[];
+      };
+      const actions = params.properties?.action?.enum;
       lines.push(`- ${fn.name}: ${fn.description}`);
       if (actions) lines.push(`    action must be one of: ${actions.join(", ")}`);
+      if (options.verbose) {
+        // A small model copies argument names much more reliably when they are
+        // listed, and it cannot read the JSON schema it is sent.
+        const required = new Set(params.required ?? []);
+        const names = Object.keys(params.properties ?? {}).filter((name) => name !== "action");
+        if (names.length > 0) {
+          const spelled = names.map((name) => (required.has(name) ? `${name} (required)` : name));
+          lines.push(`    arguments: ${spelled.join(", ")}`);
+        }
+      }
     }
     lines.push("");
     lines.push("Always pass arguments as a single JSON object. Prefer these tools over guessing commands.");
@@ -124,19 +155,41 @@ export class ToolRegistry {
     return lines.join("\n");
   }
 
+  /**
+   * The tool whose name is closest to `name`, for a "did you mean" hint. Small
+   * models misspell `services` as `service` or `scheduledtasks`; naming the tool
+   * they wanted is far more useful than a list of everything.
+   */
+  closestName(name: string): string | null {
+    const wanted = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!wanted) return null;
+    let best: { name: string; distance: number } | null = null;
+    for (const candidate of this.tools.keys()) {
+      const flat = candidate.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const distance = editDistance(wanted, flat);
+      if (best === null || distance < best.distance) best = { name: candidate, distance };
+    }
+    if (!best) return null;
+    if (best.distance <= 2) return best.name;
+    if (name.length >= 4 && best.name.toLowerCase().includes(name.toLowerCase())) return best.name;
+    if (best.name.toLowerCase().startsWith(name.toLowerCase().slice(0, 4))) return best.name;
+    return null;
+  }
+
   /** Execute a tool by name. Errors are returned as text so the model can react. */
   async execute(name: string, rawArguments: string): Promise<string> {
     const tool = this.tools.get(name);
     if (!tool) {
-      return `Error: unknown tool "${name}". Available tools: ${this.names().join(", ")}`;
+      const suggestion = this.closestName(name);
+      const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
+      return `Error: unknown tool "${name}".${hint} Available tools: ${this.names().join(", ")}`;
     }
 
-    let args: Record<string, unknown>;
-    try {
-      args = rawArguments.trim() ? (JSON.parse(rawArguments) as Record<string, unknown>) : {};
-    } catch {
+    const parsed = parseToolArguments<Record<string, unknown>>(rawArguments);
+    if (!parsed) {
       return `Error: arguments for "${name}" were not valid JSON: ${rawArguments}`;
     }
+    const args = parsed.value;
 
     const ctx: ToolContext = {
       dryRun: this.dryRun,

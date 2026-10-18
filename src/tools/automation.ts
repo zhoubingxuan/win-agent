@@ -8,6 +8,68 @@ import { psQuote, runPs, runPsJson } from "../util/ps.js";
 const TASK_ACTIONS = ["list", "info", "create", "delete", "run"] as const;
 const TASK_SCHEDULES = ["ONCE", "DAILY", "HOURLY", "ONLOGON", "ONSTART"] as const;
 
+export interface TaskPlan {
+  name: string;
+  program: string;
+  args: string;
+  schedule: (typeof TASK_SCHEDULES)[number];
+  /** "HH:mm" or any string PowerShell can read as a date-time. */
+  time: string;
+}
+
+/**
+ * Build the script that registers a scheduled task.
+ *
+ * This is a separate function so the *order* of the statements can be tested
+ * without touching the machine: the start time has to be parsed before the
+ * trigger that uses it, and the old code computed `$time` from `$t` one line
+ * before `$t` was set, so `time` was silently ignored and every task started
+ * five minutes from now.
+ *
+ * `-At` also accepts a bare "23:30"; the parse below is deliberately tolerant
+ * because the string comes from a model, and a locale-dependent `[datetime]`
+ * cast would throw on half of them.
+ */
+export function buildTaskScript(plan: TaskPlan): { script: string; when: string } {
+  const lines: string[] = [
+    `$gwAction = New-ScheduledTaskAction -Execute ${psQuote(plan.program)}` +
+      (plan.args ? ` -Argument ${psQuote(plan.args)}` : ""),
+  ];
+
+  let when: string;
+  if (plan.schedule === "ONLOGON") {
+    lines.push("$gwTrigger = New-ScheduledTaskTrigger -AtLogOn");
+    when = "at logon";
+  } else if (plan.schedule === "ONSTART") {
+    lines.push("$gwTrigger = New-ScheduledTaskTrigger -AtStartup");
+    when = "at startup";
+  } else {
+    lines.push("$gwStart = (Get-Date).AddMinutes(5)");
+    if (plan.time) {
+      lines.push(
+        `$gwRaw = ${psQuote(plan.time)}; ` +
+          `$gwOk = [datetime]::TryParse($gwRaw, [System.Globalization.CultureInfo]::InvariantCulture, ` +
+          "[System.Globalization.DateTimeStyles]::None, [ref]$gwStart); " +
+          "if (-not $gwOk) { $gwOk = [datetime]::TryParse($gwRaw, [ref]$gwStart) }",
+      );
+      when = `${plan.schedule.toLowerCase()} starting ${plan.time}`;
+    } else {
+      when = `${plan.schedule.toLowerCase()} starting in 5 minutes`;
+    }
+    lines.push(
+      plan.schedule === "HOURLY"
+        ? "$gwTrigger = New-ScheduledTaskTrigger -Once -At $gwStart -RepetitionInterval (New-TimeSpan -Hours 1)"
+        : `$gwTrigger = New-ScheduledTaskTrigger -${plan.schedule === "ONCE" ? "Once" : "Daily"} -At $gwStart`,
+    );
+  }
+
+  lines.push(
+    // -Force makes re-creating an existing task idempotent instead of an error.
+    `Register-ScheduledTask -TaskName ${psQuote(plan.name)} -Action $gwAction -Trigger $gwTrigger -Force | Out-Null`,
+  );
+  return { script: lines.join("; "), when };
+}
+
 export const scheduledTasksTool: Tool = {
   schema: {
     type: "function",
@@ -62,34 +124,29 @@ export const scheduledTasksTool: Tool = {
         const program = arg(args, "program");
         const extra = argOpt(args, "args") ?? "";
         const schedule = argEnum(args, "schedule", TASK_SCHEDULES);
-        const time = argOpt(args, "time");
+        const time = argOpt(args, "time") ?? "";
         if (!(await ctx.approve(`create scheduled task "${name}" running ${program}`))) {
           return "Cancelled by user.";
         }
         if (ctx.dryRun) return `DRY RUN: would create task ${name}.`;
 
-        const lines: string[] = [
-          `$action = New-ScheduledTaskAction -Execute ${psQuote(program)}` +
-            (extra ? ` -Argument ${psQuote(extra)}` : ""),
-        ];
-        if (schedule === "ONLOGON") {
-          lines.push("$trigger = New-ScheduledTaskTrigger -AtLogOn");
-        } else if (schedule === "ONSTART") {
-          lines.push("$trigger = New-ScheduledTaskTrigger -AtStartup");
-        } else {
-          lines.push("$time = if ($t) { [datetime]$t } else { (Get-Date).AddMinutes(5) }");
-          if (time) lines.push(`$t = ${psQuote(time)}`);
-          lines.push(
-            schedule === "HOURLY"
-              ? "$trigger = New-ScheduledTaskTrigger -Once -At $time -RepetitionInterval (New-TimeSpan -Hours 1)"
-              : `$trigger = New-ScheduledTaskTrigger -${schedule === "ONCE" ? "Once" : "Daily"} -At $time`,
+        const { script, when } = buildTaskScript({ name, program, args: extra, schedule, time });
+        await runPs(script);
+
+        // Say what actually happens next, instead of only claiming success: the
+        // next run time is computed by Task Scheduler, not by us.
+        let next = "";
+        try {
+          const info = await runPsJson<{ State?: string; NextRunTime?: string }>(
+            `Get-ScheduledTask -TaskName ${psQuote(name)} -ErrorAction Stop | ` +
+              "Select-Object @{n='State';e={$_.State.ToString()}}," +
+              "@{n='NextRunTime';e={($_ | Get-ScheduledTaskInfo).NextRunTime}}",
           );
+          if (info?.NextRunTime) next = ` Next run: ${info.NextRunTime}`;
+        } catch {
+          // The task exists either way; a missing "next run" is not a failure.
         }
-        lines.push(
-          `Register-ScheduledTask -TaskName ${psQuote(name)} -Action $action -Trigger $trigger -Force | Out-Null`,
-        );
-        await runPs(lines.join("; "));
-        return `Scheduled task "${name}" created (${schedule}).`;
+        return `Scheduled task "${name}" created (${when}).${next}`;
       }
 
       case "delete": {

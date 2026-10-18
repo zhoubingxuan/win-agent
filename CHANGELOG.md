@@ -13,6 +13,117 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-18
+
+Two changes that make the agent better at its actual job: it now **supervises a small
+local model instead of hoping**, and it **survives the Windows machine it runs on**
+(PowerShell 5.1 *and* 7, localized errors, UTF-16 files, processes that will not die,
+scheduled tasks that silently ignored their start time).
+
+The headline is `agentMode`: a **guided** mode, on by default, that gives a 3B–14B model
+an explicit operating procedure, spells out every tool's required arguments, and allows
+**one tool call per step**. Flip one slider to `normal` for a cloud model.
+
+### Added
+
+- **Two agent modes — `guided` (default) and `normal`.** `guided` is built for local
+  small models: the system prompt gets a numbered operating procedure (one tool per step,
+  read the result before the next step, never invent a tool, use the documented argument
+  names, retry the *same* tool once on `Error:`, never guess a path, announce destructive
+  steps, answer in plain text when done) and the tool catalogue lists each tool's argument
+  names with the required ones marked (`arguments: path (required), name, value, type`).
+  `normal` is the previous behaviour: plain prompt, as many tool calls per step as the
+  model emits. Everything else — tools, approvals, memory, context budget — is identical.
+  The procedure ships in English and Chinese and follows the `language` setting.
+  - **One tool call per step is enforced, not requested.** Extra `tool_calls` in the same
+    message run nothing and get a tool result saying so
+    (`Skipped: guided mode runs one tool call per step…`), so the model can never be told
+    an action succeeded that never ran, and every decision stays anchored to a real result.
+  - **One switch, three surfaces:** the *normal ↔ guided* slider in Settings → *Agent
+    mode*, `/mode guided|normal` (bare `/mode` prints the current one), and the
+    `agentMode` setting (`AGENT_MODE=guided|normal`). Aliases are accepted
+    (`supervised`, `strict`, `高监督`, `plain`, …). `GET /api/state` reports the mode and
+    returns the **verbose** catalogue while it is on, so a front end can show the model
+    exactly what it was told.
+- **`psEnglishErrors` (on by default) — error text is always English.** PowerShell's *UI*
+  culture is pinned to `en-US` before every script, so a Chinese/German/Japanese Windows
+  answers with a message a small model can act on. Date and number formatting is
+  untouched (`{"d":"2026/1/2 0:00:00","n":1234.5}` still comes back locale-formatted), and
+  it can be turned off in Settings → *Windows*. (A PowerShell *parse* error happens before
+  the pin and stays localized, which is why the built-in tools never end a JSON script
+  with `}`.)
+- **Settings → *Windows* panel.** The PowerShell binary actually being driven (path,
+  version, edition), whether the agent is elevated — and the switch above. `/status` prints
+  `shell`, `admin` (with what will be refused when not elevated) and `psErrors` lines, and
+  `GET /api/state` gained a `windows` object: `{ exe, found, version, edition, elevated,
+  englishErrors }`.
+- **Where a failure is, and what to do about it.** `explainPowerShellError` appends one
+  actionable hint to the three common failures: permission denied (naming *your* elevation
+  state and whether to restart elevated), "not recognized"/"cannot find the path" (check
+  the path), and unknown service names (use the short name).
+- **`npm run test:mode`** (74 checks, model-free, any platform): both system prompts in
+  both languages, guidance selection, one-tool-per-step splitting, the verbose catalogue,
+  lenient tool-argument repair, file encodings and CLIXML decoding.
+- **`npm run test:windows`** (55 checks against the machine you are on): PowerShell
+  resolution/version/edition/elevation, English error text, the permission hint, a hung
+  script killed promptly, `system info`, services, ping/port-check/connections, every
+  encoding Windows writes, the registry and the task-scheduler script builder.
+
+### Fixed
+
+- **Windows PowerShell 5.1 wrapped redirected errors in CLIXML.** A failed command arrived
+  as `#< CLIXML <Objs …><S S="Error">…`, so every error looked like a broken tool. The XML
+  is decoded, unescaped, and stripped of console-only filler (the source echo, the caret
+  line, the localized `所在位置` location line, `CategoryInfo`), leaving the message and the
+  hint.
+- **Files were read as UTF-8 however they were written.** Notepad's "Unicode" and
+  PowerShell 5.1's `Out-File` write UTF-16; a UTF-8 BOM is also common. `files read`
+  returned NUL-laced `h\0e\0l\0l\0o`, and *editing* such a file silently converted it to
+  UTF-8. New `src/util/text.ts` detects the encoding (BOM, or the NUL pattern for BOM-less
+  UTF-16) and: `read` returns clean text and **refuses binary files** with a message,
+  `edit`/`append`/overwrite-`write` write the file back in **its own** encoding and BOM,
+  `grep` searches UTF-16 files and skips binary ones, and a UTF-16 `data/settings.json` is
+  read too.
+- **A timeout did not kill what the command had started.** `child.kill()` kills
+  `powershell.exe`, not the `robocopy` under it. Timeouts now run `taskkill /pid <n> /T /F`
+  (whole tree), `PsResult` carries `timedOut`, and the result says the command was killed.
+- **`scheduled_tasks create` silently ignored `time`.** The start time was computed from
+  `$t` one line *before* `$t` was assigned, so every task was created for five minutes from
+  now. The script is now built by an exported, tested `buildTaskScript()` with a tolerant
+  `[datetime]::TryParse`, and the reply reports the next run time Task Scheduler computed
+  for the task it actually created.
+- **`network port_check` printed the literal `${host}:${port}`.** PowerShell does not
+  interpolate inside a single-quoted string. Rewritten around a `TcpClient` with an
+  explicit timeout — correct, and fast.
+- **`runPsJson` broke on scripts ending in `}`** (`… } | ConvertTo-Json` →
+  `EmptyPipeElement`); `ipconfig`/`connections` now end with a variable instead.
+- **`ping` used a cmdlet that changed between PowerShell versions.** It now uses .NET's
+  `Ping` class (`Test-Connection` has no `-TargetName` on 5.1 and no `-ComputerName` on 7).
+  `connections` falls back to `netstat -ano` without the `NetTCPIP` module, and `services`
+  falls back to the `Win32_Service` CIM class when `Get-Service` has no `StartType`.
+- **`powershell.exe`/`pwsh.exe` are resolved, not assumed.** The binary is looked up
+  through `PATH`, `PATHEXT` and the known install folders (shared with MCP's command
+  resolver via `src/util/exec.ts`); when nothing is found the error names everything that
+  was tried instead of `spawn ENOENT`.
+- **Small-model mistakes get a hint instead of a wall.** Tool arguments with a trailing
+  comma, a single-quoted string or a comment are repaired before being rejected
+  (`parseToolArguments`), and an unknown tool name is answered with *"did you mean
+  `services`?"* (`editDistance`/`closestName`) instead of a list of names.
+- **`system info`** now also reports the PowerShell version/edition/path, elevation, time
+  zone and current time.
+
+### Changed
+
+- **`/status` and `/help`** gained the mode, the resolved shell, elevation and
+  `psErrors`; `/set agentMode` / `/unset agentMode` work like any other setting.
+- The boot banner states the resolved PowerShell (with version) and whether the agent is
+  elevated, because that decides what the tools can do.
+- **Docs:** `examples/modes.md` (both modes side by side, with the real prompts and
+  catalogues) and `examples/windows.md` (every compatibility fix above, and how to
+  reproduce it), plus new rows in the settings reference and
+  `examples/settings.md`.
+
+
 ## [1.2.0] — 2026-10-18
 
 Three things that make the agent reach further without making it harder to drive: it can

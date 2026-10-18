@@ -61,6 +61,14 @@ export const systemTool: Tool = {
             "  Manufacturer = $cs.Manufacturer",
             "  Model = $cs.Model",
             "  LastBoot = $os.LastBootUpTime",
+            // Whether the agent is elevated decides whether services, the
+            // firewall and machine-wide settings can be changed at all, so the
+            // model can see it instead of guessing from an "access denied".
+            "  IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)",
+            "  PowerShell = '{0} ({1})' -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition",
+            "  PowerShellExe = [System.Diagnostics.Process]::GetCurrentProcess().Path",
+            "  TimeZone = (Get-TimeZone).Id",
+            "  Now = (Get-Date).ToString('s')",
             "}",
           ].join("\n"),
         );

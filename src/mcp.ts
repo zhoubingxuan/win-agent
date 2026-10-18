@@ -22,10 +22,9 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import { VERSION } from "./version.js";
 import { getSettings } from "./settings.js";
+import { resolveCommand } from "./util/exec.js";
 import type { Approval, Tool } from "./tools/registry.js";
 
 /** One configured MCP server. */
@@ -89,23 +88,9 @@ export function safeName(server: string, tool: string): string {
 /**
  * Find the real file for a command. `npx` is `npx.cmd` on Windows, and
  * `spawn("npx")` without a shell cannot see through PATHEXT.
+ * Re-exported so callers (and tests) keep importing it from here.
  */
-export function resolveCommand(command: string): string {
-  if (!command) return command;
-  if (path.isAbsolute(command) || /[\\/]/.test(command)) return command;
-  const exts = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
-  for (const dir of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
-    for (const ext of ["", ...exts]) {
-      const candidate = path.join(dir, command + ext);
-      try {
-        if (fs.existsSync(candidate)) return candidate;
-      } catch {
-        // unreadable PATH entry - keep looking
-      }
-    }
-  }
-  return command;
-}
+export { resolveCommand };
 
 /** Quote one argument for `cmd.exe /c` (only used for .cmd/.bat servers). */
 function quoteForCmd(value: string): string {

@@ -71,6 +71,43 @@ the agent sets per request.
 `qwen2.5:7b` is the smallest model that reliably drives the tools; anything bigger is
 better. Context length comes from `/api/show`.
 
+## Small local model: guided mode (the default)
+
+`agentMode` decides how much the agent supervises the model. For a 3B–14B local model
+keep the default:
+
+```json
+{
+  "agentMode": "guided",
+  "maxSteps": 16,
+  "temperature": 0
+}
+```
+
+The model gets a numbered operating procedure, sees each tool's required argument
+names, and may call only one tool per step. Switch to `"normal"` for a GPT-4-class
+endpoint, where batching independent calls is faster. Everything else — tools,
+approval prompts, memory, context budget — is identical. See
+[modes.md](modes.md).
+
+## Windows: English errors and the PowerShell in use
+
+`psEnglishErrors` is on by default so error text is English on a Chinese (or German,
+Japanese, …) Windows, whatever the model or the hints expect:
+
+```json
+{
+  "agentMode": "guided",
+  "psEnglishErrors": true,
+  "powershell": "powershell.exe"
+}
+```
+
+Set `"powershell": "pwsh.exe"` to drive PowerShell 7 instead — the binary is resolved
+through `PATH`, `PATHEXT` and the usual install folders, so a bare name works.
+`/status` and `GET /api/state` (`windows`) report the binary, its version and edition,
+whether the agent is elevated, and this flag. See [windows.md](windows.md).
+
 ## A cloud API next to the local one
 
 Two profiles mean you can flip with `/profile use cloud` — the conversation, the data

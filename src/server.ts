@@ -20,7 +20,7 @@ import {
   toConfig,
   updateSettings,
 } from "./settings.js";
-import { configurePowerShell } from "./util/ps.js";
+import { configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { VERSION } from "./version.js";
 import { capabilityReport, capabilities as endpointCapabilities, discoverLocalModels, listModelsAt, localEndpointsFor, probeContextLimits } from "./providers.js";
@@ -205,6 +205,7 @@ function applySettings(): string[] {
   const s = getSettings();
   const notices: string[] = [];
   configurePowerShell(s.powershell);
+  configurePowerShellDiagnostics(s.psEnglishErrors);
 
   // A settings file that had a BOM or does not parse is worth saying out loud:
   // otherwise it just looks like the settings were ignored.
@@ -641,7 +642,7 @@ const server = http.createServer(async (req, res) => {
           cwd: getTerminalCwd(),
           tools: tools.names(),
           allTools,
-          catalog: tools.describe(),
+          catalog: tools.describe({ verbose: s.agentMode === "guided" }),
           settings: publicSettings(),
           history: conversation.messages.filter((m) => m.role !== "system"),
           context: contextSnapshot(),
@@ -665,6 +666,7 @@ const server = http.createServer(async (req, res) => {
           usage: usageSnapshot(),
           data: dataInfo(),
           mcp: mcpSnapshot(),
+          windows: await powerShellInfo(),
           notices: bootNotices,
         });
       }
@@ -1092,6 +1094,17 @@ server.listen(boundPort, "127.0.0.1", () => {
   console.log(`  settings   : ${settingsFile()}`);
   if (getSettings().mcpEnabled) console.log("  mcp        : connecting to the configured servers…");
   for (const notice of bootNotices) console.log(`  ${notice}`);
+
+  // Which PowerShell is being driven, and whether it is elevated, is the first
+  // thing to check when a tool fails - so say it at boot (and in the web UI).
+  void powerShellInfo().then((info) => {
+    const version = info.version ? ` ${info.version}` : "";
+    const where = info.exe === getSettings().powershell ? "" : ` (resolved from ${getSettings().powershell})`;
+    console.log(`  powershell : ${info.exe}${version}${where}`);
+    if (!info.found) console.log("  warning: no PowerShell binary found - set the \"PowerShell binary\" setting");
+    else if (info.elevated === false) console.log("  elevated   : no - service/firewall/machine-wide changes will be refused");
+    else if (info.elevated === true) console.log("  elevated   : yes (administrator)");
+  });
 
   if (getSettings().autoOpenBrowser && !process.argv.includes("--no-open")) {
     spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();

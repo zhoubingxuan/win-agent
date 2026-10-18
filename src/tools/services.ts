@@ -8,6 +8,27 @@ const STARTUP_TYPES: Record<string, string> = {
   disable: "Disabled",
 };
 
+/**
+ * Where a service starts from.
+ *
+ * `StartType` was added to `Get-Service` output in Windows 10 1709 (.NET 4.7).
+ * On older Windows the property is missing, and calling `$_.StartType.ToString()`
+ * on $null throws "You cannot call a method on a null-valued expression" - which
+ * used to make the whole `list`/`status` action fail there. So: probe once, and
+ * fall back to the service CIM class (present since Windows 2000) when needed.
+ */
+const START_TYPE_PRELUDE =
+  "$gwProbe = @(Get-Service -ErrorAction SilentlyContinue | Select-Object -First 1); " +
+  "$gwHasStartType = [bool]($gwProbe.Count -gt 0 -and $gwProbe[0].PSObject.Properties['StartType']); " +
+  "$gwModes = @{}; " +
+  "if (-not $gwHasStartType) { " +
+  "Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | ForEach-Object { $gwModes[$_.Name] = $_.StartMode } " +
+  "}; ";
+
+const START_TYPE_EXPRESSION =
+  "@{n='StartType';e={ if ($gwHasStartType) { $_.StartType.ToString() } " +
+  "elseif ($gwModes[$_.Name]) { $gwModes[$_.Name] } else { 'unknown' } }}";
+
 export const servicesTool: Tool = {
   schema: {
     type: "function",
@@ -43,8 +64,10 @@ export const servicesTool: Tool = {
           ? ` | Where-Object { $_.Name -like ${psQuote(pattern)} -or $_.DisplayName -like ${psQuote(pattern)} }`
           : "";
         const data = await runPsJson(
-          `Get-Service${where} | Select-Object Name,DisplayName,` +
-            "@{n='Status';e={$_.Status.ToString()}},@{n='StartType';e={$_.StartType.ToString()}} | " +
+          START_TYPE_PRELUDE +
+            `Get-Service${where} | Select-Object Name,DisplayName,` +
+            "@{n='Status';e={$_.Status.ToString()}}," +
+            `${START_TYPE_EXPRESSION} | ` +
             "Sort-Object Name",
         );
         if (!data) return filter ? `No service matches "${filter}".` : "No services found.";
@@ -54,9 +77,11 @@ export const servicesTool: Tool = {
       case "status": {
         const name = arg(args, "name");
         const data = await runPsJson(
-          `Get-Service -Name ${psQuote(name)} -ErrorAction Stop | ` +
+          START_TYPE_PRELUDE +
+            `Get-Service -Name ${psQuote(name)} -ErrorAction Stop | ` +
             "Select-Object Name,DisplayName," +
-            "@{n='Status';e={$_.Status.ToString()}},@{n='StartType';e={$_.StartType.ToString()}}",
+            "@{n='Status';e={$_.Status.ToString()}}," +
+            `${START_TYPE_EXPRESSION}`,
         );
         return JSON.stringify(data, null, 2);
       }

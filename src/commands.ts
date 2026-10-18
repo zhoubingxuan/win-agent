@@ -4,6 +4,7 @@ import {
   findProfile,
   getSettings,
   loadSettings,
+  normalizeAgentMode,
   normalizeLanguage,
   publicSettings,
   removeProfile,
@@ -15,7 +16,7 @@ import {
   type Profile,
   type Settings,
 } from "./settings.js";
-import { psQuote } from "./util/ps.js";
+import { powerShellInfo, psQuote } from "./util/ps.js";
 import { VERSION } from "./version.js";
 import { MCP_SERVER_ID, mcp, safeName, upsertServer, type McpServer } from "./mcp.js";
 import type { ContextStats } from "./context.js";
@@ -135,6 +136,15 @@ interface Messages {
   contextSource: string;
   sourceSettings: string;
   sourceModel: string;
+  modeGuided: string;
+  modeNormal: string;
+  modeInvalid: string;
+  adminYes: string;
+  adminNo: string;
+  adminUnknown: string;
+  englishErrors: string;
+  onWord: string;
+  offWord: string;
   contextTrimmed: string;
   diagnoseHeader: string;
   capabilityHeader: string;
@@ -185,6 +195,7 @@ Change (saved to disk and applied immediately):
   /prompt <text>             system prompt
   /workdir <path>            working directory
   /powershell <exe>          powershell.exe or pwsh.exe
+  /mode <guided|normal>      supervision level (guided = one tool per step)
   /enable <name...>          enable tools  ( /enable all )
   /disable <name...>         disable tools
   /custom add <name> <ps>    add a custom command (one-line PowerShell)
@@ -287,6 +298,15 @@ current directory.`,
     contextSource: "  window {0} tokens, from {1}",
     sourceSettings: "the settings",
     sourceModel: "the endpoint",
+    modeGuided: "guided (one tool call per step, explicit procedure)",
+    modeNormal: "normal (plain prompt)",
+    modeInvalid: 'mode must be "guided" or "normal"',
+    adminYes: "yes",
+    adminNo: "no — service, firewall and machine-wide changes will be refused",
+    adminUnknown: "unknown",
+    englishErrors: "PowerShell error language",
+    onWord: "on",
+    offWord: "off",
     contextTrimmed: "  trimmed for the model: {0} old exchange(s) dropped, {1} tool result(s) shortened (the stored conversation is untouched)",
     diagnoseHeader: "endpoint diagnosis for {0} ({1}):",
     capabilityHeader: "endpoint compatibility:",
@@ -343,6 +363,7 @@ current directory.`,
   /prompt <text>             系统提示词
   /workdir <path>            工作目录
   /powershell <exe>          powershell.exe 或 pwsh.exe
+  /mode <guided|normal>      监督等级（guided = 每步只调用一个工具）
   /enable <name...>          启用工具（ /enable all ）
   /disable <name...>         停用工具
   /custom add <name> <ps>    添加自定义命令（单行 PowerShell）
@@ -444,6 +465,15 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
     contextSource: "  窗口 {0} tokens，来源：{1}",
     sourceSettings: "设置",
     sourceModel: "接口",
+    modeGuided: "高监督（每步只调用一个工具，附操作规范）",
+    modeNormal: "普通（原始提示词）",
+    modeInvalid: '模式必须是 "guided" 或 "normal"',
+    adminYes: "是",
+    adminNo: "否 —— 服务、防火墙、系统级修改都会被拒绝",
+    adminUnknown: "未知",
+    englishErrors: "PowerShell 报错语言",
+    onWord: "开",
+    offWord: "关",
     contextTrimmed: "  为模型精简过：丢弃 {0} 段较早的对话，缩短 {1} 条工具结果（磁盘上的对话不受影响）",
     diagnoseHeader: "{0}（{1}）接口检测：",
     capabilityHeader: "接口兼容性：",
@@ -566,6 +596,9 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
       const window = context.stats.limit
         ? `${context.stats.limit} tokens (${context.source})`
         : m().contextUnknownLimit;
+      const info = await powerShellInfo();
+      const admin =
+        info.elevated === true ? m().adminYes : info.elevated === false ? m().adminNo : m().adminUnknown;
       return [
         `version    : ${VERSION}`,
         `model      : ${s.model}`,
@@ -577,6 +610,10 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         `language   : ${s.language}`,
         `workdir    : ${s.workdir}`,
         `powershell : ${s.powershell}`,
+        `shell      : ${info.exe}${info.version ? ` ${info.version}` : ""}${info.found ? "" : "  (NOT FOUND)"}`,
+        `admin      : ${admin}`,
+        `psErrors   : ${s.psEnglishErrors ? m().onWord : m().offWord}`,
+        `mode       : ${s.agentMode === "guided" ? m().modeGuided : m().modeNormal}`,
         `webPort    : ${s.webPort}`,
         `dryRun     : ${s.dryRun}`,
         `autoApprove: ${s.autoApprove}`,
@@ -694,6 +731,18 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
     case "powershell":
     case "shell":
       return setKeys(host, { powershell: requireArg(rest, "/powershell pwsh.exe") });
+
+    case "mode": {
+      // High supervision for small local models vs. the plain prompt.
+      const value = rest.trim().toLowerCase();
+      if (!value) {
+        return `mode = ${getSettings().agentMode}  (guided | normal)`;
+      }
+      if (!/^(guided|supervised|supervision|strict|normal|plain|standard)$/.test(value)) {
+        throw new Error(m().modeInvalid);
+      }
+      return setKeys(host, { agentMode: normalizeAgentMode(value) });
+    }
 
     case "tools": {
       const s = getSettings();

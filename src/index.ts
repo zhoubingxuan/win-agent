@@ -4,7 +4,7 @@ import { stdin, stdout } from "node:process";
 import fs from "node:fs";
 import { Agent } from "./agent.js";
 import { getSettings, loadSettings, settingsFile, toConfig } from "./settings.js";
-import { configurePowerShell } from "./util/ps.js";
+import { configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { mcp } from "./mcp.js";
 import { VERSION } from "./version.js";
@@ -82,6 +82,7 @@ async function main(): Promise<void> {
   loadSettings();
   const settings = getSettings();
   configurePowerShell(settings.powershell);
+  configurePowerShellDiagnostics(settings.psEnglishErrors);
   if (fs.existsSync(settings.workdir)) {
     try {
       process.chdir(settings.workdir);
@@ -175,6 +176,13 @@ async function main(): Promise<void> {
   console.log(`  model : ${settings.model}`);
   console.log(`  api   : ${settings.baseUrl}`);
   console.log(`  tools : ${tools.names().join(", ")}`);
+  console.log(`  mode  : ${settings.agentMode}${settings.agentMode === "guided" ? " (one tool per step, explicit procedure)" : ""}`);
+  const info = await powerShellInfo();
+  console.log(
+    `  shell : ${info.exe}${info.version ? ` ${info.version}` : ""}` +
+      `  ·  ${info.elevated === true ? "elevated" : info.elevated === false ? "NOT elevated (some actions will be refused)" : "elevation unknown"}`,
+  );
+  if (!info.found) console.log("  warning: no PowerShell found - set the \"PowerShell binary\" setting");
   console.log(`  hints : run "npm run web" for the full interface`);
   if (flags.dryRun) console.log("  mode  : DRY RUN (nothing will be changed)");
   if (autoApprove) console.log("  mode  : auto-approve ON");

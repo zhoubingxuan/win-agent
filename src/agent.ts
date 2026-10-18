@@ -1,5 +1,5 @@
-import type { Config } from "./settings.js";
-import { LANGUAGE_INSTRUCTIONS } from "./settings.js";
+import type { AgentMode, Config, Language } from "./settings.js";
+import { GUIDED_INSTRUCTIONS, LANGUAGE_INSTRUCTIONS } from "./settings.js";
 import { chat, type ChatMessage, type ToolCall, type Usage } from "./llm.js";
 import { planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import type { ToolRegistry } from "./tools/index.js";
@@ -82,6 +82,33 @@ export function sanitizeAssistantText(text: string): string {
     .trim();
 }
 
+/**
+ * The extra operating procedure of a mode, for testing and for showing the user
+ * what the model is actually told. Empty in `normal` mode.
+ */
+export function guidanceFor(mode: AgentMode, language: Language): string {
+  if (mode !== "guided") return "";
+  return GUIDED_INSTRUCTIONS[language] ?? GUIDED_INSTRUCTIONS.en;
+}
+
+/**
+ * `guided` mode runs one tool per step: a small model that fires three calls at
+ * once is usually guessing, and the results then arrive after it has already
+ * moved on. The extra calls are still answered (the tool protocol requires one
+ * message per call) with a short note instead of silence.
+ */
+export function splitToolCalls(
+  calls: ToolCall[],
+  mode: AgentMode,
+): { go: ToolCall[]; extra: ToolCall[] } {
+  if (mode !== "guided" || calls.length <= 1) return { go: calls, extra: [] };
+  return { go: calls.slice(0, 1), extra: calls.slice(1) };
+}
+
+/** The note sent back for a tool call that was skipped in guided mode. */
+export const SKIPPED_TOOL_CALL =
+  "Skipped: guided mode runs one tool per step. Read the result above, then call the next tool.";
+
 /** An agent that drives the model and the Windows tools until a task is done. */
 export class Agent {
   private readonly history: ChatMessage[];
@@ -109,11 +136,18 @@ export class Agent {
 
   /**
    * The system message is rebuilt on every construction so that changing the
-   * prompt or the language in the UI takes effect on the next turn.
+   * prompt, the language or the mode in the UI takes effect on the next turn.
    */
   private systemMessage(): string {
-    const instruction = LANGUAGE_INSTRUCTIONS[this.config.language] ?? LANGUAGE_INSTRUCTIONS.en;
-    return [this.config.systemPrompt, instruction, this.tools.describe()]
+    const language = this.config.language ?? "en";
+    const instruction = LANGUAGE_INSTRUCTIONS[language] ?? LANGUAGE_INSTRUCTIONS.en;
+    const mode = this.config.agentMode;
+    return [
+      this.config.systemPrompt,
+      instruction,
+      guidanceFor(mode, language),
+      this.tools.describe({ verbose: mode === "guided" }),
+    ]
       .filter((part) => part && part.trim())
       .join("\n\n");
   }
@@ -197,7 +231,8 @@ export class Agent {
         return message.content ?? "";
       }
 
-      for (const call of toolCalls) {
+      const { go, extra } = splitToolCalls(toolCalls, this.config.agentMode);
+      for (const call of go) {
         signal?.throwIfAborted();
         this.events.onToolCall?.(call.function.name, call.function.arguments);
         const result = await this.tools.execute(call.function.name, call.function.arguments);
@@ -207,6 +242,17 @@ export class Agent {
           tool_call_id: call.id,
           name: call.function.name,
           content: result,
+        });
+      }
+
+      // Guided mode: answer the calls that were deliberately not run, otherwise
+      // the conversation would be missing a tool message for that call id.
+      for (const call of extra) {
+        this.history.push({
+          role: "tool",
+          tool_call_id: call.id,
+          name: call.function.name,
+          content: SKIPPED_TOOL_CALL,
         });
       }
     }

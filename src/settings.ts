@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { dataDir, migrateLegacyData } from "./store.js";
 import { bomLabel, parseJsonWithBom } from "./util/json.js";
+import { decodeText } from "./util/text.js";
 import type { McpServer } from "./mcp.js";
 
 /** Languages supported by the UI and by the agent's replies. */
@@ -25,6 +26,58 @@ export function normalizeLanguage(value: unknown): Language {
   return "en";
 }
 
+/**
+ * How much the agent holds the model's hand.
+ *
+ * - `normal` - the plain system prompt. Right for a capable model (GPT-4 class).
+ * - `guided` - for small local models (7B class): an explicit operating
+ *   procedure, a tool catalog that spells out the required arguments, and one
+ *   tool call per step, so the model cannot lose track of what it is doing.
+ */
+export type AgentMode = "normal" | "guided";
+
+export const AGENT_MODES: AgentMode[] = ["normal", "guided"];
+
+/** Accepts "guided"/"supervised"/"严格" and "normal"/"plain"; unknown -> guided. */
+export function normalizeAgentMode(value: unknown): AgentMode {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (["guided", "guide", "supervised", "supervision", "strict", "监督", "高监督", "严格"].includes(raw)) {
+    return "guided";
+  }
+  if (["normal", "plain", "standard", "off", "普通", "正常"].includes(raw)) return "normal";
+  return "guided";
+}
+
+/**
+ * The extra operating procedure appended in `guided` mode. Small models follow a
+ * numbered list of one-line rules far better than one long paragraph, and the
+ * "one tool per step" rule is what stops them from inventing results.
+ */
+export const GUIDED_INSTRUCTIONS: Record<Language, string> = {
+  en: [
+    "Operating procedure (follow it exactly):",
+    "1. Call ONE tool per step, with a single JSON object of arguments. Never call two tools at once.",
+    "2. Wait for the tool result and read it before deciding the next step. Never assume a call worked.",
+    "3. Only use the tool names listed above. If none fits, say so in plain text - do not invent a tool.",
+    "4. Use exactly the argument names documented above; do not add other keys.",
+    "5. If a result starts with 'Error:' or 'Refused:', fix the arguments and call the SAME tool again. After two failures, explain the problem in plain text and stop.",
+    "6. Write paths exactly as the user gave them (C:\\Users\\Name\\file.txt); never guess a path.",
+    "7. Before a destructive step (delete, move, kill, stop a service, change the registry, shut down), say in one short sentence what you are about to do.",
+    "8. When the task is done, answer in plain text with a short summary of what you did, and do not call a tool.",
+  ].join("\n"),
+  zh: [
+    "操作规范（请严格遵守）：",
+    "1. 每一步只调用一个工具，参数是一个 JSON 对象；绝对不要一次调用多个工具。",
+    "2. 必须等工具结果返回并阅读后，再决定下一步；不要假设某次调用成功了。",
+    "3. 只使用上面列出的工具名。没有合适的工具时，用纯文本说明，不要自己臆造工具。",
+    "4. 参数名必须与上面文档完全一致，不要添加多余字段。",
+    "5. 如果结果以 'Error:' 或 'Refused:' 开头，修正参数后再次调用同一个工具；连续失败两次就用纯文本说明问题并停止。",
+    "6. 路径必须与用户给的一致（例如 C:\\Users\\Name\\file.txt），不要自己猜测路径。",
+    "7. 执行破坏性操作前（删除、移动、结束进程、停止服务、改注册表、关机），先用一句话说明你将要做什么。",
+    "8. 任务完成后，用纯文本简短总结你做了什么，此时不要再调用工具。",
+  ].join("\n"),
+};
+
 /** Configuration object consumed by the LLM client and the agent. */
 export interface Config {
   apiKey: string;
@@ -35,6 +88,8 @@ export interface Config {
   language: Language;
   systemPrompt: string;
   workdir: string;
+  /** How much guidance the agent gives the model (see AgentMode). */
+  agentMode: AgentMode;
   /** Stream the model's answer token by token instead of waiting for all of it. */
   stream: boolean;
   /** Context window used for budgeting (0 = unlimited / unknown). */
@@ -84,11 +139,15 @@ export interface Settings {
   // Environment
   workdir: string;
   powershell: string;
+  /** Force PowerShell error messages to English (a small model reads them better). */
+  psEnglishErrors: boolean;
   webPort: number;
   autoOpenBrowser: boolean;
   // Behaviour
   dryRun: boolean;
   autoApprove: boolean;
+  /** normal = plain prompt, guided = step-by-step supervision for small models. */
+  agentMode: AgentMode;
   /** Persist the conversation to disk so it survives restarts (记忆化). */
   remember: boolean;
   /** Stream replies token by token (lower perceived latency on local models). */
@@ -173,10 +232,14 @@ export const DEFAULTS: Settings = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   workdir: process.cwd(),
   powershell: "powershell.exe",
+  psEnglishErrors: true,
   webPort: 8787,
   autoOpenBrowser: true,
   dryRun: false,
   autoApprove: false,
+  // The project exists to drive Windows with *small* local models, so the
+  // supervised mode is the default. One switch flips it to the plain prompt.
+  agentMode: "guided",
   remember: true,
   stream: true,
   contextLimit: 0,
@@ -216,6 +279,7 @@ const BOOLEAN_KEYS: Array<keyof Settings> = [
   "autoOpenBrowser",
   "remember",
   "stream",
+  "psEnglishErrors",
   "mcpEnabled",
   "syncLocalModels",
 ];
@@ -363,6 +427,7 @@ export function coerceSetting(key: string, value: unknown): unknown {
   if (NUMBER_KEYS.includes(typed)) return asNumber(key, value);
   if (BOOLEAN_KEYS.includes(typed)) return asBoolean(value);
   if (typed === "language") return normalizeLanguage(value);
+  if (typed === "agentMode") return normalizeAgentMode(value);
   if (typed === "modelContext") return asModelContext(value);
   if (typed === "profiles") return asProfiles(value);
   if (typed === "enabledTools") {
@@ -385,8 +450,12 @@ function readFileSettings(): Record<string, unknown> {
   settingsWarning = null;
   if (!fs.existsSync(file)) return {};
   try {
-    const { value, bom } = parseJsonWithBom<Record<string, unknown>>(fs.readFileSync(file, "utf8"));
-    if (bom) settingsWarning = `${file} starts with a ${bomLabel(bom)}; it was read anyway, but saving from the UI rewrites it cleanly.`;
+    // Notepad's "Unicode" save option (and Windows PowerShell's own defaults)
+    // produce UTF-16, which would otherwise look like a corrupt settings file.
+    const decoded = decodeText(fs.readFileSync(file));
+    const { value, bom } = parseJsonWithBom<Record<string, unknown>>(decoded.text);
+    const mark = decoded.bom ?? bom;
+    if (mark) settingsWarning = `${file} starts with a ${bomLabel(mark)}; it was read anyway, but saving from the UI rewrites it cleanly.`;
     return value;
   } catch (error) {
     // Never silently: a settings file that cannot be parsed looks exactly like
@@ -414,6 +483,8 @@ function fromEnv(): Record<string, unknown> {
   if (env.AGENT_SYSTEM_PROMPT) patch.systemPrompt = env.AGENT_SYSTEM_PROMPT;
   if (env.AGENT_WORKDIR) patch.workdir = env.AGENT_WORKDIR;
   if (env.AGENT_POWERSHELL) patch.powershell = env.AGENT_POWERSHELL;
+  if (env.AGENT_PS_ENGLISH_ERRORS) patch.psEnglishErrors = env.AGENT_PS_ENGLISH_ERRORS;
+  if (env.AGENT_MODE) patch.agentMode = env.AGENT_MODE;
   if (env.AGENT_WEB_PORT) patch.webPort = env.AGENT_WEB_PORT;
   if (env.AGENT_STREAM) patch.stream = env.AGENT_STREAM;
   if (env.AGENT_CONTEXT_LIMIT) patch.contextLimit = env.AGENT_CONTEXT_LIMIT;
@@ -626,6 +697,7 @@ export function toConfig(settings: Settings = current): Config {
     language: settings.language,
     systemPrompt: settings.systemPrompt,
     workdir: settings.workdir,
+    agentMode: settings.agentMode,
     stream: settings.stream,
     contextLimit: context.limit,
     requestTimeoutMs: settings.requestTimeoutMs,
