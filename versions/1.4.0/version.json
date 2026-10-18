@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.4.0",
+  "createdAt": "2026-10-18T09:07:45.008Z",
+  "node": ">=20.3",
+  "files": 67,
+  "bytes": 854915,
+  "note": "The release that makes a small model **safe to leave alone**: every change it makes is now written down, everything that can be taken back is one `/undo` away,…"
+}

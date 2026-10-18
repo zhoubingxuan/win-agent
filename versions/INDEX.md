@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 1.4.0 | 2026-10-18 09:07 | 67 | The release that makes a small model **safe to leave alone**: every change it makes is now written down, everything that can be taken back is one `/undo` away,… |
 | 1.3.1 | 2026-10-18 08:08 | 64 | A patch that makes the project check itself: **continuous integration** on every push, and three test suites that pin the things that used to be checked by… |
 | 1.3.0 | 2026-10-18 07:36 | 60 | Two changes that make the agent better at its actual job: it now **supervises a small local model instead of hoping**, and it **survives the Windows machine it… |
 | 1.2.0 | 2026-10-18 06:31 | 54 | Three things that make the agent reach further without making it harder to drive: it can now use **tools that live in other programs** (MCP), it can **see… |

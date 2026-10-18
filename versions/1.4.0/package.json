@@ -1,0 +1,56 @@
+{
+  "name": "win-agent",
+  "version": "1.4.0",
+  "description": "A Windows automation agent that lets local LLMs drive Windows via high-level tools.",
+  "type": "module",
+  "bin": {
+    "win-agent": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "web": "tsx src/server.ts",
+    "build": "node scripts/clean.mjs && tsc && node scripts/copy-assets.mjs",
+    "start": "node dist/index.js",
+    "start:web": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/test-context.mjs",
+    "test:providers": "tsx scripts/test-providers.mjs",
+    "test:mcp": "tsx scripts/test-mcp.mjs",
+    "test:models": "tsx scripts/test-models.mjs",
+    "test:mode": "tsx scripts/test-mode.mjs",
+    "test:api": "tsx scripts/test-api.mjs",
+    "test:i18n": "tsx scripts/test-i18n.mjs",
+    "test:docs": "tsx scripts/test-docs.mjs",
+    "test:audit": "tsx scripts/test-audit.mjs",
+    "test:windows": "tsx scripts/test-windows.mjs",
+    "test:isolation": "node scripts/test-isolation.mjs",
+    "test:all": "npm run test && npm run test:providers && npm run test:mcp && npm run test:models && npm run test:mode && npm run test:i18n && npm run test:docs && npm run test:api && npm run test:audit && npm run test:windows && npm run test:isolation",
+    "version:show": "node scripts/version.mjs",
+    "version:set": "node scripts/version.mjs --set",
+    "version:list": "node scripts/version.mjs --list",
+    "version:diff": "node scripts/version.mjs --diff",
+    "version:tag": "node scripts/version.mjs --tag",
+    "release": "npm run build && node scripts/version.mjs --snapshot"
+  },
+  "keywords": [
+    "agent",
+    "windows",
+    "llm",
+    "ollama",
+    "automation",
+    "cli"
+  ],
+  "engines": {
+    "node": ">=20.3"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
