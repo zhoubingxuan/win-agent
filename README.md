@@ -692,6 +692,7 @@ versions/
   INDEX.md        index of the backups (written by npm run release)
   1.1.0/          one folder per version: the complete agent at that version
 data/             settings, conversation records and token totals
+.git/             git history (branch main, one tag per version)
 ```
 
 The agent loop: send conversation + tool schemas → run requested tools → feed
