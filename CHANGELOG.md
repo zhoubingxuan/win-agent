@@ -13,6 +13,95 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-18
+
+Three things that make the agent reach further without making it harder to drive: it can
+now use **tools that live in other programs** (MCP), it can **see every model your local
+servers can load** — LM Studio *and* Ollama in one list — and the chat itself has a
+**toolbar** for the working directory, the endpoint and the model.
+
+### Added
+
+- **MCP — Model Context Protocol.** win-agent is now an MCP *client*, so the model can
+  call tools implemented by other programs: a filesystem server, git, a database, your own
+  service. Two transports are implemented, both from the specification:
+  - **stdio** — the agent starts the server as a child process and speaks
+    newline-delimited JSON-RPC over its stdin/stdout (handshake, paginated `tools/list`,
+    `tools/call`, server-initiated requests answered with an error instead of being left
+    hanging). On Windows the command is resolved through `PATHEXT` and `.cmd`/`.bat`
+    servers are started through `cmd.exe`, so you write `npx`, not `npx.cmd`.
+  - **Streamable HTTP** — one POST per message, with either a JSON reply or an
+    `text/event-stream` body, and the `Mcp-Session-Id` header carried between calls.
+  - Every advertised tool becomes a normal tool named `mcp__<server>__<tool>` (sanitized
+    to `[A-Za-z0-9_-]`, 64 characters max) with the server's own JSON Schema, so it lands
+    in the catalog, in the sidebar chips, in *Enabled tools*, and behind the usual
+    approval prompt — unless that server is marked **auto-approve**.
+  - **A master switch and one switch per server** (`mcpEnabled`, `mcpServers`). MCP is
+    **off** by default: while it is off nothing is spawned and no MCP tool is offered.
+    A server that is down is a warning in the MCP panel (with the reason and the tools it
+    offered last time), never a failed start.
+  - The tool list is refreshed at boot, whenever MCP settings change, before every turn
+    (cached for two minutes) and on **Reconnect & refresh tools**, so a server you start
+    later is picked up without a restart.
+  - Settings → *MCP*: a `stdio ↔ HTTP` slider, the command line or URL, an auto-approve
+    switch, per-server switches and a status line. Terminal: `/mcp`, `/mcp on|off`,
+    `/mcp tools`, `/mcp refresh`, `/mcp enable|disable <id>`, `/mcp add <id> stdio …|http …`,
+    `/mcp remove <id>`. API: `GET`/`POST /api/mcp`.
+- **Local model sync — every local server in one list.** `syncLocalModels` (on by
+  default) makes **Refresh models** / `/models` ask each local endpoint in parallel and
+  merge the answers: LM Studio's `/api/v0/models` first (ids *and* context lengths), then
+  the OpenAI-compatible `/v1/models`, then Ollama's `/api/tags`. `127.0.0.1:1234` and
+  `127.0.0.1:11434` are probed even when no profile points at them, and a server that is
+  not running is reported as *no answer* while the others still answer. The picker is
+  grouped per server, and **picking a model that lives on another server switches the
+  endpoint with it** (`activeProfile` + `model` in one update). The context lengths found
+  this way feed `modelContext` and the context planner.
+- **Chat toolbar.** Above the composer: the **working directory** (a dropdown of the last
+  ten, plus **Browse…**, an in-UI folder picker that walks your drives and folders over
+  `GET /api/fs/list`), the **endpoint** and the **model**, plus **Refresh models**. All of
+  them apply instantly and are the same settings as everywhere else.
+- **New settings**: `mcpEnabled` (false), `mcpServers` (`[]`), `syncLocalModels` (true) and
+  `recentWorkdirs` (`[]`, maintained automatically — the folder you left is kept too).
+- **[examples/mcp.md](examples/mcp.md)** — a worked walkthrough that starts with a server
+  already on disk (the test fixture), then a real `npx` filesystem server, a Streamable
+  HTTP server, the same thing over the API and the settings file, and what each error
+  message means. Plus `examples/settings.md` (MCP + model-sync settings) and
+  `examples/api.md` (the new endpoints).
+
+### Changed
+
+- `POST /api/models` now also returns `endpoints`, `merged` and `context` when
+  `syncLocalModels` is on; `GET /api/state` carries the live `mcp` snapshot; the built-in
+  tool catalog can grow at runtime (MCP) instead of being fixed at build time.
+- The terminal's `/models` lists every local server, and `/status` reports the MCP switch,
+  the server count and the tool count.
+- New endpoints: `GET`/`POST /api/mcp` and `GET /api/fs/list`.
+
+### Fixed
+
+- **A server that cannot be started no longer costs 15 seconds.** A missing command, a
+  non-executable path or a process that dies immediately is detected when the child is
+  spawned (`could not start: spawn npx ENOENT`, or the server's own stderr for an
+  immediate exit) instead of waiting for the `initialize` timeout.
+- The `/mcp tools` listing showed the server's own tool names; it now prints the names the
+  model actually calls (`mcp__server__tool`).
+- A `kind: "cloud"` profile in a hand-written `settings.json` silently became `local`; it
+  is `"api"` (the example file was wrong — the code was not).
+
+### Tests
+
+- `npm run test:mcp` — 49 checks against a mock MCP server
+  ([`scripts/fixtures/mock-mcp-server.mjs`](scripts/fixtures/mock-mcp-server.mjs), which you
+  can also add as a real server): naming and sanitizing, the handshake, the paginated tool
+  list, a server that logs to stdout, a server that never answers, one that cannot start,
+  one that does not exist, approval denial, auto-approve, dry run, error results,
+  structured content, server-initiated requests, and the HTTP transport with both a JSON
+  and an SSE reply.
+- `npm run test:models` — 23 checks for local model discovery against mock LM Studio and
+  Ollama servers: route layering, merging, `alsoOn`, context lengths, a dead server,
+  endpoints with a reduced API, and `localEndpointsFor()` deduplication.
+- `npm run test:all` runs all five suites (context, providers, mcp, models, isolation).
+
 ## [1.1.1] — 2026-10-18
 
 A patch that makes the "one folder per version" rule airtight, adds the examples folder,

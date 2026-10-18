@@ -1,7 +1,7 @@
 # Ready-made settings / 现成的配置
 
 `data/settings.json` is written by the UI from the built-in defaults, so you never have to
-type one. These three are for when you *do* want to start from a file: copy the block into
+type one. These are for when you *do* want to start from a file: copy the block into
 `data/settings.json` (or `%AGENT_SETTINGS_FILE%`), restart, done.
 
 Keys not mentioned keep their defaults — see the
@@ -89,7 +89,7 @@ folder and the tools stay where they are, only the endpoint changes.
     },
     {
       "id": "cloud",
-      "kind": "cloud",
+      "kind": "api",
       "model": "gpt-4o-mini",
       "baseUrl": "https://api.openai.com/v1",
       "apiKey": "REPLACE-WITH-YOUR-KEY"
@@ -115,6 +115,77 @@ PS> /profile use cloud
 
 `apiKey` may also come from the environment (`OPENAI_API_KEY`, ...) — the UI never shows
 it back, `/status` prints whether one is set, not what it is.
+
+## One model list for LM Studio *and* Ollama
+
+`syncLocalModels` is on by default: **Refresh models** then asks every `local` profile
+*plus* `127.0.0.1:1234` and `127.0.0.1:11434` what they can load, and merges the answers
+into one picker, grouped per server. Picking a model that lives on another server
+switches the endpoint with it.
+
+```json
+{
+  "syncLocalModels": true,
+  "activeProfile": "local",
+  "profiles": [
+    { "id": "local", "kind": "local", "model": "glm-4.7-flash", "baseUrl": "http://127.0.0.1:1234/v1", "apiKey": "local" },
+    { "id": "ollama", "kind": "local", "model": "qwen2.5:7b", "baseUrl": "http://127.0.0.1:11434/v1", "apiKey": "ollama" }
+  ]
+}
+```
+
+Set it to `false` (Settings → *Local model sync*) if you want the model list to come from
+the active endpoint alone — a cloud API, for instance.
+
+## With MCP servers
+
+MCP is off by default. This enables it and adds two servers: a filesystem server started
+as a child process, and an HTTP server that is trusted enough not to ask for approval.
+
+```json
+{
+  "mcpEnabled": true,
+  "mcpServers": [
+    {
+      "id": "fs",
+      "name": "fs",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:\\new"],
+      "env": {},
+      "url": "",
+      "enabled": true,
+      "autoApprove": false,
+      "tools": []
+    },
+    {
+      "id": "docs",
+      "name": "docs",
+      "transport": "http",
+      "command": "",
+      "args": [],
+      "env": {},
+      "url": "http://127.0.0.1:3001/mcp",
+      "enabled": true,
+      "autoApprove": true,
+      "tools": []
+    }
+  ]
+}
+```
+
+Their tools reach the model as `mcp__fs__read_file`, `mcp__docs__search`, ... — so
+`enabledTools` can allow or hide them one by one:
+
+```json
+{
+  "mcpEnabled": true,
+  "enabledTools": ["files", "system", "web", "mcp__fs__read_file", "mcp__fs__list_directory"]
+}
+```
+
+See [mcp.md](mcp.md) for the whole workflow. `mcpEnabled` is the master switch: while it
+is off, no server is started and no MCP tool is offered, however many are configured.
 
 ## Safer defaults for a model you do not trust yet
 

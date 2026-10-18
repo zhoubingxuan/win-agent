@@ -146,6 +146,56 @@ const I18N = {
     "context.source.model": "from the endpoint",
     "context.source.unknown": "unknown — set a limit if replies get cut off",
     "context.trimmed": "trimmed: {0} old exchange(s) dropped, {1} tool result(s) shortened",
+    "chat.workdir": "workdir",
+    "chat.browse": "Browse…",
+    "chat.endpoint": "endpoint",
+    "chat.model": "model",
+    "chat.refresh": "Refresh models",
+    "dir.title": "Choose the agent's working directory",
+    "dir.close": "Close",
+    "dir.up": "Up",
+    "dir.drives": "Drives",
+    "dir.go": "Open",
+    "dir.use": "Use this folder",
+    "dir.empty": "(no sub-folders here — use this folder, or go up)",
+    "dir.failed": "cannot read this folder",
+    "settings.kindLocal": "local",
+    "settings.kindApi": "API",
+    "settings.localModels": "Local model sync",
+    "settings.localModelsHint":
+      "Ask every local server — LM Studio (port 1234) and Ollama (port 11434) — which models it can load, and put them in one list. Picking a model that lives on another server switches the endpoint for you. Nothing leaves this machine.",
+    "settings.syncLocalModels": "Sync the models of every local server",
+    "fleet.empty": "(no local server answered — start LM Studio or Ollama and press Refresh models)",
+    "fleet.ok": "{0} model(s)",
+    "fleet.none": "no models",
+    "fleet.error": "no answer",
+    "notice.syncDone": "synced {0} model(s) from {1} local server(s)",
+    "settings.mcp": "MCP — Model Context Protocol",
+    "settings.mcpHint":
+      "MCP lets the agent use tools that live in other programs: a filesystem server, git, a database, your own service. Add one with its start command (<code>stdio</code>, e.g. <code>npx -y @modelcontextprotocol/server-filesystem D:\\</code>) or with a URL (<code>http</code>). Their tools show up in the model's tool list as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> and ask for approval before they run.",
+    "settings.mcpEnabled": "Master switch: enable MCP",
+    "settings.mcpId": "id (a-z, 0-9, _)",
+    "settings.mcpCommand": "npx -y @modelcontextprotocol/server-filesystem D:\\",
+    "settings.mcpStdio": "stdio",
+    "settings.mcpHttp": "HTTP",
+    "settings.mcpAuto": "auto-approve",
+    "settings.mcpAdd": "Add server",
+    "settings.mcpRefresh": "Reconnect & refresh tools",
+    "settings.mcpNone": "(no MCP servers yet — add one below)",
+    "settings.mcpState": "{0} server(s) switched on · {1} tool(s) offered · refreshed {2}",
+    "settings.mcpOffState": "MCP is off: no server is started and no MCP tool is offered.",
+    "settings.mcpNever": "never",
+    "mcp.connected": "connected",
+    "mcp.disconnected": "not connected",
+    "mcp.on": "connected, {0} tool(s)",
+    "mcp.disabled": "off",
+    "mcp.tools": "{0} tool(s): {1}",
+    "mcp.remove": "Remove",
+    "notice.mcpRefreshed": "MCP: {0} tool(s) from {1} server(s)",
+    "notice.mcpAdded": "MCP server {0} added",
+    "notice.mcpRemoved": "MCP server {0} removed",
+    "chat.current": "current",
+    "notice.workdirChanged": "workdir: {0}",
   },
   zh: {
     "brand.sub": "让本地小模型操作 Windows",
@@ -291,6 +341,56 @@ const I18N = {
     "context.source.model": "来自接口",
     "context.source.unknown": "未知 —— 如果回复被截断可以手动设置",
     "context.trimmed": "已精简：丢弃 {0} 段旧对话，缩短 {1} 条工具结果",
+    "chat.workdir": "工作目录",
+    "chat.browse": "浏览…",
+    "chat.endpoint": "接口",
+    "chat.model": "模型",
+    "chat.refresh": "刷新模型",
+    "dir.title": "选择 agent 的工作目录",
+    "dir.close": "关闭",
+    "dir.up": "上一层",
+    "dir.drives": "磁盘",
+    "dir.go": "打开",
+    "dir.use": "用这个文件夹",
+    "dir.empty": "（这里没有子文件夹 —— 直接用这个文件夹，或返回上一层）",
+    "dir.failed": "无法读取这个文件夹",
+    "settings.kindLocal": "本地",
+    "settings.kindApi": "云端 API",
+    "settings.localModels": "本地模型同步",
+    "settings.localModelsHint":
+      "同时询问本机的 LM Studio（1234 端口）和 Ollama（11434 端口）能加载哪些模型，合成一个列表。选中属于另一个服务的模型时，接口会自动切过去。全程不联网。",
+    "settings.syncLocalModels": "同步所有本地服务的模型",
+    "fleet.empty": "（没有本地服务响应 —— 请先启动 LM Studio 或 Ollama，再点「刷新模型」）",
+    "fleet.ok": "{0} 个模型",
+    "fleet.none": "没有模型",
+    "fleet.error": "无响应",
+    "notice.syncDone": "已从 {1} 个本地服务同步 {0} 个模型",
+    "settings.mcp": "MCP —— Model Context Protocol",
+    "settings.mcpHint":
+      "MCP 让 agent 用上别的程序里的工具：文件系统服务、git、数据库、你自己的服务。可以用启动命令添加（<code>stdio</code>，例如 <code>npx -y @modelcontextprotocol/server-filesystem D:\\</code>），也可以用网址添加（<code>http</code>）。这些工具会以 <code>mcp__&lt;服务器&gt;__&lt;工具&gt;</code> 出现在模型的工具列表里，执行前会征求你的同意。",
+    "settings.mcpEnabled": "总开关：启用 MCP",
+    "settings.mcpId": "id（a-z、0-9、_）",
+    "settings.mcpCommand": "npx -y @modelcontextprotocol/server-filesystem D:\\",
+    "settings.mcpStdio": "stdio",
+    "settings.mcpHttp": "HTTP",
+    "settings.mcpAuto": "自动批准",
+    "settings.mcpAdd": "添加服务器",
+    "settings.mcpRefresh": "重新连接并刷新工具",
+    "settings.mcpNone": "（还没有 MCP 服务器 —— 在下面添加一个）",
+    "settings.mcpState": "已打开 {0} 个服务器 · 提供 {1} 个工具 · 刷新于 {2}",
+    "settings.mcpOffState": "MCP 已关闭：不会启动任何服务器，也不会向模型提供 MCP 工具。",
+    "settings.mcpNever": "从未",
+    "mcp.connected": "已连接",
+    "mcp.disconnected": "未连接",
+    "mcp.on": "已连接，{0} 个工具",
+    "mcp.disabled": "已关闭",
+    "mcp.tools": "{0} 个工具：{1}",
+    "mcp.remove": "删除",
+    "notice.mcpRefreshed": "MCP：{1} 个服务器提供了 {0} 个工具",
+    "notice.mcpAdded": "已添加 MCP 服务器 {0}",
+    "notice.mcpRemoved": "已删除 MCP 服务器 {0}",
+    "chat.current": "当前",
+    "notice.workdirChanged": "工作目录：{0}",
   },
 };
 
@@ -331,7 +431,10 @@ let state = {
   data: null,
   context: null,
   version: "",
+  mcp: null,
 };
+/** Local endpoints found by the last model refresh (LM Studio / Ollama). */
+let discovered = { endpoints: null, merged: null, sync: false };
 let customTools = [];
 let termHistory = [];
 let termHistoryIndex = -1;
@@ -399,6 +502,9 @@ function applyLanguage() {
   renderUsage(state.usage);
   renderData(state.data);
   renderContext(state.context);
+  if (state.settings && state.settings.profiles) renderRuntime(state.settings);
+  renderMcp();
+  renderFleet();
 }
 
 async function setLanguage(value, persist = true) {
@@ -956,6 +1062,344 @@ function renderRuntime(settings) {
   fillModelSelect(el("q-model"), settings);
   fillProfileSelect(el("s-profile"), settings, true);
   fillModelSelect(el("s-modelPick"), settings);
+  fillProfileSelect(el("chat-profile"), settings, false);
+  fillChatModelSelect(settings);
+  fillWorkdirSelect(settings);
+}
+
+/* ------------------------------------------------- chat: working directory */
+
+/** The chat picker: the current working directory plus the recent ones. */
+function fillWorkdirSelect(settings) {
+  const select = el("chat-workdir");
+  if (!select) return;
+  const current = settings.workdir ?? "";
+  const list = [current, ...(settings.recentWorkdirs ?? [])].filter(Boolean);
+  select.innerHTML = "";
+  const seen = new Set();
+  for (const dir of list) {
+    if (seen.has(dir)) continue;
+    seen.add(dir);
+    const option = document.createElement("option");
+    option.value = dir;
+    option.textContent = dir;
+    option.title = dir;
+    if (dir === current) option.selected = true;
+    select.appendChild(option);
+  }
+}
+
+/** Change the agent's working directory (used by the picker and the dialog). */
+async function useWorkdir(dir) {
+  if (!dir) return;
+  const result = await api("/api/settings", "POST", { workdir: dir });
+  if (result.error) {
+    showNotice(`${t("error.prefix")}${result.error}`);
+    return;
+  }
+  if (result.settings) {
+    state.settings = result.settings;
+    applySettingsToUi(result.settings);
+  }
+  showNotice(t("notice.workdirChanged", dir));
+}
+
+/* ------------------------------------------------------- chat: model picker */
+
+/**
+ * The model list of the chat toolbar. When "sync local models" is on, every
+ * local server is listed as its own group, so a model can be picked from
+ * anywhere - and picking it switches the endpoint behind it.
+ */
+function modelGroups(settings) {
+  const groups = [];
+  const seen = new Set();
+  const active = activeProfileOf(settings);
+  const push = (label, models, endpointId) => {
+    const list = [];
+    for (const id of models ?? []) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      list.push({ id, endpointId });
+    }
+    if (list.length > 0) groups.push({ label, models: list });
+  };
+
+  push(
+    active ? `${active.id} — ${t("chat.current")}` : t("chat.current"),
+    modelNames(settings),
+    settings.activeProfile,
+  );
+  for (const endpoint of discovered.endpoints ?? []) {
+    if (endpoint.id === settings.activeProfile) continue;
+    push(
+      endpoint.ok ? endpoint.label : `${endpoint.label} (${t("fleet.error")})`,
+      endpoint.models,
+      endpoint.id,
+    );
+  }
+  return groups;
+}
+
+function fillChatModelSelect(settings) {
+  const select = el("chat-model");
+  if (!select) return;
+  select.innerHTML = "";
+  const groups = modelGroups(settings);
+  for (const group of groups) {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = group.label;
+    for (const model of group.models) {
+      const option = document.createElement("option");
+      option.value = model.id;
+      option.textContent = model.id;
+      option.dataset.profile = model.endpointId ?? "";
+      if (model.id === settings.model) option.selected = true;
+      optgroup.appendChild(option);
+    }
+    select.appendChild(optgroup);
+  }
+  if (select.options.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = t("runtime.noModels");
+    select.appendChild(option);
+  }
+}
+
+/* --------------------------------------------------------- folder browsing */
+
+let dirPath = "";
+
+async function openDirPicker() {
+  const dialog = el("dirDialog");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+  await showDir(state.settings?.workdir ?? "");
+}
+
+/** Ask the server for the sub-folders of `target` and draw them. */
+async function showDir(target) {
+  const list = el("dir-list");
+  const data = await api(`/api/fs/list?path=${encodeURIComponent(target ?? "")}`);
+  list.innerHTML = "";
+  if (data.error) {
+    setText(el("dir-current"), t("dir.failed"));
+    const row = document.createElement("div");
+    row.className = "dir-empty";
+    setText(row, `${t("error.prefix")}${data.error}`);
+    list.appendChild(row);
+    return;
+  }
+  dirPath = data.path ?? "";
+  el("dir-path").value = dirPath;
+  setText(el("dir-current"), dirPath || t("dir.drives"));
+  for (const dir of data.dirs ?? []) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "dir-item";
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    setText(icon, data.drives ? "▣" : "▸");
+    const name = document.createElement("span");
+    setText(name, dir.name);
+    item.append(icon, name);
+    item.onclick = () => showDir(dir.path);
+    list.appendChild(item);
+  }
+  if ((data.dirs ?? []).length === 0) {
+    const row = document.createElement("div");
+    row.className = "dir-empty";
+    setText(row, t("dir.empty"));
+    list.appendChild(row);
+  }
+  el("dirDialog").dataset.parent = data.parent ?? "";
+}
+
+/* ------------------------------------------- local model sync (LM + Ollama) */
+
+/** One row per local server that was asked for its model list. */
+function renderFleet() {
+  const box = el("sync-list");
+  if (!box) return;
+  box.innerHTML = "";
+  const endpoints = discovered.endpoints ?? [];
+  if (endpoints.length === 0) {
+    const row = document.createElement("div");
+    row.className = "muted";
+    setText(row, t("fleet.empty"));
+    box.appendChild(row);
+    return;
+  }
+  for (const endpoint of endpoints) {
+    const row = document.createElement("div");
+    row.className = "fleet-item";
+    const name = document.createElement("span");
+    name.className = "name";
+    setText(name, endpoint.label);
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    setText(
+      meta,
+      endpoint.ok
+        ? `${endpoint.models.length ? t("fleet.ok", endpoint.models.length) : t("fleet.none")} · ${endpoint.source}`
+        : `${t("fleet.error")}${endpoint.error ? ` — ${endpoint.error}` : ""}`,
+    );
+    row.append(name, meta);
+    box.appendChild(row);
+  }
+}
+
+/* ------------------------------------------------------------------- MCP */
+
+/** The MCP picture the server sent, or a safe placeholder before the first load. */
+function mcpSnapshot() {
+  if (state.mcp) return state.mcp;
+  const s = state.settings ?? {};
+  return {
+    enabled: !!s.mcpEnabled,
+    totalTools: 0,
+    ageMs: -1,
+    servers: (s.mcpServers ?? []).map((server) => ({
+      ...server,
+      connected: false,
+      liveTools: [],
+      error: "",
+    })),
+  };
+}
+
+function ageText(ms) {
+  if (ms === null || ms === undefined || ms < 0) return t("settings.mcpNever");
+  if (ms < 5000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 60000) return `${Math.round(ms / 1000)}s`;
+  return `${Math.round(ms / 60000)}m`;
+}
+
+function switchControl(checked, title, onChange, label) {
+  const wrap = document.createElement("label");
+  wrap.className = "switch";
+  wrap.title = title ?? "";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  input.onchange = () => onChange(input.checked);
+  const slider = document.createElement("span");
+  slider.className = "slider";
+  slider.setAttribute("aria-hidden", "true");
+  wrap.append(input, slider);
+  if (label) {
+    const text = document.createElement("span");
+    setText(text, label);
+    wrap.appendChild(text);
+  }
+  return wrap;
+}
+
+function renderMcp() {
+  const box = el("mcp-list");
+  if (!box) return;
+  const mcp = mcpSnapshot();
+  el("s-mcpEnabled").checked = !!mcp.enabled;
+  const on = mcp.servers.filter((server) => server.enabled).length;
+  setText(
+    el("mcp-state"),
+    mcp.enabled
+      ? t("settings.mcpState", on, mcp.totalTools, ageText(mcp.ageMs))
+      : t("settings.mcpOffState"),
+  );
+
+  box.innerHTML = "";
+  if (mcp.servers.length === 0) {
+    const row = document.createElement("div");
+    row.className = "muted";
+    setText(row, t("settings.mcpNone"));
+    box.appendChild(row);
+    return;
+  }
+
+  for (const server of mcp.servers) {
+    const row = document.createElement("div");
+    row.className = "mcp-item";
+
+    row.append(
+      switchControl(
+        server.enabled,
+        t("settings.mcpEnabled"),
+        (value) => mcpAction({ action: "toggle", id: server.id, enabled: value }),
+      ),
+    );
+
+    const name = document.createElement("span");
+    name.className = "name";
+    setText(name, server.id);
+
+    const state =
+      !server.enabled
+        ? t("mcp.disabled")
+        : server.connected
+          ? t("mcp.on", (server.liveTools ?? []).length)
+          : t("mcp.disconnected");
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    const where = server.transport === "http" ? server.url : [server.command, ...(server.args ?? [])].join(" ");
+    const who = server.connected && server.serverInfo ? ` · ${server.serverInfo}` : "";
+    setText(meta, `${server.transport} · ${where} · ${state}${who}${server.error ? ` — ${server.error}` : ""}`);
+    meta.title = `${where}${who}`;
+
+    row.append(
+      name,
+      meta,
+      switchControl(server.autoApprove, t("settings.mcpAuto"), (value) =>
+        mcpAction({
+          action: "update",
+          id: server.id,
+          server: { ...server, autoApprove: value, args: server.args, env: server.env },
+        }),
+      ),
+    );
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    setText(remove, t("mcp.remove"));
+    remove.onclick = () => mcpAction({ action: "remove", id: server.id });
+    row.appendChild(remove);
+
+    const tools = document.createElement("span");
+    tools.className = "tools";
+    const list = server.liveTools?.length ? server.liveTools : server.tools ?? [];
+    if (list.length > 0) setText(tools, t("mcp.tools", list.length, list.join(", ")));
+    row.appendChild(tools);
+
+    box.appendChild(row);
+  }
+}
+
+async function mcpAction(body) {
+  const message = el("m-msg");
+  if (message) setText(message, "…");
+  const result = await api("/api/mcp", "POST", body);
+  if (result.error) {
+    if (message) setText(message, `${t("error.prefix")}${result.error}`);
+    return null;
+  }
+  if (result.mcp) state.mcp = result.mcp;
+  renderMcp();
+  await refreshState();
+  if (result.tools !== undefined) {
+    showNotice(t("notice.mcpRefreshed", result.tools, mcpSnapshot().servers.filter((s) => s.connected).length));
+  }
+  if (message) setText(message, t("notice.mcpRefreshed", mcpSnapshot().totalTools, mcpSnapshot().servers.filter((s) => s.connected).length));
+  return result;
+}
+
+/** Split a command line into program + arguments, honouring quotes. */
+function splitCommandLine(line) {
+  const out = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let match;
+  while ((match = re.exec(line)) !== null) out.push(match[1] ?? match[2] ?? match[3]);
+  return out;
 }
 
 function renderMemory(settings, info) {
@@ -989,18 +1433,39 @@ async function loadModels(messageEl) {
   const id = el("s-profile").value || state.settings.activeProfile;
   if (messageEl) setText(messageEl, "…");
   const result = await api(`/api/models?profile=${encodeURIComponent(id)}`);
+  if (!result.error) {
+    // Keep what "sync local models" found so the pickers can group by server.
+    discovered = {
+      endpoints: result.endpoints ?? null,
+      merged: result.merged ?? null,
+      sync: !!result.sync,
+    };
+    renderFleet();
+    fillChatModelSelect(state.settings);
+  }
   await refreshState();
   if (result.error) {
     if (messageEl) setText(messageEl, `${t("error.prefix")}${result.error}`);
     return;
   }
+  if (result.merged && result.merged.length > 0) {
+    const servers = (result.endpoints ?? []).filter((e) => e.ok).length;
+    if (messageEl) setText(messageEl, t("notice.syncDone", result.merged.length, servers));
+    showNotice(t("notice.syncDone", result.merged.length, servers));
+    return;
+  }
   if (messageEl) setText(messageEl, t("notice.modelsLoaded", result.models.length, result.baseUrl));
 }
 
-/** Instantly switch the model of the active endpoint. */
-async function switchModel(name) {
+/**
+ * Instantly switch the model. When the model lives on another local server
+ * (the sync feature), the endpoint switches with it.
+ */
+async function switchModel(name, profile) {
   if (!name) return;
-  const result = await api("/api/settings", "POST", { model: name });
+  const patch = { model: name };
+  if (profile && profile !== state.settings.activeProfile) patch.activeProfile = profile;
+  const result = await api("/api/settings", "POST", patch);
   if (result.error) {
     showNotice(`${t("error.prefix")}${result.error}`);
     return;
@@ -1009,6 +1474,7 @@ async function switchModel(name) {
     state.settings = result.settings;
     applySettingsToUi(result.settings);
   }
+  if (patch.activeProfile) showNotice(t("notice.profileSwitched", patch.activeProfile));
 }
 
 /* ---------------------------------------------------------------- settings */
@@ -1050,9 +1516,12 @@ function fillSettingsForm(s) {
   el("s-autoOpenBrowser").checked = !!s.autoOpenBrowser;
   el("s-stream").checked = s.stream !== false;
   el("s-remember").checked = !!s.remember;
+  el("s-syncLocalModels").checked = s.syncLocalModels !== false;
   customTools = (s.customTools ?? []).map((c) => ({ ...c }));
   renderCustomTools();
   renderToolChecks(s.enabledTools);
+  renderMcp();
+  renderFleet();
 }
 
 function renderToolChecks(enabled) {
@@ -1129,6 +1598,7 @@ async function saveSettings() {
     autoOpenBrowser: el("s-autoOpenBrowser").checked,
     stream: el("s-stream").checked,
     remember: el("s-remember").checked,
+    syncLocalModels: el("s-syncLocalModels").checked,
     enabledTools: allChecked ? null : enabled,
     customTools,
   };
@@ -1169,8 +1639,10 @@ async function refreshState() {
   el("autoApprove").checked = data.settings.autoApprove;
   state.settings = data.settings;
   state.version = data.version ?? state.version;
+  state.mcp = data.mcp ?? state.mcp;
   setText(el("version"), state.version ? `v${state.version}` : "");
   renderRuntime(data.settings);
+  renderMcp();
   renderMemory(data.settings, data.memory);
   renderUsage(data.usage);
   renderContext(data.context);
@@ -1338,6 +1810,95 @@ el("q-profile").addEventListener("change", async (event) => {
 
 el("q-model").addEventListener("change", (event) => switchModel(event.target.value));
 
+/* ------------------------------------------------- chat toolbar + folders */
+
+el("chat-profile").addEventListener("change", async (event) => {
+  if (await useProfile(event.target.value)) {
+    showNotice(t("notice.profileSwitched", event.target.value));
+  }
+});
+
+el("chat-model").addEventListener("change", (event) => {
+  const option = event.target.selectedOptions[0];
+  switchModel(event.target.value, option?.dataset.profile || "");
+});
+
+el("chat-refresh").addEventListener("click", () => loadModels());
+el("chat-workdir").addEventListener("change", (event) => useWorkdir(event.target.value));
+el("chat-browse").addEventListener("click", () => openDirPicker());
+
+el("dir-close").addEventListener("click", () => el("dirDialog").close());
+el("dir-up").addEventListener("click", () => showDir(el("dirDialog").dataset.parent || ""));
+el("dir-drives").addEventListener("click", () => showDir(""));
+el("dir-go").addEventListener("click", () => showDir(el("dir-path").value.trim()));
+el("dir-path").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    showDir(el("dir-path").value.trim());
+  }
+});
+el("dir-use").addEventListener("click", async () => {
+  if (!dirPath) return;
+  el("dirDialog").close();
+  await useWorkdir(dirPath);
+});
+
+/* ------------------------------------------------------------------- MCP */
+
+el("s-mcpEnabled").addEventListener("change", async () => {
+  const enabled = el("s-mcpEnabled").checked;
+  const result = await api("/api/settings", "POST", { mcpEnabled: enabled });
+  if (result.mcp) state.mcp = result.mcp;
+  if (result.notices?.length) showNotice(result.notices.join("; "), 8000);
+  await refreshState();
+});
+
+el("s-syncLocalModels").addEventListener("change", async () => {
+  const result = await api("/api/settings", "POST", {
+    syncLocalModels: el("s-syncLocalModels").checked,
+  });
+  if (result.settings) state.settings = result.settings;
+  if (el("s-syncLocalModels").checked) loadModels(el("s-msg"));
+});
+
+el("m-refresh").addEventListener("click", () => mcpAction({ action: "refresh" }));
+
+el("m-add").addEventListener("click", async () => {
+  const id = el("m-id").value.trim();
+  const target = el("m-target").value.trim();
+  const message = el("m-msg");
+  if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) {
+    setText(message, `${t("error.prefix")}${t("settings.mcpId")}`);
+    return;
+  }
+  if (!target) {
+    setText(message, `${t("error.prefix")}${t("settings.mcpCommand")}`);
+    return;
+  }
+  const http = el("m-http").checked;
+  const parts = http ? [] : splitCommandLine(target);
+  const result = await mcpAction({
+    action: "add",
+    id,
+    server: {
+      id,
+      name: id,
+      transport: http ? "http" : "stdio",
+      command: parts[0] ?? "",
+      args: parts.slice(1),
+      url: http ? target : "",
+      env: {},
+      enabled: true,
+      autoApprove: el("m-auto").checked,
+    },
+  });
+  if (result) {
+    el("m-id").value = "";
+    el("m-target").value = "";
+    showNotice(t("notice.mcpAdded", id));
+  }
+});
+
 el("s-profile").addEventListener("change", (event) => useProfile(event.target.value, el("p-msg")));
 
 el("s-modelPick").addEventListener("change", (event) => {
@@ -1372,7 +1933,7 @@ el("p-new").addEventListener("click", async () => {
   const result = await api("/api/profiles", "POST", {
     action: "create",
     id,
-    kind: el("s-newProfileKind").value,
+    kind: el("s-newProfileApi").checked ? "api" : "local",
     baseUrl: el("s-baseUrl").value.trim(),
     apiKey: el("s-apiKey").value,
     model: el("s-model").value.trim(),
@@ -1486,4 +2047,6 @@ document.querySelectorAll(".example").forEach((button) => {
   await loadData();
   termLine(t("terminal.welcome"), "term-sys");
   connect();
+  // Fill the model picker with whatever the local servers can load.
+  loadModels();
 })();

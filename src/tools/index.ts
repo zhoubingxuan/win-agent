@@ -11,6 +11,7 @@ import { uiTool } from "./ui.js";
 import { powershellTool } from "./powershell.js";
 import { createWebTool } from "./web.js";
 import { createCustomTool } from "./custom.js";
+import { mcp } from "../mcp.js";
 
 export { ToolRegistry } from "./registry.js";
 export type { Approval, Tool, ToolContext } from "./registry.js";
@@ -42,6 +43,10 @@ export function createWindowsTools(approval: Approval, options: ToolOptions = {}
   if (options.customTools && options.customTools.length > 0) {
     registry.register(createCustomTool(options.customTools));
   }
+
+  // Tools offered by MCP servers (see src/mcp.ts). They are refreshed separately
+  // - `mcp.ensureFresh()` - so building the tool set stays synchronous.
+  for (const tool of mcp.tools(approval, options.dryRun ?? false)) registry.register(tool);
 
   return registry.filter(options.enabledTools ?? null);
 }

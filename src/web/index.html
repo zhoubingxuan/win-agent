@@ -89,6 +89,25 @@
               </div>
             </div>
           </div>
+          <div class="chatbar">
+            <label class="chatbar-field grow">
+              <span data-i18n="chat.workdir">workdir</span>
+              <select id="chat-workdir" title="Working directory"></select>
+            </label>
+            <button type="button" id="chat-browse" class="ghost small" data-i18n="chat.browse">Browse…</button>
+            <span class="chatbar-sep"></span>
+            <label class="chatbar-field">
+              <span data-i18n="chat.endpoint">endpoint</span>
+              <select id="chat-profile"></select>
+            </label>
+            <label class="chatbar-field">
+              <span data-i18n="chat.model">model</span>
+              <select id="chat-model"></select>
+            </label>
+            <button type="button" id="chat-refresh" class="ghost small" data-i18n="chat.refresh">
+              Refresh models
+            </button>
+          </div>
           <form id="composer" class="composer">
             <textarea id="input" rows="1" data-i18n-placeholder="chat.placeholder"
               placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"></textarea>
@@ -145,13 +164,17 @@
                 <span data-i18n="settings.newProfileId">New endpoint id</span>
                 <input id="s-newProfileId" type="text" placeholder="work-api" />
               </label>
-              <label>
+              <div class="block">
                 <span data-i18n="settings.newProfileKind">New endpoint kind</span>
-                <select id="s-newProfileKind">
-                  <option value="local">local</option>
-                  <option value="api">api</option>
-                </select>
-              </label>
+                <div class="twoway" title="local server ↔ cloud API">
+                  <span data-i18n="settings.kindLocal">local</span>
+                  <label class="switch">
+                    <input type="checkbox" id="s-newProfileApi" />
+                    <span class="slider" aria-hidden="true"></span>
+                  </label>
+                  <span data-i18n="settings.kindApi">API</span>
+                </div>
+              </div>
             </div>
             <div class="actions">
               <button type="button" id="p-models" class="ghost" data-i18n="settings.refreshModels">
@@ -250,6 +273,50 @@
               <button type="button" id="d-open" class="ghost" data-i18n="settings.openData">Open data folder</button>
             </div>
 
+            <h4 data-i18n="settings.localModels">Local model sync</h4>
+            <p class="muted" data-i18n="settings.localModelsHint">
+              Ask every local server — LM Studio (port 1234) and Ollama (port 11434) — which models it
+              can load, and show them all in one list. Picking a model from another server switches
+              the endpoint for you. Everything stays on this machine.
+            </p>
+            <div class="row-toggles">
+              <label class="switch"><input type="checkbox" id="s-syncLocalModels" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.syncLocalModels">Sync the models of every local server</span></label>
+            </div>
+            <div id="sync-list" class="fleet"></div>
+
+            <h4 data-i18n="settings.mcp">MCP — Model Context Protocol</h4>
+            <p class="muted" data-i18n-html="settings.mcpHint">
+              MCP lets the agent use tools that live in other programs: a filesystem server, git,
+              a database, your own HTTP service. Add one with its start command (<code>stdio</code>,
+              e.g. <code>npx -y @modelcontextprotocol/server-filesystem D:\</code>) or with a URL
+              (<code>http</code>). Their tools appear in the model's tool list as
+              <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> and ask for approval before they run.
+            </p>
+            <div class="row-toggles">
+              <label class="switch"><input type="checkbox" id="s-mcpEnabled" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpEnabled">Master switch: enable MCP</span></label>
+              <span id="mcp-state" class="muted"></span>
+            </div>
+            <div id="mcp-list" class="mcp-list"></div>
+            <div class="mcp-add">
+              <input id="m-id" type="text" data-i18n-placeholder="settings.mcpId" placeholder="id (a-z, 0-9, _)" />
+              <div class="twoway" title="stdio ↔ HTTP">
+                <span data-i18n="settings.mcpStdio">stdio</span>
+                <label class="switch">
+                  <input type="checkbox" id="m-http" />
+                  <span class="slider" aria-hidden="true"></span>
+                </label>
+                <span data-i18n="settings.mcpHttp">HTTP</span>
+              </div>
+              <input id="m-target" type="text" data-i18n-placeholder="settings.mcpCommand"
+                placeholder="npx -y @modelcontextprotocol/server-filesystem D:\" />
+              <label class="switch" title="Run this server's tools without asking"><input type="checkbox" id="m-auto" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpAuto">auto-approve</span></label>
+              <button type="button" id="m-add" class="ghost" data-i18n="settings.mcpAdd">Add server</button>
+            </div>
+            <div class="actions">
+              <button type="button" id="m-refresh" class="ghost" data-i18n="settings.mcpRefresh">Reconnect &amp; refresh tools</button>
+              <span id="m-msg" class="muted"></span>
+            </div>
+
             <h4 data-i18n="settings.enabledTools">Enabled tools</h4>
             <p class="muted" data-i18n="settings.enabledToolsHint">
               Turn a tool off with its switch to hide it from the model. All on = all enabled.
@@ -280,6 +347,24 @@
         </section>
       </main>
     </div>
+
+    <dialog id="dirDialog">
+      <div class="dir-head">
+        <strong data-i18n="dir.title">Choose the agent's working directory</strong>
+        <button type="button" id="dir-close" class="ghost small" data-i18n="dir.close">Close</button>
+      </div>
+      <div class="dir-bar">
+        <button type="button" id="dir-up" class="ghost small" data-i18n="dir.up">Up</button>
+        <button type="button" id="dir-drives" class="ghost small" data-i18n="dir.drives">Drives</button>
+        <input id="dir-path" type="text" spellcheck="false" placeholder="D:\" />
+        <button type="button" id="dir-go" class="ghost small" data-i18n="dir.go">Open</button>
+      </div>
+      <div id="dir-list" class="dir-list"></div>
+      <div class="dir-foot">
+        <code id="dir-current">…</code>
+        <button type="button" id="dir-use" class="primary" data-i18n="dir.use">Use this folder</button>
+      </div>
+    </dialog>
 
     <script src="/app.js"></script>
   </body>

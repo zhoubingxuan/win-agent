@@ -17,6 +17,7 @@ import {
 } from "./settings.js";
 import { psQuote } from "./util/ps.js";
 import { VERSION } from "./version.js";
+import { MCP_SERVER_ID, mcp, safeName, upsertServer, type McpServer } from "./mcp.js";
 import type { ContextStats } from "./context.js";
 import type {
   ConversationSummary,
@@ -139,6 +140,19 @@ interface Messages {
   capabilityHeader: string;
   capabilityEmpty: string;
   versionLine: string;
+  mcpHeader: string;
+  mcpEmpty: string;
+  mcpStateOn: string;
+  mcpStateOff: string;
+  mcpStateDead: string;
+  mcpUsage: string;
+  mcpAddUsage: string;
+  mcpIdInvalid: string;
+  mcpUnknown: string;
+  mcpEnableUsage: string;
+  mcpRemoveUsage: string;
+  mcpToolsHeader: string;
+  mcpNoTools: string;
 }
 
 const MESSAGES: Record<Language, Messages> = {
@@ -194,6 +208,16 @@ Endpoints (local server vs. cloud API) and memory:
   /usage                     tokens, speed and cache for this conversation
   /conversations             list the archived conversations
   /data                      where data/ lives on disk
+
+MCP servers (Model Context Protocol - tools from other programs):
+  /mcp                       master switch, servers, connections, tool counts
+  /mcp on | off              master switch (nothing is started while it is off)
+  /mcp refresh               reconnect and re-read the tool lists
+  /mcp tools                 every MCP tool the model can call
+  /mcp add <id> stdio <cmd> [args...]    e.g. npx -y @modelcontextprotocol/server-filesystem D:\\
+  /mcp add <id> http <url>               a remote / proxied MCP endpoint
+  /mcp enable | disable <id> switch one server
+  /mcp remove <id>           forget a server
 
 Other:
   /stop                      stop the task that is running
@@ -268,6 +292,27 @@ current directory.`,
     capabilityHeader: "endpoint compatibility:",
     capabilityEmpty: "no compatibility problems seen with this endpoint",
     versionLine: "win-agent {0}",
+    mcpHeader: "MCP master switch: {0} ({1} server(s) configured)",
+    mcpEmpty: "(no MCP servers - /mcp add <id> stdio <command> [args...])",
+    mcpStateOn: "connected, {0} tool(s)",
+    mcpStateOff: "off",
+    mcpStateDead: "not connected",
+    mcpUsage: `usage:
+  /mcp                 status
+  /mcp on | off        master switch
+  /mcp refresh         reconnect and re-read the tool lists
+  /mcp tools           every MCP tool
+  /mcp add <id> stdio <command> [args...]
+  /mcp add <id> http <url>
+  /mcp enable | disable <id>
+  /mcp remove <id>`,
+    mcpAddUsage: "usage: /mcp add <id> <stdio <command> [args...] | http <url>>",
+    mcpIdInvalid: "server id must be letters, digits, - or _ (max 32)",
+    mcpUnknown: 'no MCP server "{0}". Try /mcp',
+    mcpEnableUsage: "usage: /mcp {0} <id>",
+    mcpRemoveUsage: "usage: /mcp remove <id>",
+    mcpToolsHeader: "MCP tools the model can call ({0}):",
+    mcpNoTools: "(no MCP tools - switch MCP on and refresh)",
   },
   zh: {
     help: `内部指令 —— 下面每一项在「设置」标签页里也能改。
@@ -321,6 +366,16 @@ current directory.`,
   /usage                     本对话的 token、速度与缓存
   /conversations             列出已归档的对话
   /data                      数据文件夹在哪里
+
+MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
+  /mcp                       总开关、服务器、连接状态、工具数量
+  /mcp on | off              总开关（关闭时不会启动任何服务器）
+  /mcp refresh               重新连接并重读工具列表
+  /mcp tools                 列出模型可调用的全部 MCP 工具
+  /mcp add <id> stdio <命令> [参数...]   例如 npx -y @modelcontextprotocol/server-filesystem D:\\
+  /mcp add <id> http <网址>              远程或经代理的 MCP 接口
+  /mcp enable | disable <id> 单独开关某个服务器
+  /mcp remove <id>           删除一个服务器
 
 其他：
   /stop                      停止正在运行的任务
@@ -394,6 +449,27 @@ current directory.`,
     capabilityHeader: "接口兼容性：",
     capabilityEmpty: "这个接口没有发现兼容性问题",
     versionLine: "win-agent {0}",
+    mcpHeader: "MCP 总开关：{0}（已配置 {1} 个服务器）",
+    mcpEmpty: "（还没有 MCP 服务器 —— /mcp add <id> stdio <命令> [参数...]）",
+    mcpStateOn: "已连接，{0} 个工具",
+    mcpStateOff: "已关闭",
+    mcpStateDead: "未连接",
+    mcpUsage: `用法：
+  /mcp                 状态
+  /mcp on | off        总开关
+  /mcp refresh         重新连接并重读工具列表
+  /mcp tools           列出全部 MCP 工具
+  /mcp add <id> stdio <命令> [参数...]
+  /mcp add <id> http <网址>
+  /mcp enable | disable <id>
+  /mcp remove <id>`,
+    mcpAddUsage: "用法：/mcp add <id> <stdio <命令> [参数...] | http <网址>>",
+    mcpIdInvalid: "服务器 id 只能是字母、数字、- 或 _（最多 32 位）",
+    mcpUnknown: "没有名为 “{0}” 的 MCP 服务器，试试 /mcp",
+    mcpEnableUsage: "用法：/mcp {0} <id>",
+    mcpRemoveUsage: "用法：/mcp remove <id>",
+    mcpToolsHeader: "模型可以调用的 MCP 工具（共 {0} 个）：",
+    mcpNoTools: "（没有 MCP 工具 —— 请打开 MCP 总开关并刷新）",
   },
 };
 
@@ -507,6 +583,8 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         `stream     : ${s.stream}   retries: ${s.maxRetries}   timeout: ${s.requestTimeoutMs}ms`,
         `tools      : ${format(m().statusTools, enabled.length, all.length)}`,
         `customTools: ${s.customTools.length}`,
+        `mcp        : ${s.mcpEnabled ? "on" : "off"}  (${s.mcpServers.length} server(s), ${mcp.status().reduce((n, x) => n + x.tools.length, 0)} tool(s))`,
+        `syncLocals : ${s.syncLocalModels}`,
         `context    : ${window}`,
       ].join("\n");
     }
@@ -770,6 +848,111 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         format(m().modelsHeader, result.profile, result.baseUrl),
         ...result.models.map((name) => `- ${name}`),
       ].join("\n");
+    }
+
+    case "mcp": {
+      const parts = rest.trim().split(/\s+/).filter(Boolean);
+      const sub = (parts.shift() ?? "").toLowerCase();
+      const servers = (): McpServer[] => getSettings().mcpServers;
+
+      // A compact table: switch, transport, connection, tools, last error.
+      const report = (): string => {
+        const live = mcp.status();
+        const lines = [format(m().mcpHeader, getSettings().mcpEnabled ? "on" : "off", servers().length)];
+        if (servers().length === 0) {
+          lines.push(m().mcpEmpty);
+          return lines.join("\n");
+        }
+        for (const server of servers()) {
+          const found = live.find((x) => x.id === server.id);
+          const state = !server.enabled
+            ? m().mcpStateOff
+            : found?.connected
+              ? format(m().mcpStateOn, found.tools.length)
+              : m().mcpStateDead;
+          const error = found?.error ? ` - ${found.error}` : "";
+          lines.push(`  ${server.id.padEnd(14)} ${server.transport.padEnd(5)} ${state}${error}`);
+        }
+        return lines.join("\n");
+      };
+
+      if (!sub || sub === "list" || sub === "status") return report();
+
+      if (sub === "on" || sub === "off") {
+        const on = sub === "on";
+        const out = await setKeys(host, { mcpEnabled: on });
+        if (on) await mcp.refresh();
+        else mcp.close();
+        return `${out}\n${report()}`;
+      }
+
+      if (sub === "refresh" || sub === "reload") {
+        await mcp.refresh();
+        return report();
+      }
+
+      if (sub === "tools") {
+        // The names the model actually calls, not the server's own names.
+        const names = mcp
+          .status()
+          .flatMap((server) => server.tools.map((tool) => safeName(server.id, tool)));
+        if (names.length === 0) return m().mcpNoTools;
+        return [format(m().mcpToolsHeader, names.length), ...names.map((name) => `- ${name}`)].join("\n");
+      }
+
+      if (sub === "enable" || sub === "disable") {
+        const id = parts[0];
+        if (!id) throw new Error(format(m().mcpEnableUsage, sub));
+        if (!servers().some((x) => x.id === id)) throw new Error(format(m().mcpUnknown, id));
+        const out = await setKeys(host, {
+          mcpServers: servers().map((server) =>
+            server.id === id ? { ...server, enabled: sub === "enable" } : server,
+          ),
+        });
+        mcp.drop(id);
+        await mcp.refresh();
+        return `${out}\n${report()}`;
+      }
+
+      // /mcp add <id> stdio <command> [args...]   or   /mcp add <id> http <url>
+      if (sub === "add") {
+        const [id, transport, target, ...args] = parts;
+        if (!id || !transport || !target) throw new Error(m().mcpAddUsage);
+        if (!MCP_SERVER_ID.test(id)) throw new Error(m().mcpIdInvalid);
+        const http = transport.toLowerCase() === "http";
+        const next: McpServer = {
+          id,
+          name: id,
+          transport: http ? "http" : "stdio",
+          command: http ? "" : target,
+          args: http ? [] : args,
+          env: {},
+          url: http ? target : "",
+          enabled: true,
+          autoApprove: false,
+          tools: [],
+        };
+        mcp.drop(id);
+        const out = await setKeys(host, {
+          mcpServers: upsertServer(servers(), next),
+          mcpEnabled: true,
+        });
+        await mcp.refresh();
+        return `${out}\n${report()}`;
+      }
+
+      if (sub === "remove" || sub === "rm" || sub === "delete") {
+        const id = parts[0];
+        if (!id) throw new Error(m().mcpRemoveUsage);
+        mcp.drop(id);
+        const out = await setKeys(host, {
+          mcpServers: servers().filter((server) => server.id !== id),
+        });
+        await mcp.refresh();
+        return `${out}\n${report()}`;
+      }
+
+      throw new Error(m().mcpUsage);
     }
 
     case "memory": {

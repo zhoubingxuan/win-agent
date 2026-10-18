@@ -18,6 +18,10 @@ If the endpoint cannot call functions, the model answers with nothing but:
 The agent runs it and replies with the result as a tool message; the model then answers
 in plain text. `/diagnose` tells you which of the two this endpoint can do.
 
+The tools below are the ones that ship with win-agent. **MCP tools are not listed here**,
+because they depend on the servers you add: each one becomes `mcp__<server>__<tool>`, with
+the schema the server advertises. See [mcp.md](mcp.md).
+
 ---
 
 ## `files` — read, edit, search, zip

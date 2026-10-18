@@ -26,6 +26,10 @@ needs a plan.
 | What is on my clipboard? | 剪贴板里是什么？ | `ui` → `clipboard_get` |
 | Which programs start with Windows? | 开机自启动有哪些程序？ | `registry` → `get` |
 | What subkeys are under HKCU:\Software? | HKCU:\Software 下面有哪些子键？ | `registry` → `list` |
+| With the fs MCP tool, list D:\new and tell me which folders are there. | 用 fs 这个 MCP 工具列出 D:\new，告诉我有哪些文件夹。 | `mcp__fs__list_directory` |
+
+> The last one needs an MCP server called `fs` (see [mcp.md](mcp.md)); the agent can only
+> call MCP tools that a server you added advertises, so ask for it by the name you gave it.
 
 ## Two or three calls / 两三次调用
 

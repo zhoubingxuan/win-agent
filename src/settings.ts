@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { dataDir, migrateLegacyData } from "./store.js";
 import { bomLabel, parseJsonWithBom } from "./util/json.js";
+import type { McpServer } from "./mcp.js";
 
 /** Languages supported by the UI and by the agent's replies. */
 export type Language = "en" | "zh";
@@ -106,6 +107,15 @@ export interface Settings {
   // Tools
   enabledTools: string[] | null; // null = all tools
   customTools: CustomTool[];
+  // MCP (Model Context Protocol)
+  /** Master switch: when off, no MCP server is started and no MCP tool is offered. */
+  mcpEnabled: boolean;
+  /** Servers whose tools the model may call (see src/mcp.ts). */
+  mcpServers: McpServer[];
+  /** Merge every local endpoint's loadable models into one list in the pickers. */
+  syncLocalModels: boolean;
+  /** Recently used working directories, newest first (the chat picker). */
+  recentWorkdirs: string[];
 }
 
 export const DEFAULT_SYSTEM_PROMPT = [
@@ -176,6 +186,10 @@ export const DEFAULTS: Settings = {
   webSearchUrl: "https://www.bing.com/search?q={q}",
   enabledTools: null,
   customTools: [],
+  mcpEnabled: false,
+  mcpServers: [],
+  syncLocalModels: true,
+  recentWorkdirs: [],
 };
 
 const STRING_KEYS: Array<keyof Settings> = [
@@ -202,6 +216,8 @@ const BOOLEAN_KEYS: Array<keyof Settings> = [
   "autoOpenBrowser",
   "remember",
   "stream",
+  "mcpEnabled",
+  "syncLocalModels",
 ];
 const NUMERIC_RANGE: Record<string, [number, number]> = {
   maxSteps: [1, 100],
@@ -301,6 +317,44 @@ function asProfiles(value: unknown): Profile[] {
   });
 }
 
+/** Validate the MCP server list (see src/mcp.ts). */
+function asMcpServers(value: unknown): McpServer[] {
+  if (!Array.isArray(value)) throw new Error("mcpServers must be an array");
+  return value.map((entry) => {
+    const item = (entry ?? {}) as Record<string, unknown>;
+    const id = String(item.id ?? "").trim();
+    if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) {
+      throw new Error(`MCP server id "${id}" must be letters, digits, "-" or "_" (max 32)`);
+    }
+    const env: Record<string, string> = {};
+    for (const [name, raw] of Object.entries((item.env ?? {}) as Record<string, unknown>)) {
+      if (name) env[String(name)] = String(raw);
+    }
+    const transport = item.transport === "http" ? "http" : "stdio";
+    return {
+      id,
+      name: String(item.name ?? id),
+      transport,
+      command: String(item.command ?? ""),
+      args: Array.isArray(item.args) ? item.args.map((a) => String(a)) : [],
+      env,
+      url: String(item.url ?? ""),
+      enabled: item.enabled !== false,
+      autoApprove: item.autoApprove === true,
+      tools: Array.isArray(item.tools) ? item.tools.map((t) => String(t)) : [],
+    } as McpServer;
+  });
+}
+
+/** Recently used working directories: strings, newest first, at most 10. */
+function asRecentWorkdirs(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Error("recentWorkdirs must be an array");
+  return value
+    .map((v) => String(v))
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
 /** Coerce and validate a single setting value. */
 export function coerceSetting(key: string, value: unknown): unknown {
   if (!(key in DEFAULTS)) throw new Error(`unknown setting "${key}"`);
@@ -317,6 +371,8 @@ export function coerceSetting(key: string, value: unknown): unknown {
     return value.map((v) => String(v));
   }
   if (typed === "customTools") return asCustomTools(value);
+  if (typed === "mcpServers") return asMcpServers(value);
+  if (typed === "recentWorkdirs") return asRecentWorkdirs(value);
   throw new Error(`unsupported setting "${key}"`);
 }
 
@@ -495,6 +551,7 @@ export interface UpdateResult {
 export function updateSettings(patch: Record<string, unknown>): UpdateResult {
   const changed: string[] = [];
   const bag = current as unknown as Record<string, unknown>;
+  const workdirBefore = current.workdir;
 
   // Switching profile swaps the whole endpoint in first.
   if (typeof patch.activeProfile === "string" && patch.activeProfile !== current.activeProfile) {
@@ -525,6 +582,14 @@ export function updateSettings(patch: Record<string, unknown>): UpdateResult {
   for (const key of ["baseUrl", "apiKey", "model"]) {
     if (changed.includes(key) && !changed.includes("activeProfile")) changed.push("activeProfile");
   }
+
+  // Keep the working-directory history the chat picker offers: the folder we
+  // just moved to, and the one we came from, so switching back is one click.
+  if (changed.includes("workdir")) {
+    const recent = [current.workdir, workdirBefore, ...current.recentWorkdirs].filter(Boolean);
+    current.recentWorkdirs = [...new Set(recent)].slice(0, 10);
+  }
+
   return { settings: current, changed: changed.filter((v, i, a) => a.indexOf(v) === i) };
 }
 

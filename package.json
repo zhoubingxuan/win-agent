@@ -1,6 +1,6 @@
 {
   "name": "win-agent",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "A Windows automation agent that lets local LLMs drive Windows via high-level tools.",
   "type": "module",
   "bin": {
@@ -16,8 +16,10 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/test-context.mjs",
     "test:providers": "tsx scripts/test-providers.mjs",
+    "test:mcp": "tsx scripts/test-mcp.mjs",
+    "test:models": "tsx scripts/test-models.mjs",
     "test:isolation": "node scripts/test-isolation.mjs",
-    "test:all": "npm run test && npm run test:providers && npm run test:isolation",
+    "test:all": "npm run test && npm run test:providers && npm run test:mcp && npm run test:models && npm run test:isolation",
     "version:show": "node scripts/version.mjs",
     "version:set": "node scripts/version.mjs --set",
     "version:list": "node scripts/version.mjs --list",

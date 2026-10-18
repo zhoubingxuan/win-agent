@@ -22,6 +22,14 @@ What that means in practice:
   `stream`; `/diagnose` tells you what the endpoint actually supports.
 - **Internet access** — a `web` tool searches, reads pages and calls APIs, so the
   agent is not blind to anything outside this machine.
+- **MCP support** — borrow tools from other programs (filesystem, git, a database,
+  your own service) over `stdio` or Streamable HTTP; they arrive as
+  `mcp__server__tool`, with their own schemas and an approval prompt.
+- **One model list for every local server** — ask LM Studio (port 1234) *and* Ollama
+  (port 11434) what they can load, merged into one picker; picking a model from
+  another server switches the endpoint with it.
+- **Chat toolbar** — the working directory (with a folder picker), the endpoint and
+  the model sit above the composer, one click each.
 - **Streaming replies you can stop** — answers appear token by token; hit **Stop**
   (or `Esc`, or `/stop`) to abort a runaway task mid-sentence.
 - **记忆化 / memory** — the conversation survives page reloads, restarts and model
@@ -78,6 +86,7 @@ No other runtime dependency: the web UI is plain HTML/CSS/JS served by `node:htt
 [one worked tool call per tool](examples/tool-calls.md),
 [ready-to-send tasks](examples/prompts.md) (English + 中文),
 [custom commands](examples/custom-commands.md),
+[MCP servers](examples/mcp.md),
 [HTTP API scripts](examples/api.md) and
 [ready-made `settings.json` files](examples/settings.md).
 Every one of them is written against the code in this repository.
@@ -89,6 +98,12 @@ Every one of them is written against the code in this repository.
 Three tabs, all talking to the same local server over SSE.
 
 ### Chat
+- A **toolbar above the composer** picks the three things a run depends on:
+  the **working directory** (a dropdown of recent folders + **Browse…** for a
+  folder picker over your drives), the **endpoint**, and the **model**. All three
+  apply instantly and are the same settings as everywhere else.
+- **Refresh models** (or the button in Settings) asks every local server which
+  models it can load — see [Local model sync](#local-model-sync--lm-studio--ollama).
 - Answers **stream in live**; while a reasoning model is still thinking you see a
   `thinking…` line instead of a frozen screen.
 - **Stop** (or `Esc`, or `/stop` in the terminal) aborts the task that is running.
@@ -118,7 +133,12 @@ PS C:\Windows\Temp> /tools
 ### Settings
 A form for **every** setting, plus:
 - **Endpoints** — switch the whole agent between a local model server and a cloud
-  API with one click, and pick the model from the list the endpoint actually reports.
+  API with one click (a local ↔ API slider when adding one), and pick the model
+  from the list the endpoint actually reports.
+- **Local model sync** — one switch that merges the model lists of LM Studio and
+  Ollama (see [below](#local-model-sync--lm-studio--ollama)).
+- **MCP** — a master switch, one switch per server, and a form to add more
+  (see [MCP](#mcp--tools-from-other-programs)).
 - **Memory** — keep the conversation across restarts.
 - **Stream replies** — off, the answer arrives in one piece; on (default), token by token.
 - **Web search page** — the search engine the `web` tool queries.
@@ -188,6 +208,106 @@ PS D:\new> /profile set work apiKey sk-...
 PS D:\new> /profile use work
 PS D:\new> /models
 ```
+
+### Local model sync — LM Studio + Ollama
+
+`syncLocalModels` (default **on**; the switch is in Settings → *Local model sync*)
+makes one model list out of every local server. **Refresh models** (or `/models`)
+asks them in parallel:
+
+| Endpoint | Route tried first | What it gives |
+| --- | --- | --- |
+| LM Studio | `GET /api/v0/models` | the model ids **and** each model's context window |
+| any local profile | `GET /v1/models` | the ids (the OpenAI-compatible route) |
+| Ollama | `GET /api/tags` | the ids when the OpenAI bridge is switched off |
+
+`http://127.0.0.1:1234/v1` (LM Studio) and `http://127.0.0.1:11434/v1` (Ollama)
+are probed even when no profile points at them. A server that is not running is
+reported as *no answer* and simply contributes nothing — the others still answer.
+
+The picker is then grouped by server:
+
+```
+[local — current]  glm-4.7-flash, qwen/qwen3.5-9b, …
+[Ollama]           qwen2.5:7b, llama3.2:3b
+```
+
+Picking a model that lives on another local server **switches the endpoint with
+it** (one settings update: `activeProfile` + `model`), so "run this on the Ollama
+model" is one click instead of a configuration detour. The context lengths found
+this way land in `modelContext` and are used by the context planner. Only
+`127.0.0.1` is contacted.
+
+---
+
+## MCP — tools from other programs
+
+[MCP](https://modelcontextprotocol.io) (Model Context Protocol) lets the agent use
+tools that live in other programs: a filesystem server, git, a database, an
+internal HTTP service. win-agent is the **client** — you point it at servers.
+
+The feature is off until you switch it on (**Settings → MCP → master switch**, or
+`/mcp on`), because an MCP server is a program that runs with your rights.
+
+### Two transports
+
+| Transport | What you give it | How it runs |
+| --- | --- | --- |
+| `stdio` | a command line, e.g. `npx -y @modelcontextprotocol/server-filesystem D:\` | the agent starts it as a child process and speaks newline-delimited JSON-RPC over its stdin/stdout |
+| `http` | a URL, e.g. `http://127.0.0.1:3001/mcp` | *Streamable HTTP*: one POST per request, and the answer may come back as JSON or as an `text/event-stream` body |
+
+On Windows the command is resolved through `PATHEXT`, so `npx`, `uvx` and friends
+work without you writing `npx.cmd`; a `.cmd`/`.bat` server is started through
+`cmd.exe`. A legacy SSE-only server is not spoken to directly — put an HTTP bridge
+such as `mcp-proxy` in front of it and add that URL.
+
+### Adding one
+
+Settings → *MCP*: fill in an `id`, slide **stdio ↔ HTTP** to the transport you
+need, paste the command line or the URL, optionally flip **auto-approve**, press
+**Add server**. The same from the terminal:
+
+```
+PS D:\new> /mcp add fs stdio npx -y @modelcontextprotocol/server-filesystem D:\
+PS D:\new> /mcp add docs http http://127.0.0.1:3001/mcp
+PS D:\new> /mcp                     # master switch, servers, connection, tool counts
+PS D:\new> /mcp tools               # every MCP tool the model can call
+PS D:\new> /mcp refresh             # reconnect and re-read the tool lists
+PS D:\new> /mcp disable fs          # switch one server off (its tools disappear)
+PS D:\new> /mcp remove fs
+```
+
+### What the model sees
+
+Every tool a server offers becomes a normal tool called
+`mcp__<server>__<tool>` — so `read_file` on the server `fs` is
+`mcp__fs__read_file` — with the server's own JSON Schema passed through:
+
+```json
+{
+  "name": "mcp__fs__read_file",
+  "parameters": { "type": "object", "properties": { "path": { "type": "string" } } }
+}
+```
+
+The name is sanitized to `[A-Za-z0-9_-]` and capped at 64 characters, which is what
+OpenAI-compatible endpoints accept. MCP tools show up in the model's catalog (the
+system prompt), in the **Tools** chips in the sidebar and in the *Enabled tools*
+grid, so `enabledTools` / the switches can hide them individually.
+
+### Approval
+
+MCP tools can do anything their server can, so every call asks for **Approve /
+Deny** unless that server is marked **auto-approve** (or the global `autoApprove`
+is on). With `dryRun` on they are never called at all.
+
+### When a server is down
+
+The agent still starts. The *MCP* panel marks that server **not connected**, prints
+the reason, and keeps showing the tools it offered last time. The tool list is
+refreshed at boot, whenever MCP settings change, before every turn (cached for two
+minutes) and on **Reconnect & refresh tools** — so a server you start later is
+picked up without restarting the agent.
 
 ---
 
@@ -454,6 +574,11 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/profile new <id> [local\|api] <baseUrl> [model]` | add an endpoint | immediately + saved |
 | `/profile set <id> <name\|kind\|baseUrl\|apiKey\|model> <value>` | edit one field of an endpoint | next turn |
 | `/profile remove <id>` | delete an endpoint | immediately + saved |
+| `/mcp on` · `/mcp off` | the MCP master switch (off = no server is started) | immediately + saved |
+| `/mcp add <id> stdio <command> [args...]` | add an MCP server started as a child process | immediately + saved |
+| `/mcp add <id> http <url>` | add an MCP server reached over Streamable HTTP | immediately + saved |
+| `/mcp enable <id>` · `/mcp disable <id>` | switch one MCP server on or off | immediately + saved |
+| `/mcp remove <id>` | delete an MCP server | immediately + saved |
 | `/memory on` · `/memory off` | remember the conversation across restarts | immediately + saved |
 | `/memory clear` | file the open conversation away and start a new one | immediately |
 | `/port <n>` | web UI port (rebinds the server) | immediately, then reconnect |
@@ -472,7 +597,10 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/tools` | tools, with `[x]` = enabled |
 | `/custom list` | your custom commands |
 | `/profile` | every endpoint, with `*` on the active one |
-| `/models [id]` | the models an endpoint reports (default: the active one) |
+| `/models [id]` | the models an endpoint reports (default: the active one); with `syncLocalModels` on, every local server is listed too |
+| `/mcp` | the MCP master switch and every server, with its connection state and tool count |
+| `/mcp tools` | every `mcp__server__tool` name the model can call |
+| `/mcp refresh` | reconnect to the MCP servers and re-read their tool lists |
 | `/memory` | whether remembering is on, plus size and path of the file |
 | `/usage` | tokens, speed and cache for the open conversation + all-time totals |
 | `/conversations` | the conversations filed away in `data/conversations/` |
@@ -494,6 +622,8 @@ PS D:\new> /status                       # what is the agent using right now?
 PS D:\new> /profile                      # which endpoints exist, which is active?
 PS D:\new> /profile use cloud            # flip from the local server to a cloud API
 PS D:\new> /models                       # what does this endpoint actually serve?
+PS D:\new> /mcp add fs stdio npx -y @modelcontextprotocol/server-filesystem D:\
+PS D:\new> /mcp tools                    # which MCP tools did the model get?
 PS D:\new> /model qwen2.5:14b            # switch model, keep the conversation
 PS D:\new> /disable powershell ui        # hide two dangerous tools from the model
 PS D:\new> /language zh                  # Chinese UI + Chinese answers
@@ -542,6 +672,10 @@ with a message and nothing changes.
 | `requestTimeoutMs` | number | `180000` | how long one LLM request may take before it is abandoned (5 000–3 600 000) |
 | `maxRetries` | number | `2` | retries for 429 / 5xx / network errors (0–10), with backoff |
 | `webSearchUrl` | string | `https://www.bing.com/search?q={q}` | search page for the `web` tool; `{q}` = the query |
+| `syncLocalModels` | boolean | `true` | also ask LM Studio (1234) and Ollama (11434) for their models and merge them into the model picker |
+| `mcpEnabled` | boolean | `false` | the MCP master switch; while off no MCP server is started and no MCP tool is offered |
+| `mcpServers` | object[] | `[]` | MCP servers: `id`, `name`, `transport` (`stdio`\|`http`), `command`, `args`, `env`, `url`, `enabled`, `autoApprove`, `tools` |
+| `recentWorkdirs` | string[] | `[]` | the working directories offered by the chat picker (last 10) |
 | `enabledTools` | string[] \| `null` | `null` | `null` = all tools enabled |
 | `customTools` | object[] | `[]` | your own commands (see below) |
 
@@ -615,6 +749,12 @@ Custom commands run arbitrary PowerShell, so they always require approval
 Any tool can be hidden from the model with `enabledTools` / the switches on the
 Settings tab.
 
+**MCP tools** are added to the same list at runtime, one per tool the server
+offers, named `mcp__<server>__<tool>` (see
+[MCP](#mcp--tools-from-other-programs)). They behave like any other tool: they are
+in the catalog, they can be switched off, and they ask for approval before they
+run.
+
 ---
 
 ## CLI
@@ -647,7 +787,10 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `GET` | `/api/settings` | public settings + settings file path |
 | `POST` | `/api/settings` | partial update; returns `{ settings, changed, notices }` |
 | `POST` | `/api/settings/reload` | reload from disk |
-| `GET` | `/api/models` | `?profile=<id>` — ask that endpoint which models it serves (remembers the list **and** the context lengths it reports) |
+| `GET` | `/api/models` | `?profile=<id>` — ask that endpoint which models it serves (remembers the list **and** the context lengths it reports). With `syncLocalModels` on, the answer also carries `endpoints` (every local server, with its route and error), `merged` (all models, each with its `endpointId`) and `context` |
+| `GET` | `/api/mcp` | the MCP master switch and every server, with connection state, self-reported name and live tool list |
+| `POST` | `/api/mcp` | `{ action: "refresh" }` · `{ action: "add", id, server }` · `{ action: "update", id, server }` · `{ action: "remove", id }` · `{ action: "toggle", id, enabled }` |
+| `GET` | `/api/fs/list` | `?path=<dir>` — sub-folders (and `parent`) for the chat folder picker; an empty `path` lists the drives. Directories only, no files |
 | `POST` | `/api/diagnose` | probe the endpoint and return `{ checks, context, verdict, text }` |
 | `POST` | `/api/profiles` | `{ action: "use"\|"save"\|"create"\|"remove", id, ... }` — manage endpoints |
 | `POST` | `/api/chat` | `{ message }` — start a task (results arrive on the event stream) |
@@ -688,6 +831,7 @@ src/
   version.ts      reads the version from package.json (one source of truth)
   context.ts      token estimation + context budgeting (what to send, what to trim)
   providers.ts    endpoint compatibility memory + context-length discovery
+  mcp.ts          MCP client: stdio + Streamable HTTP, tool discovery, call routing
   diagnose.ts     the /diagnose probes (chat, usage, tools, streaming, context)
   commands.ts     internal "/command" dispatcher
   terminal.ts     terminal runner with a remembered working directory
@@ -707,12 +851,18 @@ scripts/
   version.mjs     version: show / bump / back up one folder per version
   test-context.mjs    model-free checks for the context planner (npm test)
   test-providers.mjs  endpoint-compatibility checks against a mock server
+  test-mcp.mjs        MCP client checks (stdio + HTTP) against a mock MCP server
+  test-models.mjs     local model discovery: LM Studio / Ollama routes, merging
   test-isolation.mjs  two copies never share data or a version number
+  fixtures/
+    mock-mcp-server.mjs  a tiny MCP server used by test-mcp.mjs
 examples/         copy-paste examples: tool calls, prompts, custom commands,
-                  HTTP API scripts, ready-made settings.json files
+                  MCP servers, HTTP API scripts, ready-made settings.json files
 versions/
   INDEX.md        index of the backups (written by npm run release)
   1.1.0/          one folder per version: the complete agent at that version
+  1.1.1/
+  1.2.0/
 data/             settings, conversation records and token totals
 .git/             git history (branch main, one tag per version)
 ```
@@ -736,7 +886,10 @@ npm run release             # build, back up to versions/1.2.0/, tag v1.2.0
 npm run version:tag         # create the v<version> tag (needs a clean tree)
 npm test                    # context planner checks (no model needed)
 npm run test:providers      # endpoint compatibility checks against a mock server
+npm run test:mcp            # MCP client checks against a mock MCP server (stdio + HTTP)
+npm run test:models         # local model sync: LM Studio / Ollama discovery + merging
 npm run test:isolation      # two copies never share data or a version number
+npm run test:all            # all of the above
 ```
 
 **One version = one folder.** `npm run release` copies the complete agent into
@@ -856,6 +1009,9 @@ recoverable, and the `CHANGELOG.md` entry is all that remains of it.
 - Non-interactive runs deny destructive actions unless `--yes` (CLI) or
   `autoApprove` is set.
 - The raw `powershell` tool and all `custom` commands are always confirmed.
+- **MCP tools** are confirmed on every call unless you mark that server
+  **auto-approve** — remember an MCP server is a program that runs with *your*
+  rights, over a command line you typed.
 - Some actions need an **elevated** (Administrator) terminal: firewall rules,
   starting/stopping services, `Machine` environment variables, writes to `HKLM`.
 - The server binds to `127.0.0.1` only.
@@ -898,7 +1054,11 @@ Then register it in `src/tools/index.ts`.
 | Model ignores tools | use a tool-capable model (`qwen2.5`, `llama3.1`, `mistral-nemo`); raise `maxSteps` |
 | Command needs admin | restart your terminal / the app as Administrator |
 | Port already in use | change **Web port** in Settings, or `AGENT_WEB_PORT=9000 npm run web` |
-| Wrong working directory | set `workdir` in Settings (the terminal cwd follows it) |
+| Wrong working directory | set `workdir` in Settings (the terminal cwd follows it), or pick one in the chat toolbar |
+| A chat model is missing from the picker | press **Refresh models** — the list is what the servers report. `syncLocalModels` merges LM Studio and Ollama; a server that is not running shows *no answer* |
+| An MCP server never connects | the *MCP* panel shows the reason: a typo in the command line, `npx` not installed, a URL that is not listening. `node`/`npx` are resolved through `PATHEXT`, so you do not write `.cmd` yourself |
+| MCP tools are not offered to the model | the master switch is off, that server's switch is off, or the tools are switched off in *Enabled tools*. `/mcp` and `/mcp tools` say exactly what is live |
+| An MCP tool fails without a reason | open the tool card in the chat log (or the server's own output) — MCP errors are passed through verbatim |
 | Web search returns nothing | the search page may have changed or be blocked — set **Web search page** to one that works (try `https://html.duckduckgo.com/html/?q={q}` or your own SearXNG) |
 | Reply appears all at once | `stream` is off, or the endpoint ignores `stream: true`; turn **Stream replies** on |
 | `this model's maximum context length is N tokens` | the endpoint reported a window bigger than the model really has — set `contextLimit` to the real one (LM Studio shows it next to the context slider), or run `/context` to see what the agent thinks it is |

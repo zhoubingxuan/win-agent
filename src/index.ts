@@ -6,6 +6,7 @@ import { Agent } from "./agent.js";
 import { getSettings, loadSettings, settingsFile, toConfig } from "./settings.js";
 import { configurePowerShell } from "./util/ps.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
+import { mcp } from "./mcp.js";
 import { VERSION } from "./version.js";
 
 interface Flags {
@@ -64,6 +65,13 @@ function printHelp(): void {
   );
 }
 
+/** Print one line per MCP server that would not start. Never fatal. */
+function warnMcpFailures(): void {
+  for (const server of mcp.status()) {
+    if (server.enabled && !server.connected) console.log(`  warning: MCP ${server.id}: ${server.error}`);
+  }
+}
+
 async function main(): Promise<void> {
   const flags = parseFlags(process.argv.slice(2));
   if (flags.help) {
@@ -83,6 +91,9 @@ async function main(): Promise<void> {
   }
 
   if (flags.listTools) {
+    // Connect to the MCP servers first, so the printed catalog is the real one.
+    await mcp.ensureFresh();
+    warnMcpFailures();
     console.log(
       createWindowsTools(async () => true, {
         dryRun: flags.dryRun,
@@ -91,6 +102,7 @@ async function main(): Promise<void> {
         webSearchUrl: settings.webSearchUrl,
       }).describe(),
     );
+    mcp.close();
     return;
   }
 
@@ -110,6 +122,13 @@ async function main(): Promise<void> {
     const answer = await rl.question(`\n  Approve: ${summary} ? [y/N] `);
     return /^y(es)?$/i.test(answer.trim());
   };
+
+  // The MCP tool list is needed before the tool set is built; a server that will
+  // not start is a warning here, not a reason to refuse to run.
+  if (settings.mcpEnabled) {
+    await mcp.ensureFresh();
+    warnMcpFailures();
+  }
 
   const tools = createWindowsTools(approval, {
     dryRun: flags.dryRun || settings.dryRun,
@@ -146,6 +165,7 @@ async function main(): Promise<void> {
       console.error((error as Error).message);
       process.exitCode = 1;
     } finally {
+      mcp.close();
       rl.close();
     }
     return;
@@ -187,6 +207,7 @@ async function main(): Promise<void> {
       }
     }
   } finally {
+    mcp.close();
     rl.close();
   }
 }

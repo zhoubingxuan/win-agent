@@ -23,7 +23,8 @@ import {
 import { configurePowerShell } from "./util/ps.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { VERSION } from "./version.js";
-import { capabilityReport, capabilities as endpointCapabilities, probeContextLimits } from "./providers.js";
+import { capabilityReport, capabilities as endpointCapabilities, discoverLocalModels, listModelsAt, localEndpointsFor, probeContextLimits } from "./providers.js";
+import { mcp, type McpServer } from "./mcp.js";
 import { diagnose, formatDiagnosis } from "./diagnose.js";
 import { planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import { runCommand, type CommandHost } from "./commands.js";
@@ -177,29 +178,16 @@ function broadcast(event: UiEvent): void {
 /** Ask an OpenAI-compatible endpoint which models it serves. */
 async function fetchModels(profile: Profile): Promise<string[]> {
   const base = profile.baseUrl.replace(/\/+$/, "");
-  if (!base) throw new Error("no base URL configured for this profile");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10_000);
   try {
-    const res = await fetch(`${base}/models`, {
-      headers: profile.apiKey ? { Authorization: `Bearer ${profile.apiKey}` } : {},
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`the endpoint answered HTTP ${res.status}`);
-    const data = (await res.json()) as { data?: Array<{ id?: string }> };
-    const list = (data.data ?? [])
-      .map((entry) => String(entry?.id ?? ""))
-      .filter((id) => id.length > 0)
-      .sort((a, b) => a.localeCompare(b));
-    if (list.length === 0) throw new Error("the endpoint listed no models");
-    return list;
+    return await listModelsAt(profile, 10_000);
   } catch (error) {
     const err = error as Error & { cause?: { code?: string } };
-    if (err.name === "AbortError") throw new Error("the endpoint did not answer in time");
+    if (err.name === "AbortError" || err.name === "TimeoutError") {
+      throw new Error("the endpoint did not answer in time");
+    }
+    if (/^the endpoint (answered|listed)/.test(err.message)) throw err;
     const reason = err.cause?.code ?? err.message;
     throw new Error(`cannot reach ${base} (${reason})`);
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -241,6 +229,89 @@ const bootNotices = [
   ...applySettings(),
   ...legacyMovedFiles().map((name) => `moved .win-agent/${name} into ${dataDir()}`),
 ];
+
+/* -------------------------------------------------------------------------- */
+/* MCP                                                                        */
+/* -------------------------------------------------------------------------- *//**
+ * Connect to the enabled MCP servers and refresh the tool cache. Never throws:
+ * a server that is down must not stop the agent from starting.
+ */
+async function refreshMcp(announce = false): Promise<{ tools: number; errors: string[] }> {
+  const s = getSettings();
+  if (!s.mcpEnabled || s.mcpServers.length === 0) {
+    mcp.close();
+    return { tools: 0, errors: [] };
+  }
+  try {
+    await mcp.refresh();
+  } catch (error) {
+    return { tools: 0, errors: [(error as Error).message] };
+  }
+
+  const live = mcp.status();
+  // Remember what each server offered, so the settings panel still names its
+  // tools when the server is not running.
+  const next = s.mcpServers.map((server) => {
+    const found = live.find((x) => x.id === server.id);
+    return found ? { ...server, tools: found.tools } : server;
+  });
+  if (JSON.stringify(next) !== JSON.stringify(s.mcpServers)) {
+    updateSettings({ mcpServers: next });
+    saveSettings();
+  }
+
+  const errors = live.filter((x) => x.error).map((x) => `${x.name}: ${x.error}`);
+  const totalTools = live.reduce((sum, x) => sum + x.tools.length, 0);
+  if (announce) {
+    broadcast({ type: "settings", settings: publicSettings(), changed: ["mcpServers"] });
+    const connected = live.filter((x) => x.connected).length;
+    broadcast({
+      type: "notice",
+      text: `MCP: ${totalTools} tool(s) from ${connected} server(s)`,
+    });
+    for (const error of errors) broadcast({ type: "notice", text: `warning: MCP ${error}` });
+  }
+  return { tools: totalTools, errors };
+}
+
+/** What the UI needs to draw the MCP panel: config + live state. */
+function mcpSnapshot(): {
+  enabled: boolean;
+  ageMs: number;
+  totalTools: number;
+  servers: Array<McpServer & { connected: boolean; serverInfo: string; liveTools: string[]; error: string }>;
+} {
+  const s = getSettings();
+  const live = new Map(mcp.status().map((x) => [x.id, x]));
+  const servers = s.mcpServers.map((server) => {
+    const found = live.get(server.id);
+    return {
+      ...server,
+      connected: found?.connected ?? false,
+      serverInfo: found?.serverInfo ?? "",
+      liveTools: found?.tools ?? [],
+      error: found?.error ?? "",
+    };
+  });
+  return {
+    enabled: s.mcpEnabled,
+    ageMs: mcp.age(),
+    totalTools: servers.reduce((sum, x) => sum + x.liveTools.length, 0),
+    servers,
+  };
+}
+
+if (getSettings().mcpEnabled) {
+  // Connect at boot; a missing MCP server is a warning, not a failure. This runs
+  // in the background, so a slow server never delays the banner or the browser.
+  void refreshMcp(false).then(({ errors }) => {
+    const snapshot = mcpSnapshot();
+    console.log(
+      `  mcp        : on - ${snapshot.servers.length} server(s), ${snapshot.totalTools} tool(s)`,
+    );
+    for (const error of errors) console.log(`  warning: MCP ${error}`);
+  });
+}
 
 /* -------------------------------------------------------------------------- */
 /* Approvals                                                                  */
@@ -295,6 +366,8 @@ async function runAgent(message: string): Promise<void> {
   broadcast({ type: "user", text: message });
   broadcast({ type: "status", running: true });
 
+  // Pick up MCP servers added since the last turn (cached, so this is cheap).
+  await mcp.ensureFresh();
   const tools = buildTools();
   // This turn belongs to the conversation that is open right now; keep a direct
   // reference so nothing can be written into a different record mid-turn.
@@ -591,6 +664,7 @@ const server = http.createServer(async (req, res) => {
           },
           usage: usageSnapshot(),
           data: dataInfo(),
+          mcp: mcpSnapshot(),
           notices: bootNotices,
         });
       }
@@ -644,9 +718,23 @@ const server = http.createServer(async (req, res) => {
         const wanted = url.searchParams.get("profile") ?? getSettings().activeProfile;
         const s = getSettings();
         const profile = s.profiles.find((p) => p.id === wanted) ?? activeProfile();
+        // "Sync local models": also ask the other local endpoints (LM Studio,
+        // Ollama) so one picker shows everything that can be loaded.
+        const sync = s.syncLocalModels && url.searchParams.get("sync") !== "0";
         try {
           const models = await fetchModels(profile);
           rememberModels(profile.id, models);
+          let endpoints = null;
+          let merged = null;
+          if (sync) {
+            const discovery = await discoverLocalModels(localEndpointsFor(s.profiles));
+            for (const report of discovery.endpoints) {
+              if (report.ok && report.id !== profile.id) rememberModels(report.id, report.models);
+            }
+            if (Object.keys(discovery.context).length > 0) rememberContextLimits(discovery.context);
+            endpoints = discovery.endpoints;
+            merged = discovery.models;
+          }
           await discoverContext(profile);
           saveSettings();
           broadcast({ type: "settings", settings: publicSettings(), changed: ["profiles", "modelContext"] });
@@ -654,6 +742,9 @@ const server = http.createServer(async (req, res) => {
             profile: profile.id,
             baseUrl: profile.baseUrl,
             models,
+            sync,
+            endpoints,
+            merged,
             context: getSettings().modelContext,
           });
         } catch (error) {
@@ -662,9 +753,117 @@ const server = http.createServer(async (req, res) => {
             profile: profile.id,
             baseUrl: profile.baseUrl,
             models: profile.models,
+            sync,
+            endpoints: null,
+            merged: null,
             context: getSettings().modelContext,
             error: (error as Error).message,
           });
+        }
+      }
+
+      case "GET /api/mcp":
+        return json(res, 200, mcpSnapshot());
+
+      case "POST /api/mcp": {
+        const body = await readJsonBody(req);
+        const action = typeof body.action === "string" ? body.action : "";
+        const s = getSettings();
+        const build = (raw: unknown, id: string): McpServer => {
+          const item = (raw ?? {}) as Record<string, unknown>;
+          return {
+            id,
+            name: String(item.name ?? id),
+            transport: item.transport === "http" ? "http" : "stdio",
+            command: String(item.command ?? ""),
+            args: Array.isArray(item.args)
+              ? item.args.map((a) => String(a))
+              : String(item.args ?? "").trim()
+                ? String(item.args).split(/\s+/)
+                : [],
+            env: (item.env ?? {}) as Record<string, string>,
+            url: String(item.url ?? ""),
+            enabled: item.enabled !== false,
+            autoApprove: item.autoApprove === true,
+            tools: [],
+          };
+        };
+
+        if (action === "refresh") {
+          const result = await refreshMcp(true);
+          return json(res, 200, { ok: true, ...result, mcp: mcpSnapshot() });
+        }
+
+        if (action === "add" || action === "update") {
+          const id = String(body.id ?? "").trim();
+          if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) {
+            return json(res, 400, { error: "server id must be letters, digits, - or _ (max 32)" });
+          }
+          const existing = s.mcpServers.find((x) => x.id === id);
+          const next = build(body.server ?? existing ?? {}, id);
+          const list = existing
+            ? s.mcpServers.map((x) => (x.id === id ? { ...next, tools: x.tools } : x))
+            : [...s.mcpServers, next];
+          try {
+            updateSettings({ mcpServers: list });
+          } catch (error) {
+            return json(res, 400, { error: (error as Error).message });
+          }
+          saveSettings();
+          mcp.drop(id);
+          const result = await refreshMcp(false);
+          return json(res, 200, { ok: true, ...result, mcp: mcpSnapshot() });
+        }
+
+        if (action === "remove") {
+          const id = String(body.id ?? "");
+          updateSettings({ mcpServers: s.mcpServers.filter((x) => x.id !== id) });
+          saveSettings();
+          mcp.drop(id);
+          await refreshMcp(false);
+          return json(res, 200, { ok: true, mcp: mcpSnapshot() });
+        }
+
+        if (action === "toggle") {
+          const id = String(body.id ?? "");
+          const list = s.mcpServers.map((x) => (x.id === id ? { ...x, enabled: body.enabled !== false } : x));
+          if (!list.some((x) => x.id === id)) return json(res, 404, { error: `no MCP server "${id}"` });
+          updateSettings({ mcpServers: list });
+          saveSettings();
+          mcp.drop(id);
+          await refreshMcp(false);
+          return json(res, 200, { ok: true, mcp: mcpSnapshot() });
+        }
+
+        return json(res, 400, { error: `unknown action "${action}"` });
+      }
+
+      case "GET /api/fs/list": {
+        // Folder browser for the chat working-directory picker. Local-only server.
+        const target = (url.searchParams.get("path") ?? "").trim();
+        if (!target) {
+          const drives: Array<{ name: string; path: string }> = [];
+          for (let code = 65; code <= 90; code++) {
+            const letter = `${String.fromCharCode(code)}:\\`;
+            try {
+              if (fs.existsSync(letter)) drives.push({ name: letter, path: letter });
+            } catch {
+              // no such drive
+            }
+          }
+          return json(res, 200, { path: "", parent: null, dirs: drives, drives: true });
+        }
+        const abs = path.resolve(target);
+        try {
+          const entries = fs.readdirSync(abs, { withFileTypes: true });
+          const dirs = entries
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => ({ name: entry.name, path: path.join(abs, entry.name) }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+          const up = path.dirname(abs);
+          return json(res, 200, { path: abs, parent: up === abs ? null : up, dirs, drives: false });
+        } catch (error) {
+          return json(res, 400, { error: `cannot read ${abs} (${(error as Error).message})` });
         }
       }
 
@@ -751,12 +950,22 @@ const server = http.createServer(async (req, res) => {
         saveSettings();
         const notices = applySettings();
         if (getSettings().workdir !== before) setTerminalCwd(getSettings().workdir);
+        // Changing the MCP switch or the server list takes effect at once.
+        if (result.changed.includes("mcpEnabled") || result.changed.includes("mcpServers")) {
+          const outcome = await refreshMcp(true);
+          notices.push(
+            outcome.errors.length > 0
+              ? `warning: MCP ${outcome.errors.join("; ")}`
+              : `MCP: ${outcome.tools} tool(s) available`,
+          );
+        }
         broadcast({ type: "settings", settings: publicSettings(), changed: result.changed });
         broadcast({ type: "context", ...contextSnapshot() });
         return json(res, 200, {
           settings: publicSettings(),
           changed: result.changed,
           notices,
+          mcp: mcpSnapshot(),
           file: settingsFile(),
         });
       }
@@ -764,8 +973,9 @@ const server = http.createServer(async (req, res) => {
       case "POST /api/settings/reload": {
         loadSettings();
         const notices = applySettings();
+        await refreshMcp(false);
         broadcast({ type: "settings", settings: publicSettings(), changed: ["*"] });
-        return json(res, 200, { settings: publicSettings(), notices });
+        return json(res, 200, { settings: publicSettings(), notices, mcp: mcpSnapshot() });
       }
 
       case "GET /api/events": {
@@ -880,9 +1090,18 @@ server.listen(boundPort, "127.0.0.1", () => {
     })()}`,
   );
   console.log(`  settings   : ${settingsFile()}`);
+  if (getSettings().mcpEnabled) console.log("  mcp        : connecting to the configured servers…");
   for (const notice of bootNotices) console.log(`  ${notice}`);
 
   if (getSettings().autoOpenBrowser && !process.argv.includes("--no-open")) {
     spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
   }
 });
+
+// Leave no MCP child processes behind when the server goes away.
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    mcp.close();
+    process.exit(0);
+  });
+}

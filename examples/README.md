@@ -13,8 +13,9 @@ emit, and the terminal lines are exactly what the agent accepts (verified with
 | [tool-calls.md](tool-calls.md) | one worked example per tool: the request, the JSON the model emits, what comes back |
 | [prompts.md](prompts.md) | ready-to-send tasks (English + 中文), from one tool call to a multi-step job |
 | [custom-commands.md](custom-commands.md) | turn your own PowerShell one-liners into tools the model can call |
+| [mcp.md](mcp.md) | add MCP servers (stdio + HTTP) and use their tools from the chat |
 | [api.md](api.md) | drive the agent from PowerShell / curl over the local HTTP API |
-| [settings.md](settings.md) | ready `data/settings.json` files: LM Studio, Ollama, a cloud API |
+| [settings.md](settings.md) | ready `data/settings.json` files: LM Studio, Ollama, a cloud API, MCP |
 
 Two things worth knowing before you read them:
 

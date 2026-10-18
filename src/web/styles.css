@@ -279,6 +279,291 @@ body {
   cursor: pointer;
 }
 
+/* Chat toolbar (working directory / endpoint / model) --------------------- */
+
+.chatbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 8px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-2);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.chatbar-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.chatbar-field.grow {
+  flex: 1;
+}
+
+.chatbar-field select {
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text);
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 12.5px;
+  max-width: 320px;
+  cursor: pointer;
+}
+
+.chatbar-field.grow select {
+  max-width: none;
+  width: 100%;
+}
+
+.chatbar-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.chatbar-sep {
+  width: 1px;
+  align-self: stretch;
+  background: var(--line);
+  margin: 2px 2px;
+}
+
+.chatbar button.small {
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+/* Two-state slider between two words (local ↔ API, stdio ↔ HTTP) ---------- */
+
+.twoway {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.twoway .switch {
+  padding: 0;
+}
+
+.twoway input[type="checkbox"]:not(:checked) ~ span,
+.twoway span.bright {
+  color: var(--text);
+}
+
+/* Folder picker dialog ---------------------------------------------------- */
+
+dialog {
+  width: min(680px, 92vw);
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.dir-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dir-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+.dir-bar input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 7px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.dir-bar input:focus {
+  border-color: var(--accent);
+}
+
+.dir-list {
+  max-height: 46vh;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+
+.dir-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(42, 49, 64, 0.5);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dir-item:hover {
+  background: var(--bg-3);
+}
+
+.dir-item .icon {
+  color: var(--amber);
+}
+
+.dir-empty {
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dir-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+}
+
+.dir-foot code {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dir-foot button.primary {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 8px 16px;
+}
+
+/* Local model discovery + MCP server lists -------------------------------- */
+
+.fleet,
+.mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+
+.fleet-item,
+.mcp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  flex-wrap: wrap;
+}
+
+.fleet-item .name,
+.mcp-item .name {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+
+.mcp-item .meta,
+.fleet-item .meta {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.mcp-item .tools {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  flex-basis: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-item button,
+.fleet-item button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--red);
+  border-radius: 7px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+}
+
+.mcp-item .switch,
+.fleet-item .switch {
+  padding: 0;
+  font-size: 12px;
+}
+
+.mcp-add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.mcp-add input[type="text"] {
+  flex: 1;
+  min-width: 180px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.mcp-add input#m-id {
+  flex: 0 0 150px;
+  min-width: 0;
+}
+
+.mcp-add button {
+  width: auto;
+}
+
 /* Toggle switches (sliders) instead of native checkboxes -------------------- */
 
 .switch input[type="checkbox"],

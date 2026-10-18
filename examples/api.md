@@ -36,6 +36,18 @@ Invoke-RestMethod "$base/api/models"
 
 # ...for another endpoint
 Invoke-RestMethod "$base/api/models?profile=cloud"
+
+# With syncLocalModels on, the same call also merges every local server:
+#   .endpoints  one entry per local server (id, label, baseUrl, ok, source, models, error)
+#   .merged     all models, each with .endpointId
+#   .context    model -> context length
+(Invoke-RestMethod "$base/api/models").merged | Format-Table id, endpointId
+
+# MCP: master switch + one entry per server, with live state
+Invoke-RestMethod "$base/api/mcp"
+
+# The folder picker: sub-folders of a path (an empty path lists the drives)
+Invoke-RestMethod "$base/api/fs/list?path=D%3A%5Cnew"
 ```
 
 ## Send a task / 发一个任务
@@ -89,6 +101,57 @@ Endpoints (profiles) have their own call:
 
 ```powershell
 Invoke-RestMethod -Method Post "$base/api/profiles" -ContentType application/json -Body '{"action":"use","id":"local"}'
+```
+
+## MCP servers / MCP 服务器
+
+`POST /api/mcp` manages the servers the same way the Settings tab does. Every action
+returns the fresh `mcp` snapshot (`enabled`, `totalTools`, `servers[]{connected, liveTools, error}`).
+
+```powershell
+$base = "http://127.0.0.1:8787"
+
+# the master switch
+Invoke-RestMethod -Method Post "$base/api/settings" -ContentType application/json -Body '{"mcpEnabled":true}'
+
+# add a stdio server (a command line, started as a child process)
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
+  "action":"add","id":"fs",
+  "server":{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","D:\\new"]}}'
+
+# add a Streamable-HTTP server that does not ask for approval
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
+  "action":"add","id":"docs",
+  "server":{"transport":"http","url":"http://127.0.0.1:3001/mcp","autoApprove":true}}'
+
+# reconnect and re-read the tool lists
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{"action":"refresh"}'
+
+# one server off, then on
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{"action":"toggle","id":"fs","enabled":false}'
+
+# what did the model actually get?
+(Invoke-RestMethod "$base/api/state").allTools | Where-Object { $_ -like "mcp__*" }
+
+# delete it
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{"action":"remove","id":"fs"}'
+```
+
+The same from the terminal, which is shorter for a one-off:
+
+```powershell
+Invoke-RestMethod -Method Post "$base/api/terminal" -ContentType application/json `
+  -Body '{"input":"/mcp add fs stdio npx -y @modelcontextprotocol/server-filesystem D:\\new"}'
+```
+
+## The working directory from a script
+
+`recentWorkdirs` is maintained for you; the picker in the chat toolbar is fed by
+`GET /api/fs/list` and the setting below:
+
+```powershell
+Invoke-RestMethod -Method Post "$base/api/settings" -ContentType application/json -Body '{"workdir":"D:\\new\\sandbox"}'
+(Invoke-RestMethod "$base/api/settings").recentWorkdirs
 ```
 
 ## Terminal and approvals / 终端与审批
