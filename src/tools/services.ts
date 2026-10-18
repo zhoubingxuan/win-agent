@@ -36,12 +36,18 @@ export const servicesTool: Tool = {
     switch (action) {
       case "list": {
         const filter = argOpt(args, "filter");
-        const where = filter ? ` | Where-Object { $_.Name -like ${psQuote(filter)} }` : "";
+        // A plain word should behave like a search, not an exact match, and it should
+        // look at the friendly name too: "print" has to find "Print Spooler".
+        const pattern = filter ? (filter.includes("*") ? filter : `*${filter}*`) : null;
+        const where = pattern
+          ? ` | Where-Object { $_.Name -like ${psQuote(pattern)} -or $_.DisplayName -like ${psQuote(pattern)} }`
+          : "";
         const data = await runPsJson(
           `Get-Service${where} | Select-Object Name,DisplayName,` +
             "@{n='Status';e={$_.Status.ToString()}},@{n='StartType';e={$_.StartType.ToString()}} | " +
             "Sort-Object Name",
         );
+        if (!data) return filter ? `No service matches "${filter}".` : "No services found.";
         return JSON.stringify(data, null, 2);
       }
 

@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ChatMessage, Usage } from "./llm.js";
+import { parseJson } from "./util/json.js";
 
 /**
  * 数据文件夹 / data folder.
@@ -79,13 +81,27 @@ export function addUsage(totals: UsageTotals, usage: Usage): UsageTotals {
  * The data folder is fixed the first time it is needed, so that changing
  * `workdir` (which calls `process.chdir`) can never move it out from under the
  * files that are already there.
+ *
+ * It is anchored to the *installation* (the folder above `src/` or `dist/`), not
+ * to the folder you happen to start the agent from. That is what keeps two copies
+ * of the agent - in particular two version folders under `versions/` - from ever
+ * sharing settings, conversations or totals. Set `AGENT_DATA_DIR` to one folder
+ * if you *want* two copies to share them.
  */
 let pinnedDataDir: string | null = null;
+
+/** The folder this agent was installed in: above `src/` (tsx) or `dist/` (built). */
+export function installDir(): string {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  // A globally installed copy lives inside node_modules, where "next to the code"
+  // would mean "inside node_modules": there, fall back to the working folder.
+  return /(^|[\\/])node_modules([\\/]|$)/.test(root) ? process.cwd() : root;
+}
 
 export function dataDir(): string {
   if (pinnedDataDir) return pinnedDataDir;
   const override = process.env.AGENT_DATA_DIR;
-  pinnedDataDir = override ? path.resolve(override) : path.join(process.cwd(), "data");
+  pinnedDataDir = override ? path.resolve(override) : path.join(installDir(), "data");
   return pinnedDataDir;
 }
 
@@ -132,21 +148,29 @@ function writeDataReadme(): void {
 /**
  * Older versions kept everything in `.win-agent/`. Move those files into the
  * data folder the first time we run, so nothing is lost.
+ *
+ * Two places are checked, in this order: the installation folder (where an older
+ * copy of this agent would have written it) and the working folder (where it
+ * would have written it when started from somewhere else). The installation
+ * folder wins, so a second copy can never steal the first copy's files.
  */
 export function migrateLegacyData(): string[] {
   const moved: string[] = [];
-  const legacy = path.join(process.cwd(), ".win-agent");
+  const legacyDirs = [path.join(installDir(), ".win-agent"), path.join(process.cwd(), ".win-agent")];
   ensureDirs();
   for (const name of ["settings.json", "history.json"]) {
-    const from = path.join(legacy, name);
     const to = path.join(dataDir(), name);
-    if (fs.existsSync(from) && !fs.existsSync(to)) {
+    if (fs.existsSync(to)) continue;
+    for (const legacy of legacyDirs) {
+      const from = path.join(legacy, name);
+      if (!fs.existsSync(from)) continue;
       try {
         fs.copyFileSync(from, to);
         moved.push(name);
       } catch {
         // leave it alone; the defaults still work
       }
+      break;
     }
   }
   writeDataReadme();
@@ -184,7 +208,7 @@ export function newConversation(id = newConversationId()): ConversationRecord {
 
 function parseRecord(raw: string): ConversationRecord | null {
   try {
-    const parsed = JSON.parse(raw) as Partial<ConversationRecord>;
+    const parsed = parseJson<Partial<ConversationRecord>>(raw);
     if (!parsed || typeof parsed !== "object") return null;
     return {
       id: String(parsed.id ?? "unknown"),
@@ -331,7 +355,7 @@ export interface CumulativeUsage extends UsageTotals {
 
 export function loadCumulative(): CumulativeUsage {
   try {
-    const parsed = JSON.parse(fs.readFileSync(usageFile(), "utf8")) as Partial<CumulativeUsage>;
+    const parsed = parseJson<Partial<CumulativeUsage>>(fs.readFileSync(usageFile(), "utf8"));
     return {
       ...emptyTotals(),
       conversations: Number(parsed.conversations ?? 0),

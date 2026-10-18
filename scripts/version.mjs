@@ -32,6 +32,7 @@ const indexFile = path.join(versionsDir, "INDEX.md");
 const SNAPSHOT_ITEMS = [
   "src",
   "scripts",
+  "examples",
   "package.json",
   "package-lock.json",
   "tsconfig.json",
@@ -67,19 +68,26 @@ function today() {
 /* CHANGELOG                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/** Insert a new "## [x.y.z] — date" section under the Unreleased heading. */
+/**
+ * Insert a new "## [x.y.z] — date" section under the Unreleased heading.
+ *
+ * Idempotent: if the section is already there (it often is — you describe the change,
+ * then bump), it is left alone instead of being duplicated.
+ */
 function openChangelogSection(version) {
+  const heading = `## [${version}]`;
   if (!fs.existsSync(changelogPath)) {
     fs.writeFileSync(
       changelogPath,
-      `# Changelog\n\n## [Unreleased]\n\n## [${version}] — ${today()}\n\n`,
+      `# Changelog\n\n## [Unreleased]\n\n${heading} — ${today()}\n\n`,
       "utf8",
     );
     return;
   }
   const lines = fs.readFileSync(changelogPath, "utf8").split(/\r?\n/);
+  if (lines.some((line) => line.startsWith(heading))) return;
   const at = lines.findIndex((line) => line.startsWith("## [Unreleased]"));
-  const section = [`## [${version}] — ${today()}`, ""];
+  const section = [`${heading} — ${today()}`, ""];
   if (at < 0) lines.unshift(...section);
   else lines.splice(at + 1, 0, "", ...section);
   fs.writeFileSync(changelogPath, lines.join("\n"), "utf8");

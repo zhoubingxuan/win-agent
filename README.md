@@ -72,6 +72,16 @@ Requirements: Windows 10/11, **Node.js 20.3+** (uses `AbortSignal.any`/`timeout`
 a tool-capable model — local (LM Studio, Ollama, llama.cpp, vLLM) or a cloud API.
 No other runtime dependency: the web UI is plain HTML/CSS/JS served by `node:http`.
 
+### Examples / 示例
+
+[`examples/`](examples/) has copy-paste material for everything:
+[one worked tool call per tool](examples/tool-calls.md),
+[ready-to-send tasks](examples/prompts.md) (English + 中文),
+[custom commands](examples/custom-commands.md),
+[HTTP API scripts](examples/api.md) and
+[ready-made `settings.json` files](examples/settings.md).
+Every one of them is written against the code in this repository.
+
 ---
 
 ## The web UI
@@ -333,10 +343,16 @@ data/
     2026-10-18_10-15-33.json     one file per filed-away conversation
 ```
 
-Set `AGENT_DATA_DIR` (e.g. `AGENT_DATA_DIR=D:\win-agent-data`) to keep it elsewhere;
-`AGENT_SETTINGS_FILE` still overrides just the settings file. If you are upgrading
-from an older version, `.win-agent/settings.json` and `.win-agent/history.json` are
-copied into `data/` automatically on first start.
+The folder always belongs to the **installation**, not to the folder you happen to start
+the agent from: `data/` sits next to the `src/`/`dist/` you launched, so two copies of
+the agent (two folders under `versions/`, say) each keep their own settings,
+conversations and totals and can never read or overwrite each other's.
+
+Set `AGENT_DATA_DIR` (e.g. `AGENT_DATA_DIR=D:\win-agent-data`) to keep it somewhere
+else, or to make two copies deliberately share one folder; `AGENT_SETTINGS_FILE` still
+overrides just the settings file. If you are upgrading from an older version,
+`.win-agent/settings.json` and `.win-agent/history.json` are copied into `data/`
+automatically on first start.
 
 ### Memory / 记忆化
 
@@ -536,9 +552,11 @@ from the UI/terminal updates that profile, and switching profile rewrites them.
 environment variables. Runtime changes from the UI/terminal are written to the
 settings file and take effect immediately.
 
-**Settings file:** `data/settings.json` in the working directory (override with
+**Settings file:** `data/settings.json` in the installation folder (override with
 `AGENT_SETTINGS_FILE`, or move the whole folder with `AGENT_DATA_DIR`). It contains
-your API key — keep it out of git.
+your API key — keep it out of git. A byte-order mark or a syntax error in it is
+**reported at startup** (`warning: ... is not valid JSON`) instead of being ignored
+silently; the BOM itself is harmless.
 
 **Data folder:** `data/` holds the settings, the open conversation
 (`history.json`), the all-time token totals (`usage.json`) and the filed-away
@@ -682,12 +700,16 @@ src/
     automation.ts ui.ts powershell.ts custom.ts
     index.ts      assembles the tool set from settings
   util/ps.ts      PowerShell runner (-EncodedCommand) + JSON helpers
+  util/json.ts    reads JSON files the way Windows writes them (BOM-tolerant)
 scripts/
   clean.mjs       empties dist/ before a build
   copy-assets.mjs copies the web UI into dist/
   version.mjs     version: show / bump / back up one folder per version
   test-context.mjs    model-free checks for the context planner (npm test)
   test-providers.mjs  endpoint-compatibility checks against a mock server
+  test-isolation.mjs  two copies never share data or a version number
+examples/         copy-paste examples: tool calls, prompts, custom commands,
+                  HTTP API scripts, ready-made settings.json files
 versions/
   INDEX.md        index of the backups (written by npm run release)
   1.1.0/          one folder per version: the complete agent at that version
@@ -714,6 +736,7 @@ npm run release             # build, back up to versions/1.2.0/, tag v1.2.0
 npm run version:tag         # create the v<version> tag (needs a clean tree)
 npm test                    # context planner checks (no model needed)
 npm run test:providers      # endpoint compatibility checks against a mock server
+npm run test:isolation      # two copies never share data or a version number
 ```
 
 **One version = one folder.** `npm run release` copies the complete agent into
@@ -728,6 +751,26 @@ the version while the current one has no backup (`--force` overrides), and
 `npm run version:show` reports how many files have drifted from the newest backup
 (`npm run version:diff` lists them).
 
+### Version isolation / 版本隔离
+
+Copies must never share anything by accident. Everything the agent resolves for itself
+is anchored to the folder it was **installed** in — the one above its own
+`src/`/`dist/` — not to the working folder:
+
+| Resolved | Anchored to | Why it matters |
+| --- | --- | --- |
+| data folder | the installation | `versions\1.1.0` and the working copy keep separate settings, conversations and totals |
+| version number | that folder's own `package.json` | the banner, the sidebar and `/version` report *their* version, not the neighbour's |
+| web UI files | `src\web` / `dist\web` of that copy | a copy can never serve another copy's UI |
+| legacy `.win-agent/` | the installation first, then the working folder | old data is picked up once, never stolen from a sibling copy |
+
+`AGENT_DATA_DIR` is the one deliberate exception: point two copies at the same folder
+and they share *on purpose* — that is how you carry your settings to a new version.
+
+`npm run test:isolation` proves the rule: it builds three throwaway installations in a
+temp folder, asks one of them for its folders while standing in another, and checks that
+each reports its own installation, its own `data/` and its own version.
+
 Restoring a version is just running it:
 
 ```powershell
@@ -736,9 +779,9 @@ npm install
 npm run web        # or: npm run build && node dist/server.js --no-open
 ```
 
-Settings and conversations live in the working folder's `data/` (or `AGENT_DATA_DIR`),
-so a restored copy starts clean unless you copy `data/settings.json` across to it — it
-holds your API keys.
+Settings and conversations live in that folder's own `data/` (or `AGENT_DATA_DIR`), so a
+restored copy starts clean and cannot disturb the copy you are already using — copy
+`data/settings.json` across if you want it to start with your API keys.
 
 ### 版本库 / git
 
@@ -759,20 +802,27 @@ git diff                         # what you changed since the last commit
 git checkout v1.1.0              # look at an old version (git switch main to come back)
 ```
 
-The release routine is three steps — **bump, commit, release**:
+The release routine is four steps — **bump, commit, back up, tag**:
 
 ```powershell
-npm run version:set 1.2.0        # 1. package.json + a new CHANGELOG section
+npm run version:set 1.2.0                  # 1. package.json + a CHANGELOG section
+# ... describe the change under [1.2.0] in CHANGELOG.md ...
 git add -A && git commit -m "1.2.0: ..."   # 2. record the change
-npm run release                  # 3. build + versions/1.2.0/ + tag v1.2.0
+npm run release                            # 3. build + versions/1.2.0/ + INDEX.md
+git add -A && git commit -m "1.2.0: snapshot"   # 4. the new folder is part of the release
+npm run version:tag                        #    -> tag v1.2.0 on that commit
 ```
 
-`npm run release` only tags when the working tree is clean, so a tag always points at
-exactly the code that is in `versions/<version>/`. `data/`, `versions/`, `dist/` and
-`node_modules/` stay out of the repository (`.gitignore`) — `data/` holds your API
-keys. History starts at **v1.1.0**: the 1.0.0 source only ever existed in the working
-folder before the backup and git tooling existed, so it is not recoverable, and the
-`CHANGELOG.md` entry is all that remains of it.
+`npm run release` tags by itself when the tree is already clean; because `versions/` is
+committed, the freshly written folder makes step 4 necessary and the script says so
+(`tag: skipped - 1 uncommitted change(s); commit first, then npm run tag`). Either way a
+tag ends up pointing at exactly the code that is in `versions/<version>/`. `versions/`
+**is** committed, so GitHub shows one folder per version next to the working copy;
+`data/` (it holds your API keys), `dist/` and `node_modules/` stay local (`.gitignore`)
+because they are either secret or reproducible. History starts at **v1.1.0**: the 1.0.0
+source only ever existed
+in the working folder before the backup and git tooling existed, so it is not
+recoverable, and the `CHANGELOG.md` entry is all that remains of it.
 
 ---
 
@@ -856,4 +906,6 @@ Then register it in `src/tools/index.ts`.
 | Endpoint errors about `tools` / `stream` | `/diagnose` shows which field it rejects; the agent already retries without it and remembers. `/caps` lists what was dropped |
 | Requests time out on the first call | a local server is loading the model — raise `requestTimeoutMs`, or warm the model up with `/diagnose` first |
 | `429` from a cloud API | raise `maxRetries`; the agent waits the `Retry-After` the API asked for |
+| My settings are ignored | `data/settings.json` had a BOM (harmless, it is reported) or a syntax error (not harmless) — the startup line / Settings tab says which. Fix the file or delete it |
+| A restored version "has no settings" | by design: each folder has its own `data/`. Copy `data/settings.json` into it, or set `AGENT_DATA_DIR` so both copies share one folder |
 | Reset everything | delete the `data/` folder |

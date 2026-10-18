@@ -152,12 +152,39 @@ export const registryTool: Tool = {
     switch (action) {
       case "get": {
         const valueName = argOpt(args, "name");
-        const data = await runPsJson(
-          valueName
-            ? `Get-ItemProperty -Path ${psQuote(keyPath)} -Name ${psQuote(valueName)} -ErrorAction Stop`
-            : `Get-ItemProperty -Path ${psQuote(keyPath)} -ErrorAction Stop`,
+        // Two PowerShell traps in one place:
+        //  - Get-ItemProperty also returns PSPath/PSParentPath/PSChildName/PSDrive/
+        //    PSProvider, and PSProvider drags in the whole provider + module object
+        //    graph, so ConvertTo-Json walks all of it and dies with
+        //    System.OutOfMemoryException.
+        //  - Asking for a value (or a key) that is not there is a non-terminating
+        //    error, which makes powershell.exe exit 1 and buries the real answer in a
+        //    CLIXML blob.
+        // So: ask Test-Path first, read the values once, and let the caller (here) pick
+        // the one value it wanted.
+        const valuesOnly =
+          "Select-Object * -ExcludeProperty PSPath,PSParentPath,PSChildName,PSDrive,PSProvider";
+        const data = await runPsJson<{ exists: boolean; values: Record<string, unknown> | null }>(
+          `$wgKey = ${psQuote(keyPath)}; ` +
+            // Has to end with an expression: runPsJson appends "| ConvertTo-Json" to
+            // whatever it is given, and that cannot attach to an if/else block.
+            `$wgExists = Test-Path -Path $wgKey; ` +
+            `$wgValues = if ($wgExists) { Get-ItemProperty -Path $wgKey | ${valuesOnly} } else { $null }; ` +
+            `[pscustomobject]@{ exists = $wgExists; values = $wgValues }`,
         );
-        return JSON.stringify(data, null, 2);
+        if (!data || !data.exists) return `Registry key ${keyPath} does not exist.`;
+
+        const values = data.values ?? {};
+        const names = Object.keys(values);
+        if (valueName) {
+          if (!names.includes(valueName)) {
+            return names.length === 0
+              ? `Registry value "${valueName}" does not exist: ${keyPath} has no values.`
+              : `Registry value "${valueName}" does not exist in ${keyPath}. Available: ${names.join(", ")}`;
+          }
+          return JSON.stringify({ [valueName]: values[valueName] }, null, 2);
+        }
+        return names.length === 0 ? `(no values in ${keyPath})` : JSON.stringify(values, null, 2);
       }
 
       case "list": {

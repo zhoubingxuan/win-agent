@@ -13,6 +13,50 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-10-18
+
+A patch that makes the "one folder per version" rule airtight, adds the examples folder,
+and fixes the four things writing those examples uncovered.
+
+### Added
+- **`examples/`** — copy-paste material checked against this repository:
+  [tool-calls.md](examples/tool-calls.md) (one worked call per tool, with the JSON the
+  model emits), [prompts.md](examples/prompts.md) (ready tasks, English + 中文),
+  [custom-commands.md](examples/custom-commands.md), [api.md](examples/api.md) and
+  [settings.md](examples/settings.md) (LM Studio / Ollama / cloud `settings.json`).
+  `versions/<version>/` copies now include it.
+- **Version isolation test** (`npm run test:isolation`): builds three throwaway
+  installations, asks one for its folders while standing in another, and fails if any
+  copy reports the wrong installation, data folder or version.
+
+### Changed
+- **Everything self-resolved is anchored to the installation**, not to the working
+  folder: the data folder (`data/`), the version number (`package.json`) and the web UI
+  files (`src/web`, `dist/web`). Two copies — in particular two folders under
+  `versions/` — can no longer share settings, conversations, totals or UI files, however
+  they are started. `AGENT_DATA_DIR` remains the deliberate way to share one folder.
+  Existing setups are unaffected when the agent is started from its own folder.
+- **`versions/` is published** in the repository, so GitHub shows one folder per version
+  next to the working copy; `data/`, `dist/` and `node_modules/` stay local.
+- Legacy `.win-agent/` data is looked for in the installation folder first, then in the
+  working folder, so a sibling copy cannot pick up someone else's old files.
+
+### Fixed
+- **`registry` `get` crashed** with `System.OutOfMemoryException`:
+  `Get-ItemProperty` returns `PSProvider`, whose object graph is huge, and
+  `ConvertTo-Json` walked all of it. The values are now read on their own, and asking for
+  a value or key that does not exist answers with a sentence (and the available names)
+  instead of a CLIXML blob.
+- **`services` `list` with a filter** only matched the short service name and printed
+  `null` when nothing matched: a plain word now behaves as a search over name *and*
+  display name (`filter: "print"` finds "Print Spooler") and an empty result says so.
+- **A settings file Windows wrote** — a UTF-8 BOM from
+  `Set-Content -Encoding UTF8`, Notepad, Visual Studio — made the *whole* file silently
+  ignored. BOMs are now stripped when reading settings, conversations, usage totals and
+  `package.json`, and a file that genuinely does not parse is reported at startup
+  (`warning: ... is not valid JSON ... the defaults are being used`) instead of looking
+  like "my settings do not work".
+
 ## [1.1.0] — 2026-10-18
 
 Built for small local models that run out of context and for endpoints that only

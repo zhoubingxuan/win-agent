@@ -16,6 +16,7 @@ import {
   rememberModels,
   saveSettings,
   settingsFile,
+  settingsFileWarning,
   toConfig,
   updateSettings,
 } from "./settings.js";
@@ -41,6 +42,7 @@ import {
   saveConversation,
   unarchiveConversation,
   dataDir,
+  installDir,
   type ConversationRecord,
   type CumulativeUsage,
   type UsageEntry,
@@ -215,6 +217,11 @@ function applySettings(): string[] {
   const s = getSettings();
   const notices: string[] = [];
   configurePowerShell(s.powershell);
+
+  // A settings file that had a BOM or does not parse is worth saying out loud:
+  // otherwise it just looks like the settings were ignored.
+  const settingsWarning = settingsFileWarning();
+  if (settingsWarning) notices.push(`warning: ${settingsWarning}`);
 
   try {
     if (!fs.existsSync(s.workdir)) {
@@ -474,12 +481,16 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
+/**
+ * The UI files belong to *this* installation, never to the folder the agent
+ * happens to start in: two version folders must not serve each other's UI.
+ */
 const WEB_DIR = (() => {
   const candidates = [
     path.join(__dirname, "web"),
     path.join(__dirname, "..", "src", "web"),
-    path.join(process.cwd(), "src", "web"),
-    path.join(process.cwd(), "web"),
+    path.join(installDir(), "src", "web"),
+    path.join(installDir(), "web"),
   ];
   return candidates.find((dir) => fs.existsSync(path.join(dir, "index.html"))) ?? candidates[0];
 })();

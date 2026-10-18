@@ -2,6 +2,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { dataDir, migrateLegacyData } from "./store.js";
+import { bomLabel, parseJsonWithBom } from "./util/json.js";
 
 /** Languages supported by the UI and by the agent's replies. */
 export type Language = "en" | "zh";
@@ -324,12 +325,26 @@ export function coerceSetting(key: string, value: unknown): unknown {
 /* -------------------------------------------------------------------------- */
 
 function readFileSettings(): Record<string, unknown> {
+  const file = settingsFile();
+  settingsWarning = null;
+  if (!fs.existsSync(file)) return {};
   try {
-    const raw = fs.readFileSync(settingsFile(), "utf8");
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
+    const { value, bom } = parseJsonWithBom<Record<string, unknown>>(fs.readFileSync(file, "utf8"));
+    if (bom) settingsWarning = `${file} starts with a ${bomLabel(bom)}; it was read anyway, but saving from the UI rewrites it cleanly.`;
+    return value;
+  } catch (error) {
+    // Never silently: a settings file that cannot be parsed looks exactly like
+    // "my settings don't work", so say so where the user will see it.
+    settingsWarning = `${file} is not valid JSON (${(error as Error).message}) - the defaults are being used. Fix it or delete it.`;
     return {};
   }
+}
+
+let settingsWarning: string | null = null;
+
+/** Set when data/settings.json had a byte-order mark or could not be parsed. */
+export function settingsFileWarning(): string | null {
+  return settingsWarning;
 }
 
 function fromEnv(): Record<string, unknown> {
