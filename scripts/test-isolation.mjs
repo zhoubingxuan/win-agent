@@ -105,7 +105,11 @@ check("node_modules copy falls back to the working folder", same(globalRun.insta
 // 6. Nothing was created: asking for a path must not write to disk.
 check("asking for paths does not create data folders", fs.existsSync(path.join(a.dir, "data")), false);
 
-fs.rmSync(tmp, { recursive: true, force: true });
+try {
+  fs.rmSync(tmp, { recursive: true, force: true });
+} catch {
+  // Windows can hold a handle briefly; a temp folder is not worth a red suite.
+}
 
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n${results.length - failed}/${results.length} checks passed`);

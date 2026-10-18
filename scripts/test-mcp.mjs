@@ -5,12 +5,35 @@
 // pretends to be one over stdio, and a throwaway HTTP server pretends to be
 // one over Streamable HTTP.
 import http from "node:http";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpManager, safeName, resolveCommand, isUsable } from "../src/mcp.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MOCK = path.join(HERE, "fixtures", "mock-mcp-server.mjs");
+
+/**
+ * Free ports from the OS. A fixed port made this suite die at startup (EADDRINUSE)
+ * whenever anything else on the machine happened to hold it - and a suite that dies
+ * before its first check says nothing at all about the code.
+ */
+async function freePorts(n) {
+  const ports = new Set();
+  while (ports.size < n) {
+    ports.add(
+      await new Promise((resolve, reject) => {
+        const probe = net.createServer();
+        probe.on("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          const { port } = probe.address();
+          probe.close(() => resolve(port));
+        });
+      }),
+    );
+  }
+  return [...ports];
+}
 
 let failures = 0;
 let passed = 0;
@@ -260,6 +283,9 @@ console.log("connections are dropped when a server is switched off or removed");
 
 console.log("http: Streamable HTTP transport (JSON and SSE answers)");
 {
+  // A port of our own: a fixed one somebody else holds would fail this suite for the
+  // wrong reason (that is exactly how a red CI run told us nothing at all).
+  const [httpPort] = await freePorts(1);
   let sse = false;
   let sawSession = false;
   const requests = [];
@@ -306,10 +332,10 @@ console.log("http: Streamable HTTP transport (JSON and SSE answers)");
       );
     });
   });
-  await new Promise((resolve) => server.listen(8796, "127.0.0.1", resolve));
+  await new Promise((resolve) => server.listen(httpPort, "127.0.0.1", resolve));
 
   const { manager } = makeManager([
-    stdioServer({ id: "httpmock", name: "httpmock", transport: "http", command: "", args: [], url: "http://127.0.0.1:8796/mcp" }),
+    stdioServer({ id: "httpmock", name: "httpmock", transport: "http", command: "", args: [], url: `http://127.0.0.1:${httpPort}/mcp` }),
   ]);
   await manager.refresh();
   check("the http server is connected", manager.status()[0].connected === true, manager.status()[0].error);
@@ -325,8 +351,10 @@ console.log("http: Streamable HTTP transport (JSON and SSE answers)");
 
 console.log("http: an unreachable endpoint is reported");
 {
+  // A free port, left closed: nothing is listening on it, which is the point.
+  const [deadPort] = await freePorts(1);
   const { manager } = makeManager(
-    [stdioServer({ id: "dead", name: "dead", transport: "http", command: "", args: [], url: "http://127.0.0.1:8795/mcp" })],
+    [stdioServer({ id: "dead", name: "dead", transport: "http", command: "", args: [], url: `http://127.0.0.1:${deadPort}/mcp` })],
     2000,
   );
   await manager.refresh();

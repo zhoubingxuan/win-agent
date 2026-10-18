@@ -1,6 +1,7 @@
 // Provider compatibility checks against a mock OpenAI endpoint.
 // Run with: npm run test:providers
 import http from "node:http";
+import net from "node:net";
 import { chat } from "../src/llm.js";
 import { capabilities, rejectedField } from "../src/providers.js";
 
@@ -12,6 +13,28 @@ function check(label, condition, extra = "") {
     failures += 1;
     console.log(`  FAIL ${label} ${extra}`);
   }
+}
+
+/**
+ * Free ports from the OS. A fixed port made this suite die at startup (EADDRINUSE)
+ * whenever anything else on the machine happened to hold it - and a suite that dies
+ * before its first check says nothing at all about the code.
+ */
+async function freePorts(n) {
+  const ports = new Set();
+  while (ports.size < n) {
+    ports.add(
+      await new Promise((resolve, reject) => {
+        const probe = net.createServer();
+        probe.on("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          const { port } = probe.address();
+          probe.close(() => resolve(port));
+        });
+      }),
+    );
+  }
+  return [...ports];
 }
 
 const requests = [];
@@ -46,9 +69,13 @@ function reject(res, status, message, headers = {}) {
   res.end(JSON.stringify({ error: { message, type: "invalid_request_error" } }));
 }
 
+// One port for the mock endpoint, one that stays empty for the "cannot reach it"
+// check below.
+const [mockPort, deadPort] = await freePorts(2);
+
 const config = (over = {}) => ({
   apiKey: "test",
-  baseUrl: "http://127.0.0.1:8799/v1",
+  baseUrl: `http://127.0.0.1:${mockPort}/v1`,
   model: "mock-1",
   maxSteps: 4,
   temperature: 0,
@@ -69,7 +96,7 @@ const tool = [
   },
 ];
 
-await new Promise((resolve) => server.listen(8799, "127.0.0.1", resolve));
+await new Promise((resolve) => server.listen(mockPort, "127.0.0.1", resolve));
 
 console.log("rejectedField()");
 check("detects tools", rejectedField("Unsupported parameter: 'tools'") === "tools");
@@ -173,7 +200,7 @@ console.log("unreachable endpoint is reported, not crashed on");
 {
   let message = "";
   try {
-    await chat(config({ baseUrl: "http://127.0.0.1:8798/v1", maxRetries: 0 }), [{ role: "user", content: "hi" }], []);
+    await chat(config({ baseUrl: `http://127.0.0.1:${deadPort}/v1`, maxRetries: 0 }), [{ role: "user", content: "hi" }], []);
   } catch (error) {
     message = error.message;
   }

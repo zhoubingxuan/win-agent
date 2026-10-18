@@ -1126,6 +1126,7 @@ scripts/
   test-api.mjs        the real HTTP server + a mock model, on a temp data folder
   test-audit.mjs      the change log and undo, against a temp folder (live on Windows)
   test-windows.mjs    live Windows checks: PowerShell, elevation, files, services
+  test-all.mjs        runs the suites in order (npm run test:all), one annotation on failure
   fixtures/
     mock-mcp-server.mjs  a tiny MCP server used by test-mcp.mjs
 .github/workflows/
@@ -1170,7 +1171,7 @@ npm run test:docs           # the docs against the code: routes, settings, links
 npm run test:api            # the whole HTTP API, against a mock model
 npm run test:audit          # the audit log and undo, against a temp folder
 npm run test:windows        # live Windows checks: PowerShell, elevation, files, services
-npm run test:all            # all of the above
+npm run test:all            # all of the above, in order (scripts/test-all.mjs)
 ```
 
 **One version = one folder.** `npm run release` copies the complete agent into
@@ -1200,6 +1201,11 @@ every tag and every pull request — no model, no LM Studio/Ollama, no network b
 The Windows job runs the *live* checks too (`test:windows`): a real PowerShell, real
 UTF-16 files, the real registry. Nothing is mocked there except the model endpoint,
 which is a throwaway HTTP server built into the suite.
+
+`npm run test:all` runs the suites one after another (`scripts/test-all.mjs`) and stops
+at the first failure. A failing check is echoed as a GitHub **annotation** as well as a
+plain log line: a job's log needs an authenticated request to read, while annotations are
+public — so a red run says *which* check broke without anyone having to open it.
 
 Four suites exist specifically to keep this repository honest as it grows:
 

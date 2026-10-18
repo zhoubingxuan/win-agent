@@ -52,6 +52,9 @@ jobs:
       # audit      - the audit log and undo, against a temp folder (live registry on Windows)
       # windows    - the live Windows checks (services, registry, encodings, timeouts)
       # isolation  - two copies never share data or a version number
+      #
+      # scripts/test-all.mjs runs them in order and echoes a failing check as a GitHub
+      # annotation, so a red run names the check that broke without reading the log.
       - name: the whole suite
         run: npm run test:all
 

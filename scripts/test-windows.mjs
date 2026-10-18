@@ -275,7 +275,12 @@ try {
     check("scheduled tasks can be listed", /^\[|No user scheduled tasks/.test(list.trim()), list.slice(0, 120));
   }
 } finally {
-  fs.rmSync(scratch, { recursive: true, force: true });
+  try {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  } catch {
+    // Windows can hold a handle briefly (an antivirus scan, a PowerShell that has
+    // just exited): a temp folder left behind must not turn the whole suite red.
+  }
 }
 
 console.log(`\n${passed} passed, ${failures} failed`);

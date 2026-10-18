@@ -13,6 +13,40 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.4.2] — 2026-10-18
+
+
+## [1.4.2] — 2026-10-18
+
+Test-infrastructure patch. **Nothing in `src/` changed**: the agent, the tools, the prompt
+and the web UI are exactly the 1.4.1 that runs. This release is about the suites telling
+the truth — and about a red CI run saying *what* broke.
+
+### Fixed
+
+- **The suites no longer pin ports.** `test:providers` bound 8798/8799, `test:models`
+  bound 8790–8794 and `test:mcp` bound 8795/8796, assuming nothing else on the machine
+  held them. A port in use killed the suite at startup with an `EADDRINUSE` stack trace
+  *before its first check* — a red run that says nothing at all about the code (which is
+  exactly the shape of the flaky `main` failure that led here: the CI job died six
+  seconds into the suite). Every suite now asks the OS for free ports the way `test:api`
+  always has, and the "unreachable endpoint" checks keep a free port closed instead of
+  naming one they hope is empty.
+- **A temp folder that cannot be deleted no longer fails a suite.** `test:windows` and
+  `test:isolation` removed their scratch folder in a bare `finally`; on Windows a handle
+  is sometimes held for a moment (an antivirus scan, a PowerShell that has just exited)
+  and that throw turned a green run red. Both now swallow the removal error, as
+  `test:api` and `test:audit` already did.
+
+### Changed
+
+- **`npm run test:all` is now [`scripts/test-all.mjs`](scripts/test-all.mjs)**. It runs
+  the eleven suites in order, streams their output and stops at the first failure, like
+  the `&&` chain it replaces — and it echoes every failing check as a GitHub
+  **annotation** (`::error::`). A job log needs an authenticated request to read;
+  annotations are public, so the next red CI run names the check that broke instead of
+  only "Process completed with exit code 1".
+
 ## [1.4.1] — 2026-10-18
 
 A patch for the two things 1.4.0 got wrong in practice, both found by driving a real

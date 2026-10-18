@@ -1,6 +1,7 @@
 // Local model discovery: "sync the models of local Ollama and LM Studio".
 // Run with: npm run test:models
 import http from "node:http";
+import net from "node:net";
 import { discoverLocalModels, localEndpointsFor, listModelsAt, WELL_KNOWN_LOCAL } from "../src/providers.js";
 
 let failures = 0;
@@ -13,6 +14,28 @@ function check(label, condition, extra = "") {
     failures += 1;
     console.log(`  FAIL ${label} ${extra}`);
   }
+}
+
+/**
+ * Free ports from the OS. A fixed port made this suite die at startup (EADDRINUSE)
+ * whenever anything else on the machine happened to hold it - and a suite that dies
+ * before its first check says nothing at all about the code.
+ */
+async function freePorts(n) {
+  const ports = new Set();
+  while (ports.size < n) {
+    ports.add(
+      await new Promise((resolve, reject) => {
+        const probe = net.createServer();
+        probe.on("error", reject);
+        probe.listen(0, "127.0.0.1", () => {
+          const { port } = probe.address();
+          probe.close(() => resolve(port));
+        });
+      }),
+    );
+  }
+  return [...ports];
 }
 
 /** One tiny fake server with the shape of the endpoint it is standing in for. */
@@ -47,11 +70,13 @@ const bare = fakeServer({ "/v1/models": { data: [{ id: "llama-3.2-3b" }] } });
 // An Ollama with the OpenAI bridge disabled: only its own route answers.
 const nativeOnly = fakeServer({ "/api/tags": { models: [{ name: "phi4:mini" }] } });
 
+const [lmPort, ollamaPort, barePort, nativePort, deadPort] = await freePorts(5);
+
 await Promise.all([
-  new Promise((resolve) => lmstudio.server.listen(8791, "127.0.0.1", resolve)),
-  new Promise((resolve) => ollama.server.listen(8792, "127.0.0.1", resolve)),
-  new Promise((resolve) => bare.server.listen(8793, "127.0.0.1", resolve)),
-  new Promise((resolve) => nativeOnly.server.listen(8794, "127.0.0.1", resolve)),
+  new Promise((resolve) => lmstudio.server.listen(lmPort, "127.0.0.1", resolve)),
+  new Promise((resolve) => ollama.server.listen(ollamaPort, "127.0.0.1", resolve)),
+  new Promise((resolve) => bare.server.listen(barePort, "127.0.0.1", resolve)),
+  new Promise((resolve) => nativeOnly.server.listen(nativePort, "127.0.0.1", resolve)),
 ]);
 
 const endpoint = (id, port) => ({
@@ -64,13 +89,13 @@ const endpoint = (id, port) => ({
 
 console.log("listModelsAt()");
 {
-  const models = await listModelsAt(endpoint("ollama", 8792), 3000);
+  const models = await listModelsAt(endpoint("ollama", ollamaPort), 3000);
   check("reads the OpenAI-compatible model list", models.includes("qwen2.5:7b"), models.join(", "));
   check("sorts the list", models.join(",") === [...models].sort().join(","), models.join(", "));
 
   let message = "";
   try {
-    await listModelsAt(endpoint("dead", 8790), 800);
+    await listModelsAt(endpoint("dead", deadPort), 800);
   } catch (error) {
     message = error.message;
   }
@@ -79,7 +104,7 @@ console.log("listModelsAt()");
 
 console.log("discoverLocalModels() merges LM Studio and Ollama");
 {
-  const result = await discoverLocalModels([endpoint("lmstudio", 8791), endpoint("ollama", 8792)], 3000);
+  const result = await discoverLocalModels([endpoint("lmstudio", lmPort), endpoint("ollama", ollamaPort)], 3000);
   const ids = result.models.map((model) => model.id);
   check("every model of both servers is there", ids.join(",") === "gemma-3-4b,glm-4.7-flash,qwen2.5:7b", ids.join(","));
   check("each model remembers its endpoint", result.models.find((m) => m.id === "qwen2.5:7b").endpointId === "ollama");
@@ -92,7 +117,7 @@ console.log("discoverLocalModels() merges LM Studio and Ollama");
 
 console.log("one server can be down without spoiling the others");
 {
-  const result = await discoverLocalModels([endpoint("dead", 8790), endpoint("ollama", 8792)], 1500);
+  const result = await discoverLocalModels([endpoint("dead", deadPort), endpoint("ollama", ollamaPort)], 1500);
   const dead = result.endpoints.find((e) => e.id === "dead");
   check("the dead one is reported as not ok", dead.ok === false);
   check("with a reason", dead.error.length > 0, dead.error);
@@ -101,11 +126,11 @@ console.log("one server can be down without spoiling the others");
 
 console.log("fallbacks for servers with a reduced API");
 {
-  const openaiOnly = await discoverLocalModels([endpoint("bare", 8793)], 2000);
+  const openaiOnly = await discoverLocalModels([endpoint("bare", barePort)], 2000);
   check("an LM Studio without /api/v0/models still answers", openaiOnly.models[0]?.id === "llama-3.2-3b", JSON.stringify(openaiOnly.models));
   check("the OpenAI route is credited", openaiOnly.endpoints[0].source === "OpenAI /v1/models");
 
-  const ollamaOnly = await discoverLocalModels([endpoint("native", 8794)], 2000);
+  const ollamaOnly = await discoverLocalModels([endpoint("native", nativePort)], 2000);
   check("an Ollama without /v1/models still answers", ollamaOnly.models[0]?.id === "phi4:mini", JSON.stringify(ollamaOnly.models));
   check("the Ollama route is credited", ollamaOnly.endpoints[0].source === "Ollama /api/tags");
 }
