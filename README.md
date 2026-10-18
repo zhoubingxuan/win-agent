@@ -1080,11 +1080,12 @@ npm run test:all            # all of the above
 ```
 
 **One version = one folder.** `npm run release` copies the complete agent into
-`versions/<version>/` — `src/`, `scripts/`, the configs and the docs, plus a
-`version.json` manifest — and refreshes `versions/INDEX.md`. `node_modules`, `dist`,
-`data` and the other versions are never copied, so a folder is a clean, standalone
-copy of that release. Add `--tar` to also get a portable `versions/<version>.tar.gz`
-(`node scripts/version.mjs --snapshot --tar`, e.g. to carry it to another machine).
+`versions/<version>/` — `src/`, `scripts/`, `examples/`, `.github/`, the configs and
+the docs, plus a `version.json` manifest — and refreshes `versions/INDEX.md`.
+`node_modules`, `dist`, `data` and the other versions are never copied, so a folder is
+a clean, standalone copy of that release. Add `--tar` to also get a portable
+`versions/<version>.tar.gz` (`node scripts/version.mjs --snapshot --tar`, e.g. to carry
+it to another machine).
 
 Two guards keep a version from going missing: `npm run version:set` refuses to bump
 the version while the current one has no backup (`--force` overrides), and

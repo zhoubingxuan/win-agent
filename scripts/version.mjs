@@ -33,6 +33,7 @@ const SNAPSHOT_ITEMS = [
   "src",
   "scripts",
   "examples",
+  ".github",
   "package.json",
   "package-lock.json",
   "tsconfig.json",
