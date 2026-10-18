@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.4.1",
+  "createdAt": "2026-10-18T09:32:11.230Z",
+  "node": ">=20.3",
+  "files": 68,
+  "bytes": 876438,
+  "note": "A patch for the two things 1.4.0 got wrong in practice, both found by driving a real 7B model through the browser UI: a turn could end with nothing on screen,…"
+}
