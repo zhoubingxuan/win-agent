@@ -1,4 +1,5 @@
 import type { ToolSchema } from "../llm.js";
+import { auditLog, type AuditEntry, type AuditInput } from "../audit.js";
 import { parseToolArguments } from "../util/json.js";
 
 /** Per-execution context handed to every tool. */
@@ -7,6 +8,13 @@ export interface ToolContext {
   dryRun: boolean;
   /** Ask the user to approve a destructive action. Resolves false if denied. */
   approve(summary: string): Promise<boolean>;
+  /**
+   * Copy a file or folder aside before changing it; returns where the copy went,
+   * or null when it cannot be saved (see src/audit.ts).
+   */
+  backup(target: string): Promise<string | null>;
+  /** Put a finished change in the audit log. `steps` make it undoable. */
+  record(input: AuditInput): AuditEntry | null;
 }
 
 export interface Tool {
@@ -90,6 +98,8 @@ function editDistance(a: string, b: string): number {
 
 export class ToolRegistry {
   private readonly tools = new Map<string, Tool>();
+  /** Tools that exist but are not offered to the model, and why. */
+  private readonly hidden = new Map<string, { reason: string; hint: string }>();
 
   constructor(
     private readonly approval: Approval,
@@ -110,18 +120,40 @@ export class ToolRegistry {
     return this;
   }
 
+  /**
+   * Take tools out of the catalogue without removing them: they are not sent to
+   * the model and not listed as available, but calling one still returns `reason`
+   * (plus `hint`) instead of "unknown tool", which teaches a small model what to
+   * do instead. `reason` is short enough for /status and the web UI.
+   */
+  withhold(names: string[], reason: string, hint = ""): this {
+    for (const name of names) {
+      if (this.tools.has(name)) this.hidden.set(name, { reason, hint });
+    }
+    return this;
+  }
+
+  /** Tools that exist but are not offered right now. */
+  withheld(): Array<{ name: string; reason: string; hint: string }> {
+    return [...this.hidden].map(([name, info]) => ({ name, ...info }));
+  }
+
   schemas(): ToolSchema[] {
-    return [...this.tools.values()].map((t) => t.schema);
+    return this.offered().map((tool) => tool.schema);
   }
 
   names(): string[] {
-    return [...this.tools.keys()];
+    return this.offered().map((tool) => tool.schema.function.name);
+  }
+
+  private offered(): Tool[] {
+    return [...this.tools.values()].filter((tool) => !this.hidden.has(tool.schema.function.name));
   }
 
   /** Markdown-ish catalog injected into the system prompt to guide small models. */
   describe(options: { verbose?: boolean } = {}): string {
     const lines: string[] = ["Available tools (call them exactly by name):"];
-    for (const tool of this.tools.values()) {
+    for (const tool of this.offered()) {
       const fn = tool.schema.function;
       const params = fn.parameters as {
         properties?: Record<string, { enum?: string[]; description?: string }>;
@@ -164,7 +196,7 @@ export class ToolRegistry {
     const wanted = name.toLowerCase().replace(/[^a-z0-9]/g, "");
     if (!wanted) return null;
     let best: { name: string; distance: number } | null = null;
-    for (const candidate of this.tools.keys()) {
+    for (const candidate of this.names()) {
       const flat = candidate.toLowerCase().replace(/[^a-z0-9]/g, "");
       const distance = editDistance(wanted, flat);
       if (best === null || distance < best.distance) best = { name: candidate, distance };
@@ -178,6 +210,11 @@ export class ToolRegistry {
 
   /** Execute a tool by name. Errors are returned as text so the model can react. */
   async execute(name: string, rawArguments: string): Promise<string> {
+    const hiddenBecause = this.hidden.get(name);
+    if (hiddenBecause !== undefined) {
+      const hint = hiddenBecause.hint ? ` ${hiddenBecause.hint}` : "";
+      return `Error: ${hiddenBecause.reason}.${hint}`;
+    }
     const tool = this.tools.get(name);
     if (!tool) {
       const suggestion = this.closestName(name);
@@ -191,9 +228,12 @@ export class ToolRegistry {
     }
     const args = parsed.value;
 
+    const audit = auditLog();
     const ctx: ToolContext = {
       dryRun: this.dryRun,
       approve: this.approval,
+      backup: (target: string) => audit.backup(target),
+      record: (input: AuditInput) => audit.record({ ...input, tool: name }),
     };
 
     try {

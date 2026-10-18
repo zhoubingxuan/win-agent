@@ -1,4 +1,4 @@
-import type { CustomTool } from "../settings.js";
+import type { AgentMode, CustomTool } from "../settings.js";
 import type { Approval } from "./registry.js";
 import { ToolRegistry } from "./registry.js";
 import { filesTool } from "./files.js";
@@ -24,7 +24,20 @@ export interface ToolOptions {
   customTools?: CustomTool[];
   /** Search page template (`{q}` = query) for the web tool. */
   webSearchUrl?: string;
+  /** In `guided` mode the raw shell is withheld (see GUIDED_NO_SHELL). */
+  agentMode?: AgentMode;
 }
+
+/**
+ * Why `powershell` is not offered in guided mode. The tool still exists, so a model
+ * that calls it anyway gets this instead of "unknown tool": the point is to push a
+ * small model towards the structured actions rather than let it improvise a script.
+ */
+export const GUIDED_NO_SHELL =
+  "the raw shell is switched off in guided mode";
+export const GUIDED_NO_SHELL_HINT =
+  'do not write commands or scripts. Use the structured tools instead: system (action ' +
+  '"disk" for free space), files, services, processes, network, registry, scheduled_tasks';
 
 /** Build the Windows tool set, honouring the enabled/custom configuration. */
 export function createWindowsTools(approval: Approval, options: ToolOptions = {}): ToolRegistry {
@@ -39,6 +52,12 @@ export function createWindowsTools(approval: Approval, options: ToolOptions = {}
     .register(registryTool)
     .register(uiTool)
     .register(powershellTool);
+
+  // Guided mode is for small models: they fail at inventing PowerShell, and every
+  // structured action they need exists as a tool, so the shell is not offered at all.
+  if (options.agentMode === "guided") {
+    registry.withhold(["powershell"], GUIDED_NO_SHELL, GUIDED_NO_SHELL_HINT);
+  }
 
   if (options.customTools && options.customTools.length > 0) {
     registry.register(createCustomTool(options.customTools));

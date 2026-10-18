@@ -17,6 +17,7 @@ import {
   type Settings,
 } from "./settings.js";
 import { powerShellInfo, psQuote } from "./util/ps.js";
+import type { AuditEntry } from "./audit.js";
 import { VERSION } from "./version.js";
 import { MCP_SERVER_ID, mcp, safeName, upsertServer, type McpServer } from "./mcp.js";
 import type { ContextStats } from "./context.js";
@@ -34,11 +35,36 @@ export interface ContextReport {
   source: "settings" | "model" | "unknown";  messages: number;
 }
 
+/** What the audit log looks like from the outside (see src/audit.ts). */
+export interface AuditReport {
+  enabled: boolean;
+  file: string;
+  /** Set when the log file could not be written. */
+  problem: string | null;
+  /** Newest first. */
+  entries: AuditEntry[];
+  /** The changes /undo would reverse, newest first. */
+  pending: AuditEntry[];
+}
+
+export interface UndoReport {
+  ok: boolean;
+  undone: AuditEntry[];
+  failures: string[];
+  message: string;
+}
+
 export interface CommandHost {
   /** Wipe the chat conversation (in memory and on disk). */
   resetHistory(): void;
-  /** All tool names that exist. */
+  /** Tool names that are offered to the model right now. */
   toolNames(): string[];
+  /** Tools that exist but are not offered right now (guided mode hides the shell). */
+  withheld(): Array<{ name: string; reason: string }>;
+  /** The audit log: recent records and what /undo can reverse. */
+  audit(limit?: number): AuditReport;
+  /** Reverse the newest `count` reversible changes. */
+  undo(count: number): Promise<UndoReport>;
   /** Apply side effects after settings change (chdir, powershell). Returns notices. */
   applySettings(): string[];
   /** Rebind the web server to a new port. */
@@ -163,6 +189,19 @@ interface Messages {
   mcpRemoveUsage: string;
   mcpToolsHeader: string;
   mcpNoTools: string;
+  auditHeader: string;
+  auditEmpty: string;
+  auditOff: string;
+  auditLine: string;
+  auditUndoable: string;
+  auditUndone: string;
+  undoNothing: string;
+  undoListHeader: string;
+  undoHeader: string;
+  undoLine: string;
+  undoFailed: string;
+  undoUsage: string;
+  toolsWithheld: string;
 }
 
 /** Every message the terminal prints, per language. Exported so the i18n test can
@@ -184,6 +223,8 @@ Inspect:
   /diagnose                  test the endpoint: chat, tools, streaming, usage
   /caps                      what this endpoint does not support
   /version                   which win-agent version this is
+  /audit [n]                 the last n changes (default 15), newest first
+  /undo [list|n]             reverse the last change (or n of them) — list what can be
 
 Change (saved to disk and applied immediately):
   /set <key> <value>         change any setting, e.g. /set maxSteps 20
@@ -335,6 +376,19 @@ current directory.`,
     mcpRemoveUsage: "usage: /mcp remove <id>",
     mcpToolsHeader: "MCP tools the model can call ({0}):",
     mcpNoTools: "(no MCP tools - switch MCP on and refresh)",
+    auditHeader: "audit log — {0} record(s), newest first ({1})",
+    auditEmpty: "(nothing has been changed yet)",
+    auditOff: "the audit log is switched off - turn on \"audit log\" in the Settings tab to record changes",
+    auditLine: "{0}. {1}  {2} {3}: {4}",
+    auditUndoable: "undoable",
+    auditUndone: "undone",
+    undoNothing: "nothing to undo (a restart clears the undo stack; the audit log keeps the record)",
+    undoListHeader: "can be undone, newest first:",
+    undoHeader: "undid {0} change(s):",
+    undoLine: "- {0} {1}: {2}",
+    undoFailed: "some steps could not be reversed: {0}",
+    undoUsage: "usage: /undo [list|count]",
+    toolsWithheld: "not offered: {0}",
   },
   zh: {
     help: `内部指令 —— 下面每一项在「设置」标签页里也能改。
@@ -352,6 +406,8 @@ current directory.`,
   /diagnose                  检测接口：对话、工具、流式、用量
   /caps                      这个接口不支持什么
   /version                   当前 win-agent 版本号
+  /audit [n]                 最近 n 条改动记录（默认 15 条），新的在前
+  /undo [list|n]             撤销最近 1 次（或 n 次）改动；list 列出可撤销的
 
 修改（会写入磁盘并立即生效）：
   /set <key> <value>         修改任意设置，例如 /set maxSteps 20
@@ -502,6 +558,19 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
     mcpRemoveUsage: "用法：/mcp remove <id>",
     mcpToolsHeader: "模型可以调用的 MCP 工具（共 {0} 个）：",
     mcpNoTools: "（没有 MCP 工具 —— 请打开 MCP 总开关并刷新）",
+    auditHeader: "改动记录 —— 共 {0} 条，新的在前（{1}）",
+    auditEmpty: "（还没有任何改动）",
+    auditOff: "改动记录已关闭 —— 在「设置」里打开「改动记录」即可开始记录",
+    auditLine: "{0}. {1}  {2} {3}：{4}",
+    auditUndoable: "可撤销",
+    auditUndone: "已撤销",
+    undoNothing: "没有可撤销的改动（重启会清空撤销栈，改动记录仍保留）",
+    undoListHeader: "可撤销的改动，新的在前：",
+    undoHeader: "已撤销 {0} 次改动：",
+    undoLine: "- {0} {1}：{2}",
+    undoFailed: "部分步骤未能还原：{0}",
+    undoUsage: "用法：/undo [list|次数]",
+    toolsWithheld: "当前不提供：{0}",
   },
 };
 
@@ -601,6 +670,7 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
       const info = await powerShellInfo();
       const admin =
         info.elevated === true ? m().adminYes : info.elevated === false ? m().adminNo : m().adminUnknown;
+      const withheld = host.withheld();
       return [
         `version    : ${VERSION}`,
         `model      : ${s.model}`,
@@ -625,6 +695,8 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         `mcp        : ${s.mcpEnabled ? "on" : "off"}  (${s.mcpServers.length} server(s), ${mcp.status().reduce((n, x) => n + x.tools.length, 0)} tool(s))`,
         `syncLocals : ${s.syncLocalModels}`,
         `context    : ${window}`,
+        `audit      : ${s.auditLog ? m().onWord : m().offWord}  (${host.audit(0).pending.length} change(s) can be undone)`,
+        `withheld   : ${withheld.length === 0 ? "(none)" : withheld.map((w) => `${w.name} (${w.reason})`).join(", ")}`,
       ].join("\n");
     }
 
@@ -750,7 +822,10 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
       const s = getSettings();
       const all = host.toolNames();
       const enabled = s.enabledTools ?? all;
-      return all.map((t) => `${enabled.includes(t) ? "[x]" : "[ ]"} ${t}`).join("\n");
+      const lines = all.map((t) => `${enabled.includes(t) ? "[x]" : "[ ]"} ${t}`);
+      const hidden = host.withheld().map((item) => `${item.name} (${item.reason})`);
+      if (hidden.length > 0) lines.push(format(m().toolsWithheld, hidden.join("; ")));
+      return lines.join("\n");
     }
 
     case "enable":
@@ -1098,6 +1173,7 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         format(m().dataLine, "history", info.historyFile),
         format(m().dataLine, "usage", info.usageFile),
         format(m().dataLine, "conversations", `${info.conversationsDir}  (${info.archived})`),
+        format(m().dataLine, "audit", info.auditFile),
       ].join("\n");
     }
 
@@ -1143,6 +1219,55 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
 
     case "whoami":
       return format(m().agentAt, settingsFile());
+
+    case "audit": {
+      const wanted = rest.trim() ? Number(rest.trim()) : 15;
+      if (!Number.isFinite(wanted) || wanted < 1 || wanted > 500) throw new Error(m().undoUsage);
+      const report = host.audit(wanted);
+      if (!report.enabled) return m().auditOff;
+      const head = format(m().auditHeader, report.entries.length, report.file);
+      const lines = report.entries.map((entry) => {
+        const stamp = entry.time.replace("T", " ").slice(0, 19);
+        const flag =
+          entry.action === "undo"
+            ? m().auditUndone
+            : entry.undoable
+              ? m().auditUndoable
+              : "";
+        const line = format(m().auditLine, entry.seq, stamp, entry.tool, entry.action, entry.summary);
+        return flag ? `${line}  (${flag})` : line;
+      });
+      if (lines.length === 0) return [head, m().auditEmpty].join("\n");
+      if (report.problem) lines.push(`warning: ${report.problem}`);
+      return [head, ...lines].join("\n");
+    }
+
+    case "undo": {
+      const report = host.audit(0);
+      if (!report.enabled) return m().auditOff;
+      const value = rest.trim().toLowerCase();
+      if (value === "list") {
+        if (report.pending.length === 0) return m().undoNothing;
+        return [
+          m().undoListHeader,
+          ...report.pending.map((entry) =>
+            format(m().undoLine, entry.tool, entry.action, entry.summary),
+          ),
+        ].join("\n");
+      }
+      const count = value ? Number(value) : 1;
+      if (!Number.isInteger(count) || count < 1 || count > 50) throw new Error(m().undoUsage);
+      const result = await host.undo(count);
+      if (result.undone.length === 0) return m().undoNothing;
+      const lines = [
+        format(m().undoHeader, result.undone.length),
+        ...result.undone.map((entry) =>
+          format(m().undoLine, entry.tool, entry.action, entry.summary),
+        ),
+      ];
+      if (result.failures.length > 0) lines.push(format(m().undoFailed, result.failures.join("; ")));
+      return lines.join("\n");
+    }
 
     case "public":
       return JSON.stringify(publicSettings(), null, 2);

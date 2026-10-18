@@ -5,8 +5,8 @@ different amounts of hand-holding. `agentMode` is that one switch.
 
 | Mode | Default for | What the model is given |
 | --- | --- | --- |
-| `guided` | **small local models** | prompt + numbered operating procedure, required arguments spelled out, one tool call per step |
-| `normal` | large / cloud models | prompt + tool catalogue, any number of tool calls per step |
+| `guided` | **small local models** | prompt + numbered operating procedure, required arguments spelled out, one tool call per step, **no raw shell tool** |
+| `normal` | large / cloud models | prompt + tool catalogue (shell included), any number of tool calls per step |
 
 ## Switching / 切换
 
@@ -53,7 +53,42 @@ Operating procedure (follow it exactly):
 6. Write paths exactly as the user gave them (C:\Users\Name\file.txt); never guess a path.
 7. Before a destructive step (delete, move, kill, stop a service, change the registry, shut down), say in one short sentence what you are about to do.
 8. When the task is done, answer in plain text with a short summary of what you did, and do not call a tool.
+9. There is no shell in this mode: never write command lines, scripts or registry paths. Every step is one of the tool actions listed above.
 ```
+
+## The raw shell is withheld in `guided` mode
+
+`guided` mode exists for models that cannot write PowerShell. So it does not offer the
+`powershell` tool at all: the tool is still registered (the **Tools** panel and
+`/tools` show it, marked `not offered`), but it is taken out of the schemas sent to the
+endpoint and out of the catalogue in the system prompt. The model cannot imitate what
+it cannot see.
+
+If a model calls it anyway — small models do re-use names they learned in training —
+the answer is not `unknown tool`, it is the way out:
+
+```
+Error: the raw shell is switched off in guided mode. do not write commands or scripts.
+Use the structured tools instead: system (action "disk" for free space), files,
+services, processes, network, registry, scheduled_tasks
+```
+
+Every action a small model needs already exists as a structured tool:
+
+| Instead of this script | It calls |
+| --- | --- |
+| `Get-CimInstance Win32_LogicalDisk …` | `system { action: "disk" }` |
+| `Get-Service`, `sc.exe query` | `services { action: "status", name: "Spooler" }` |
+| `Get-Process`, `Stop-Process` | `processes { action: "list" }` |
+| `Get-Process -Id … \| Select-Object` | `processes { action: "info", name: "chrome" }` |
+| `Get-NetIPAddress`, `ipconfig` | `network { action: "ip" }` |
+| `Get-ChildItem … -Recurse` | `files { action: "tree", path: "D:\logs" }` |
+| `Get-ItemProperty HKCU:\…` | `registry { action: "get", path: "HKCU:\…" }` |
+
+Your own `custom` commands (see [custom-commands.md](custom-commands.md)) and the
+terminal (`/exec`, the Terminal tab) are *not* affected — they are yours, not the
+model's. Switch to `normal` (`/mode normal`) when a large model should have the shell
+back; nothing else changes.
 
 ## What `guided` adds to the tool catalogue
 
@@ -109,8 +144,8 @@ lost: it can simply call the same tool on the next step.
 | 14B local models | `guided`, try `normal` on your tasks | at 14B the argument list matters less; measure on your own workflow |
 | GPT-4 class / Claude / DeepSeek via API | `normal` | capable models batch independent calls (read three files at once) and plan ahead correctly; the procedure only slows them down |
 
-The mode touches nothing else — same tools, same approval prompts, same memory, same
-budget. You can switch mid-conversation.
+The mode touches nothing else — same tools (minus the withheld shell), same approval
+prompts, same memory, same budget. You can switch mid-conversation.
 
 ## Checking which mode is live
 

@@ -49,6 +49,7 @@ jobs:
       # mode       - agent modes, JSON repair, text encodings, CLIXML
       # i18n       - both dictionaries, the HTML attributes and the help text
       # api        - the real server on a temp data folder + a mock model
+      # audit      - the audit log and undo, against a temp folder (live registry on Windows)
       # windows    - the live Windows checks (services, registry, encodings, timeouts)
       # isolation  - two copies never share data or a version number
       - name: the whole suite
@@ -73,7 +74,7 @@ jobs:
         run: npm run typecheck
 
       - name: suites that must pass anywhere
-        run: npm test && npm run test:providers && npm run test:mcp && npm run test:models && npm run test:mode && npm run test:i18n
+        run: npm test && npm run test:providers && npm run test:mcp && npm run test:models && npm run test:mode && npm run test:i18n && npm run test:audit
 
       - name: the Windows checks skip cleanly off Windows
         run: npm run test:windows

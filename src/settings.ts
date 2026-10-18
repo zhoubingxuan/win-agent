@@ -64,6 +64,7 @@ export const GUIDED_INSTRUCTIONS: Record<Language, string> = {
     "6. Write paths exactly as the user gave them (C:\\Users\\Name\\file.txt); never guess a path.",
     "7. Before a destructive step (delete, move, kill, stop a service, change the registry, shut down), say in one short sentence what you are about to do.",
     "8. When the task is done, answer in plain text with a short summary of what you did, and do not call a tool.",
+    "9. There is no shell in this mode: never write command lines, scripts or registry paths. Every step is one of the tool actions listed above.",
   ].join("\n"),
   zh: [
     "操作规范（请严格遵守）：",
@@ -75,6 +76,7 @@ export const GUIDED_INSTRUCTIONS: Record<Language, string> = {
     "6. 路径必须与用户给的一致（例如 C:\\Users\\Name\\file.txt），不要自己猜测路径。",
     "7. 执行破坏性操作前（删除、移动、结束进程、停止服务、改注册表、关机），先用一句话说明你将要做什么。",
     "8. 任务完成后，用纯文本简短总结你做了什么，此时不要再调用工具。",
+    "9. 本模式没有命令行工具：不要自己编写任何命令、脚本或注册表路径，每一步都必须是上面列出的工具动作。",
   ].join("\n"),
 };
 
@@ -148,6 +150,8 @@ export interface Settings {
   autoApprove: boolean;
   /** normal = plain prompt, guided = step-by-step supervision for small models. */
   agentMode: AgentMode;
+  /** Write every change to data/audit.jsonl and keep a stack of undoable ones. */
+  auditLog: boolean;
   /** Persist the conversation to disk so it survives restarts (记忆化). */
   remember: boolean;
   /** Stream replies token by token (lower perceived latency on local models). */
@@ -240,6 +244,7 @@ export const DEFAULTS: Settings = {
   // The project exists to drive Windows with *small* local models, so the
   // supervised mode is the default. One switch flips it to the plain prompt.
   agentMode: "guided",
+  auditLog: true,
   remember: true,
   stream: true,
   contextLimit: 0,
@@ -282,6 +287,7 @@ const BOOLEAN_KEYS: Array<keyof Settings> = [
   "psEnglishErrors",
   "mcpEnabled",
   "syncLocalModels",
+  "auditLog",
 ];
 const NUMERIC_RANGE: Record<string, [number, number]> = {
   maxSteps: [1, 100],
@@ -485,6 +491,7 @@ function fromEnv(): Record<string, unknown> {
   if (env.AGENT_POWERSHELL) patch.powershell = env.AGENT_POWERSHELL;
   if (env.AGENT_PS_ENGLISH_ERRORS) patch.psEnglishErrors = env.AGENT_PS_ENGLISH_ERRORS;
   if (env.AGENT_MODE) patch.agentMode = env.AGENT_MODE;
+  if (env.AGENT_AUDIT_LOG) patch.auditLog = env.AGENT_AUDIT_LOG;
   if (env.AGENT_WEB_PORT) patch.webPort = env.AGENT_WEB_PORT;
   if (env.AGENT_STREAM) patch.stream = env.AGENT_STREAM;
   if (env.AGENT_CONTEXT_LIMIT) patch.contextLimit = env.AGENT_CONTEXT_LIMIT;

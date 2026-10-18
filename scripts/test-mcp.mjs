@@ -59,6 +59,25 @@ function stdioServer(over = {}) {
 const always = async () => true;
 const never = async () => false;
 
+/**
+ * A tool context for a direct `tool.run(...)` call. The registry normally injects
+ * `record` and `backup` (see src/tools/registry.ts); the MCP wrapper records every
+ * call in the audit log, so a hand-made context has to provide the same two.
+ */
+function ctxOf(approve, extra = {}) {
+  return {
+    dryRun: false,
+    approve,
+    record: (input) => {
+      ctxOf.recorded.push(input);
+      return null;
+    },
+    backup: async () => null,
+    ...extra,
+  };
+}
+ctxOf.recorded = [];
+
 /* -------------------------------------------------------------------------- */
 
 console.log("tool naming");
@@ -100,10 +119,16 @@ console.log("stdio: connect, list tools, call them");
 
   const run = async (name, args, approve = always) => {
     const tool = manager.tools(approve, false).find((t) => t.schema.function.name === name);
-    return tool.run(args, { dryRun: false, approve });
+    return tool.run(args, ctxOf(approve));
   };
 
   check("a tool call comes back as text", (await run("mcp__mock__echo", { text: "hi" })) === "echo: hi");
+  const recorded = ctxOf.recorded.at(-1);
+  check(
+    "the call is recorded for the audit log",
+    recorded?.action === "echo" && /called MCP tool mock\/echo with \{"text":"hi"\}/.test(recorded.summary),
+    JSON.stringify(recorded),
+  );
   check("a cleanly sanitized name still works", (await run("mcp__mock__weird_name_x", {})) === "weird ok");
   check("isError is reported as an error", (await run("mcp__mock__fail", {})).startsWith("Error: the mock tool failed"));
   const structured = await run("mcp__mock__structured", {});
@@ -129,7 +154,7 @@ console.log("stdio: connect, list tools, call them");
   check("the prompt names the server and tool", asked === "call MCP tool mock/echo", asked);
 
   const trusted = manager.tools(never, false).find((t) => t.schema.function.name === "mcp__mock__echo");
-  check("dry run reports instead of calling", (await trusted.run({ text: "z" }, { dryRun: true, approve: always })).startsWith("DRY RUN:"));
+  check("dry run reports instead of calling", (await trusted.run({ text: "z" }, ctxOf(always, { dryRun: true }))).startsWith("DRY RUN:"));
 
   manager.close();
 }
@@ -139,7 +164,7 @@ console.log("stdio: autoApprove skips the prompt");
   const { manager } = makeManager([stdioServer({ autoApprove: true })]);
   await manager.refresh();
   const tool = manager.tools(never, false).find((t) => t.schema.function.name === "mcp__mock__echo");
-  check("the tool runs without approval", (await tool.run({ text: "yes" }, { dryRun: false, approve: never })) === "echo: yes");
+  check("the tool runs without approval", (await tool.run({ text: "yes" }, ctxOf(never))) === "echo: yes");
   manager.close();
 }
 

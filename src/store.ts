@@ -133,6 +133,8 @@ the defaults).
 | \`history.json\` | the conversation that is currently open |
 | \`usage.json\` | token totals summed over every conversation |
 | \`conversations/\` | one archived conversation per file, written when you start a new one |
+| \`audit.jsonl\` | every change a tool made, one JSON object per line (\`/audit\`) |
+| \`undo/\` | copies kept so \`/undo\` can put a file back; cleared on every start |
 
 You can move this folder elsewhere with \`AGENT_DATA_DIR\`, e.g.
 \`AGENT_DATA_DIR=D:\\\\win-agent-data\`.
@@ -398,6 +400,8 @@ export interface DataInfo {
   usageFile: string;
   conversationsDir: string;
   archived: number;
+  /** Append-only record of every change (see src/audit.ts). */
+  auditFile: string;
 }
 
 export function dataInfo(): DataInfo {
@@ -408,5 +412,6 @@ export function dataInfo(): DataInfo {
     usageFile: usageFile(),
     conversationsDir: conversationsDir(),
     archived: countArchived(),
+    auditFile: path.join(dataDir(), "audit.jsonl"),
   };
 }

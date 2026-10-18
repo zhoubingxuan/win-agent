@@ -70,6 +70,18 @@ export function buildTaskScript(plan: TaskPlan): { script: string; when: string 
   return { script: lines.join("; "), when };
 }
 
+/** Is there already a task with this name (so creating one would overwrite it)? */
+async function scheduledTaskExists(name: string): Promise<boolean> {
+  try {
+    const data = await runPsJson<{ exists: boolean }>(
+      `[pscustomobject]@{ exists = [bool](Get-ScheduledTask -TaskName ${psQuote(name)} -ErrorAction SilentlyContinue) }`,
+    );
+    return data?.exists === true;
+  } catch {
+    return true; // unknown: assume there is something to lose, so nothing is promised
+  }
+}
+
 export const scheduledTasksTool: Tool = {
   schema: {
     type: "function",
@@ -130,8 +142,25 @@ export const scheduledTasksTool: Tool = {
         }
         if (ctx.dryRun) return `DRY RUN: would create task ${name}.`;
 
+        // Register-ScheduledTask -Force overwrites a task of the same name, so ask
+        // first whether there is one to lose: only a genuinely new task is
+        // undoable (Undo button = "remove the task I just made").
+        const existed = await scheduledTaskExists(name);
         const { script, when } = buildTaskScript({ name, program, args: extra, schedule, time });
         await runPs(script);
+        ctx.record({
+          action: "create",
+          summary: `created scheduled task "${name}" (${when})`,
+          steps: existed
+            ? []
+            : [
+                {
+                  kind: "script",
+                  label: `delete task ${name}`,
+                  script: `Unregister-ScheduledTask -TaskName ${psQuote(name)} -Confirm:$false`,
+                },
+              ],
+        });
 
         // Say what actually happens next, instead of only claiming success: the
         // next run time is computed by Task Scheduler, not by us.
@@ -153,7 +182,29 @@ export const scheduledTasksTool: Tool = {
         const name = arg(args, "name");
         if (!(await ctx.approve(`delete scheduled task "${name}"`))) return "Cancelled by user.";
         if (ctx.dryRun) return `DRY RUN: would delete task ${name}.`;
+        // Export the task definition first: this is the only way to put it back
+        // exactly as it was (triggers, principal, settings and all).
+        let xml: string | null = null;
+        try {
+          xml = await runPs(`Export-ScheduledTask -TaskName ${psQuote(name)}`);
+        } catch {
+          xml = null;
+        }
+        if (!xml) return `Refused: could not read task "${name}", so the delete could not be undone.`;
         await runPs(`Unregister-ScheduledTask -TaskName ${psQuote(name)} -Confirm:$false`);
+        ctx.record({
+          action: "delete",
+          summary: `deleted scheduled task "${name}"`,
+          steps: [
+            {
+              kind: "script",
+              label: `restore task ${name}`,
+              script:
+                `Register-ScheduledTask -TaskName ${psQuote(name)} -Xml ${psQuote(xml)} ` +
+                "-Force | Out-Null",
+            },
+          ],
+        });
         return `Scheduled task "${name}" deleted.`;
       }
 
@@ -162,6 +213,10 @@ export const scheduledTasksTool: Tool = {
         if (!(await ctx.approve(`run scheduled task "${name}" now`))) return "Cancelled by user.";
         if (ctx.dryRun) return `DRY RUN: would run task ${name}.`;
         await runPs(`Start-ScheduledTask -TaskName ${psQuote(name)}`);
+        ctx.record({
+          action: "run",
+          summary: `started scheduled task "${name}"`,
+        });
         return `Scheduled task "${name}" started.`;
       }
 
@@ -177,6 +232,72 @@ export const scheduledTasksTool: Tool = {
 
 const REG_ACTIONS = ["get", "list", "set", "delete"] as const;
 const REG_TYPES = ["String", "ExpandString", "DWord", "QWord", "MultiString"] as const;
+
+/** What a value looked like before it was touched (see readRegValue). */
+interface SavedRegValue {
+  kind: (typeof REG_TYPES)[number];
+  value: unknown;
+}
+
+/**
+ * Read one value exactly as the registry stores it - including its kind - so a
+ * later change can be reversed. `RegistryValueOptions::DoNotExpandEnvironmentNames`
+ * matters: without it a REG_EXPAND_SZ value comes back expanded and would be
+ * written back with the user's environment baked into it.
+ *
+ * Returns null when the key, the value or the kind cannot be reproduced.
+ */
+async function readRegValue(keyPath: string, valueName: string): Promise<SavedRegValue | null> {
+  const data = await runPsJson<{ found: boolean; kind: string | null; value: unknown }>(
+    `$wgKey = Get-Item -Path ${psQuote(keyPath)} -ErrorAction SilentlyContinue; ` +
+      "$wgFound = $false; $wgKind = $null; $wgValue = $null; " +
+      "if ($wgKey -ne $null -and $wgKey.GetValueNames() -contains " +
+      `${psQuote(valueName)}) { $wgFound = $true; ` +
+      `$wgKind = $wgKey.GetValueKind(${psQuote(valueName)}).ToString(); ` +
+      `$wgValue = $wgKey.GetValue(${psQuote(valueName)}, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }; ` +
+      "[pscustomobject]@{ found = $wgFound; kind = $wgKind; value = $wgValue }",
+  );
+  if (!data?.found) return null;
+  const kind = REG_TYPES.find((type) => type === data.kind);
+  if (!kind) return null; // Binary and the rest cannot be written back painlessly
+  return { kind, value: data.value };
+}
+
+/** A PowerShell literal that writes `value` back as the registry type `kind`. */
+function regLiteral(saved: SavedRegValue): string {
+  const text = saved.value === null || saved.value === undefined ? "" : String(saved.value);
+  if (saved.kind === "DWord" || saved.kind === "QWord") {
+    const number = Number(text);
+    return Number.isFinite(number) ? String(Math.trunc(number)) : "0";
+  }
+  if (saved.kind === "MultiString") {
+    const list = Array.isArray(saved.value) ? saved.value.map((item) => String(item)) : [text];
+    return `@(${list.map((item) => psQuote(item)).join(", ")})`;
+  }
+  return psQuote(text);
+}
+
+/** The step that puts a saved registry value back. */
+function restoreRegStep(keyPath: string, valueName: string, saved: SavedRegValue) {
+  return {
+    kind: "script" as const,
+    label: `restore ${keyPath}\\${valueName}`,
+    script:
+      `New-ItemProperty -Path ${psQuote(keyPath)} -Name ${psQuote(valueName)} ` +
+      `-Value ${regLiteral(saved)} -PropertyType ${saved.kind} -Force | Out-Null`,
+  };
+}
+
+/** The step that removes a registry value the agent created. */
+function removeRegStep(keyPath: string, valueName: string) {
+  return {
+    kind: "script" as const,
+    label: `delete ${keyPath}\\${valueName}`,
+    script:
+      `Remove-ItemProperty -Path ${psQuote(keyPath)} -Name ${psQuote(valueName)} ` +
+      "-ErrorAction SilentlyContinue",
+  };
+}
 
 export const registryTool: Tool = {
   schema: {
@@ -259,10 +380,16 @@ export const registryTool: Tool = {
           return "Cancelled by user.";
         }
         if (ctx.dryRun) return `DRY RUN: would set ${keyPath}\\${valueName}.`;
+        const saved = await readRegValue(keyPath, valueName);
         await runPs(
           `New-ItemProperty -Path ${psQuote(keyPath)} -Name ${psQuote(valueName)} ` +
             `-Value ${psQuote(value)} -PropertyType ${type} -Force | Out-Null`,
         );
+        ctx.record({
+          action: "set",
+          summary: `set ${keyPath}\\${valueName} (${type})`,
+          steps: [saved ? restoreRegStep(keyPath, valueName, saved) : removeRegStep(keyPath, valueName)],
+        });
         return `Set ${keyPath}\\${valueName} (${type}).`;
       }
 
@@ -272,8 +399,15 @@ export const registryTool: Tool = {
           return "Cancelled by user.";
         }
         if (ctx.dryRun) return `DRY RUN: would delete ${keyPath}\\${valueName}.`;
+        const saved = await readRegValue(keyPath, valueName);
         await runPs(`Remove-ItemProperty -Path ${psQuote(keyPath)} -Name ${psQuote(valueName)}`);
-        return `Deleted ${keyPath}\\${valueName}.`;
+        ctx.record({
+          action: "delete",
+          summary: `deleted ${keyPath}\\${valueName}`,
+          paths: [],
+          steps: saved ? [restoreRegStep(keyPath, valueName, saved)] : [],
+        });
+        return `Deleted ${keyPath}\\${valueName}.${saved ? "" : " (not undoable: the old value could not be read)"}`;
       }
 
       default:

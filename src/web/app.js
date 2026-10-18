@@ -72,10 +72,10 @@ const I18N = {
     "settings.webSearchUrl": "Web search page",
     "settings.mode": "Agent mode — how closely the model is supervised",
     "settings.modeHint":
-      "Guided mode is built for small local models: the prompt gets a numbered operating procedure, every tool lists its required arguments, and the model may call only one tool per step (so it cannot guess ahead). Normal mode is the plain prompt, enough for a large model.",
+      "Guided mode is built for small local models: the prompt gets a numbered operating procedure, every tool lists its required arguments, the model may call only one tool per step (so it cannot guess ahead), and the raw powershell tool is not offered at all - the model has to use the structured actions. Normal mode is the plain prompt plus the shell, enough for a large model.",
     "settings.modeGuided": "guided",
     "settings.modeNormal": "normal",
-    "settings.modeStateGuided": "now: guided — one tool per step, explicit procedure",
+    "settings.modeStateGuided": "now: guided — one tool per step, explicit procedure, no raw shell",
     "settings.modeStateNormal": "now: normal — plain prompt, parallel tool calls allowed",
     "settings.windows": "Windows",
     "settings.windowsHint":
@@ -126,6 +126,19 @@ const I18N = {
     "settings.descPlaceholder": "description",
     "settings.scriptPlaceholder": "PowerShell, e.g. Get-Date -Format o",
     "settings.noCustom": "(no custom commands yet)",
+    "settings.audit": "Change log and undo",
+    "settings.auditHint":
+      "Every change the tools make is appended to the audit log, and each one that can be restored faithfully stays on an undo stack until the server restarts. Files are copied aside before they are touched, so /undo and the button below put them back byte for byte. A change that could not be saved (a folder bigger than 64 MB) is still recorded - just without an undo.",
+    "settings.auditOn": "Record changes and allow undo",
+    "settings.auditFile": "log file",
+    "settings.auditUndoable": "can be undone",
+    "settings.auditUndo": "Undo the last change",
+    "settings.auditEmpty": "(nothing has been changed yet)",
+    "settings.auditOff": "switched off - nothing is being recorded",
+    "settings.auditDone": "undid {0} change(s)",
+    "settings.auditNothing": "nothing to undo",
+    "settings.auditLine": "{0}  {1} {2}: {3}",
+    "settings.toolsWithheld": "not offered right now: {0}",
     "settings.savedFile": "saved to {0}",
     "settings.saved": "saved: {0}",
     "settings.noChanges": "no changes",
@@ -284,10 +297,10 @@ const I18N = {
     "settings.webSearchUrl": "网页搜索地址",
     "settings.mode": "智能体模式 —— 对模型的监督程度",
     "settings.modeHint":
-      "高监督模式是给本地小模型用的：提示词里会附加一份编号操作规范，每个工具都会列出必填参数，并且模型每一步只能调用一个工具（防止它瞎猜着一次做一堆）。普通模式就是原始提示词，大模型够用。",
+      "高监督模式是给本地小模型用的：提示词里会附加一份编号操作规范，每个工具都会列出必填参数，模型每一步只能调用一个工具（防止它瞎猜着一次做一堆），而且完全不提供原始 powershell 工具 —— 模型只能用结构化的动作。普通模式是原始提示词加 shell，大模型够用。",
     "settings.modeGuided": "高监督",
     "settings.modeNormal": "普通",
-    "settings.modeStateGuided": "当前：高监督 —— 每步只调用一个工具，附操作规范",
+    "settings.modeStateGuided": "当前：高监督 —— 每步只调用一个工具，附操作规范，不提供原始 shell",
     "settings.modeStateNormal": "当前：普通 —— 原始提示词，允许一次调用多个工具",
     "settings.windows": "Windows",
     "settings.windowsHint": "这里是智能体实际驱动的环境。是否有管理员权限，决定了能不能改服务、防火墙和系统级设置。",
@@ -336,6 +349,19 @@ const I18N = {
     "settings.descPlaceholder": "描述",
     "settings.scriptPlaceholder": "PowerShell，例如 Get-Date -Format o",
     "settings.noCustom": "（还没有自定义命令）",
+    "settings.audit": "改动记录与撤销",
+    "settings.auditHint":
+      "工具做的每一次改动都会追加到改动记录（audit）里；能够忠实还原的改动会留在撤销栈上，直到服务重启。文件在修改前会先备份一份，所以 /undo 和下面的按钮可以逐字节还原。无法备份的改动（例如超过 64 MB 的文件夹）仍然会记录，只是不能撤销。",
+    "settings.auditOn": "记录改动并允许撤销",
+    "settings.auditFile": "记录文件",
+    "settings.auditUndoable": "可撤销",
+    "settings.auditUndo": "撤销最近一次改动",
+    "settings.auditEmpty": "（还没有任何改动）",
+    "settings.auditOff": "已关闭 —— 不会记录任何改动",
+    "settings.auditDone": "已撤销 {0} 次改动",
+    "settings.auditNothing": "没有可撤销的改动",
+    "settings.auditLine": "{0}  {1} {2}：{3}",
+    "settings.toolsWithheld": "当前不提供：{0}",
     "settings.savedFile": "已保存到 {0}",
     "settings.saved": "已保存：{0}",
     "settings.noChanges": "没有变化",
@@ -455,8 +481,7 @@ let openTools = [];
 let state = {
   settings: {},
   tools: [],
-  allTools: [],
-  memory: null,
+  allTools: [],  memory: null,
   conversation: null,
   usage: null,
   data: null,
@@ -486,8 +511,12 @@ function setText(node, text) {
   node.textContent = text;
 }
 
-function atBottom(node) {
-  node.scrollTop = node.scrollHeight;
+// Follow new output only while the reader is already at the bottom: the panes scroll
+// themselves now, so yanking the view down mid-history would lose their place.
+function followBottom(node) {
+  if (node.scrollHeight - node.scrollTop - node.clientHeight < 120) {
+    node.scrollTop = node.scrollHeight;
+  }
 }
 
 function showNotice(text, ms = 4000) {
@@ -571,7 +600,7 @@ function addBubble(role, text) {
     div.classList.remove("streaming");
     setText(div, text);
     if (pendingUsage) pendingUsageAnchor = div;
-    atBottom(log);
+    followBottom(log);
     return div;
   }
   const div = document.createElement("div");
@@ -579,7 +608,7 @@ function addBubble(role, text) {
   setText(div, text);
   log.appendChild(div);
   if (role === "assistant" && pendingUsage) pendingUsageAnchor = div;
-  atBottom(log);
+  followBottom(log);
   return div;
 }
 
@@ -595,7 +624,7 @@ function addDelta(text) {
   }
   streamBubble.textContent += text;
   if (pendingUsage) pendingUsageAnchor = streamBubble;
-  atBottom(log);
+  followBottom(log);
 }
 
 /** Stop waiting for more tokens (the turn ended early). */
@@ -615,7 +644,7 @@ function showThinking(chars) {
     log.appendChild(thinkingEl);
   }
   setText(thinkingEl, t("chat.thinking", fmtInt(chars)));
-  atBottom(log);
+  followBottom(log);
 }
 
 function clearThinking() {
@@ -630,7 +659,7 @@ function addStep(step, max) {
   div.className = "step";
   setText(div, t("step.label", step, max));
   log.appendChild(div);
-  atBottom(log);
+  followBottom(log);
 }
 
 function addToolCall(name, args) {
@@ -658,7 +687,7 @@ function addToolCall(name, args) {
   log.appendChild(card);
   openTools.push({ name, card, body });
   if (pendingUsage) pendingUsageAnchor = card;
-  atBottom(log);
+  followBottom(log);
   return card;
 }
 
@@ -678,7 +707,7 @@ function addToolResult(name, result) {
     card.classList.add("done");
   }
   if (pendingUsage) pendingUsageAnchor = card;
-  atBottom(log);
+  followBottom(log);
 }
 
 function addApproval(ev) {
@@ -713,7 +742,7 @@ function addApproval(ev) {
 
   wrap.append(q, row);
   log.appendChild(wrap);
-  atBottom(log);
+  followBottom(log);
 }
 
 async function decideApproval(id, approved, wrap) {
@@ -783,7 +812,7 @@ function flushUsage() {
   else log.appendChild(caption);
   pendingUsage = null;
   pendingUsageAnchor = null;
-  atBottom(log);
+  followBottom(log);
 }
 
 /** A new LLM call started: park its usage until the reply has been drawn. */
@@ -896,6 +925,55 @@ async function loadData() {
   if (info.error) return;
   renderData(info);
   if (info.usage) renderUsage(info.usage);
+  await refreshAudit();
+}
+
+/* ------------------------------------------------------- audit log & undo */
+
+/** Ask the server what has been changed and what can still be undone. */
+async function refreshAudit() {
+  const report = await api("/api/audit?n=12");
+  if (report.error) return;
+  renderAudit(report);
+}
+
+function renderAudit(report) {
+  const list = el("a-list");
+  if (!list) return;
+  setText(el("a-file"), report.file ?? "…");
+  setText(
+    el("a-pending"),
+    report.enabled === false
+      ? t("settings.auditOff")
+      : `${report.pending?.length ?? 0}  ${t("settings.auditUndoable")}`,
+  );
+  const undo = el("a-undo");
+  undo.disabled = report.enabled === false || (report.pending?.length ?? 0) === 0;
+  list.innerHTML = "";
+  const entries = report.entries ?? [];
+  if (entries.length === 0) {
+    const p = document.createElement("div");
+    p.className = "muted";
+    p.textContent = t("settings.auditEmpty");
+    list.appendChild(p);
+    return;
+  }
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "audit-item";
+    const stamp = String(entry.time ?? "").replace("T", " ").slice(0, 19);
+    const line = document.createElement("span");
+    line.className = "grow";
+    setText(
+      line,
+      t("settings.auditLine", stamp, entry.tool, entry.action, entry.summary ?? ""),
+    );
+    const flag = document.createElement("span");
+    flag.className = "muted";
+    setText(flag, entry.undoable && entry.action !== "undo" ? t("settings.auditUndoable") : "");
+    row.append(line, flag);
+    list.appendChild(row);
+  }
 }
 
 /* --------------------------------------------------------------- SSE events */
@@ -958,6 +1036,9 @@ function handle(ev) {
       break;
     case "status":
       setRunning(ev.running);
+      // A finished turn changed something (or did not): the change log panel is
+      // the place to see what, so keep it current without a reload.
+      if (!ev.running) refreshAudit();
       break;
     case "reset":
       clearLog();
@@ -983,6 +1064,10 @@ function handle(ev) {
       break;
     case "notice":
       showNotice(ev.text, 8000);
+      break;
+    case "audit":
+      // A change (or an undo) finished; keep the change log panel honest.
+      refreshAudit();
       break;
   }
 }
@@ -1018,7 +1103,7 @@ function termLine(text, cls) {
   div.className = `term-line ${cls}`;
   setText(div, text);
   el("term").appendChild(div);
-  atBottom(el("term"));
+  followBottom(el("term"));
 }
 
 function termAppend(command, output, kind, cwd) {
@@ -1553,6 +1638,7 @@ function fillSettingsForm(s) {
   el("s-syncLocalModels").checked = s.syncLocalModels !== false;
   el("s-guided").checked = (s.agentMode ?? "guided") === "guided";
   el("s-psEnglishErrors").checked = s.psEnglishErrors !== false;
+  el("s-auditLog").checked = s.auditLog !== false;
   renderModeState();
   customTools = (s.customTools ?? []).map((c) => ({ ...c }));
   renderCustomTools();
@@ -1657,6 +1743,7 @@ async function saveSettings() {
     syncLocalModels: el("s-syncLocalModels").checked,
     agentMode: el("s-guided").checked ? "guided" : "normal",
     psEnglishErrors: el("s-psEnglishErrors").checked,
+    auditLog: el("s-auditLog").checked,
     enabledTools: allChecked ? null : enabled,
     customTools,
   };
@@ -1691,6 +1778,7 @@ async function saveSettings() {
 async function refreshState() {
   const data = await api("/api/state");
   state.allTools = data.allTools ?? [];
+  state.withheld = data.withheld ?? [];
   setText(el("cwd"), data.cwd);
   el("termPrompt").textContent = `PS ${data.cwd}>`;
   el("dryRun").checked = data.settings.dryRun;
@@ -1716,6 +1804,19 @@ async function refreshState() {
     chip.className = "chip";
     setText(chip, name);
     chips.appendChild(chip);
+  }
+
+  // Guided mode takes the raw shell out of the catalogue (see createWindowsTools):
+  // say so, otherwise the tool just looks missing.
+  const withheld = data.withheld ?? [];
+  const note = el("s-toolsNote");
+  if (note) {
+    setText(
+      note,
+      withheld.length === 0
+        ? ""
+        : t("settings.toolsWithheld", withheld.map((item) => item.name).join(", ")),
+    );
   }
 
   for (const text of data.notices ?? []) showNotice(text, 8000);
@@ -2028,6 +2129,30 @@ el("s-remember").addEventListener("change", async () => {
   }
 });
 
+// The audit switch takes effect at once: while it is off nothing is recorded, and
+// the undo stack is empty.
+el("s-auditLog").addEventListener("change", async () => {
+  const result = await api("/api/settings", "POST", { auditLog: el("s-auditLog").checked });
+  if (result.settings) state.settings = result.settings;
+  await refreshAudit();
+});
+
+el("a-undo").addEventListener("click", async () => {
+  const button = el("a-undo");
+  button.disabled = true;
+  setText(el("a-msg"), "…");
+  const result = await api("/api/undo", "POST", { count: 1 });
+  if (result.error) {
+    setText(el("a-msg"), `${t("error.prefix")}${result.error}`);
+  } else {
+    const text = result.undone?.length
+      ? t("settings.auditDone", result.undone.length)
+      : t("settings.auditNothing");
+    setText(el("a-msg"), result.failures?.length ? `${text} — ${result.failures.join("; ")}` : text);
+  }
+  await refreshAudit();
+});
+
 el("dryRun").addEventListener("change", () =>
   api("/api/settings", "POST", { dryRun: el("dryRun").checked }),
 );
@@ -2091,6 +2216,7 @@ document.querySelectorAll(".example").forEach((button) => {
   const data = await api("/api/state");
   state.settings = data.settings;
   state.allTools = data.allTools ?? [];
+  state.withheld = data.withheld ?? [];
   state.memory = data.memory ?? null;
   state.usage = data.usage ?? null;
   state.conversation = data.conversation ?? null;

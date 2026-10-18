@@ -13,6 +13,89 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-10-18
+
+The release that makes a small model **safe to leave alone**: every change it makes is
+now written down, everything that can be taken back is one `/undo` away, and guided
+mode no longer hands a 7B model a shell to improvise in. Three things landed together,
+because they answer the same worry.
+
+### Added
+
+- **Audit log** (`src/audit.ts`, `data/audit.jsonl`) — one JSON object per change,
+  append-only, with the tool, the action, a human summary, the paths it touched and the
+  steps that would reverse it. `Get-Content data\audit.jsonl -Tail 20` is the raw view;
+  the file is trimmed to its newest 1000 records when it passes 4 MB, so a long-running
+  install cannot grow it without end.
+- **`/undo`** — reverses the newest change, `/undo <n>` the newest `n`, `/undo list`
+  shows what could be reversed without touching anything. A change is only offered as
+  undoable when it can be restored *faithfully*:
+  - `files write`/`append`/`edit`/`delete`/`move`/`mkdir`/`copy` — the old file (or the
+    whole folder tree) is copied into `data/undo/` first, so it comes back byte for
+    byte, BOM and encoding included; a folder that gained content afterwards is never
+    thrown away (the `rmdir` step fails, and `/undo` says which step did), and a `move`
+    that replaced an existing file restores *both* files (the steps run in reverse, so
+    the moved file goes home first and what the move destroyed is put back after).
+  - `registry set`/`delete` — the previous value is read back **with its registry kind**
+    (`DoNotExpandEnvironmentNames`, so a `REG_EXPAND_SZ` value is not written back with
+    the environment baked in) and restored with `-PropertyType`.
+  - `system env_set` — the previous value, or its absence.
+  - `scheduled_tasks create` of a new task, and `scheduled_tasks delete` (the task
+    definition is exported before it is removed).
+  - Everything else is recorded and marked **not undoable**: overwriting an existing
+    folder, a previous state that could not be read, anything over 64 MB, and the
+    actions with no inverse (services, processes, `shutdown`, `ui`, the clipboard,
+    firewall, `zip`).
+- **The raw-script tools are recorded too** — `powershell` with the first 200
+  characters of the script, your own `custom` commands with the command and its
+  argument, and MCP tool calls with the server, tool and arguments. None of them are
+  undoable: what a script did cannot be described, only quoted, and an audit log that
+  skipped them would be lying by omission.
+- **A new setting, `auditLog`** (default `true`), with `AGENT_AUDIT_LOG` and a switch in
+  the Settings tab: off means nothing is recorded, nothing is copied aside, and there is
+  no undo history.
+- **Settings → *Change log and undo*** — the log file, how many changes can be undone,
+  the newest records, and one **Undo the last change** button.
+- **API**: `GET /api/audit` (`?n=`), `GET /api/undo`, `POST /api/undo` (`{ count }`).
+- **`npm run test:audit`** (65 checks) — makes real changes in a temp folder and then
+  reverses them for real: files (write, append, edit, move, copy, delete — a folder tree
+  included, and a UTF-16LE file restored byte for byte), registry values (DWord, String,
+  MultiString, including a value that did not exist), an environment variable, the cases
+  that must refuse to be undoable, and the guided-mode shell.
+- **`examples/audit-undo.md`** — the whole feature with real output.
+
+### Changed
+
+- **Guided mode does not offer the `powershell` tool any more.** The tool is still
+  registered — the Tools panel and `/tools` show it as `not offered`, with the reason —
+  but it is taken out of the schemas sent to the endpoint and out of the catalogue in the
+  system prompt, and `GUIDED_INSTRUCTIONS` gained rule 9 ("there is no shell in this
+  mode: never write command lines, scripts or registry paths"). A model that calls it
+  anyway gets `Error: the raw shell is switched off in guided mode. do not write commands
+  or scripts. Use the structured tools instead: system (action "disk" …), files,
+  services, …` rather than a shrug. This is exactly the fix for a small model that keeps
+  inventing `Get-CimInstance | Select-Object` one-liners: it can no longer see a shell to
+  imitate, and every action it needs exists as a tool. Your own `custom` commands and the
+  Terminal tab are unaffected; `normal` mode brings the shell back.
+- `/status` gained `audit` and `withheld` lines, `/tools` lists what is not offered,
+  `/data` lists `audit.jsonl`, and `GET /api/state` reports `withheld`.
+- `test:api` grew from 94 to 114 checks (the audit routes, the terminal commands, the
+  switch, and guided/normal tool lists), `test:mode` from 74 to 85 (the withheld-tool
+  logic and the new guided rule), and `test:mcp` gained the "an MCP call is recorded"
+  check.
+
+### Fixed
+
+- **The page no longer scrolls — the conversation does.** The chat view is a grid item
+  with the browser's default `min-height: auto`, so it grew to fit the whole
+  conversation instead of shrinking; the document became a 1150 px tall scroller on a
+  965 px window, and the composer sat below the fold. `.main` now takes `min-height: 0`
+  with `overflow: hidden`, the topbar/chatbar/composer are `flex: 0 0 auto`, and
+  `html`/`body`/`.app` never scroll: the log, the terminal and the settings pane are the
+  scrollers. `atBottom()` became `followBottom()` — new output only pulls the view down
+  when the reader is already within 120 px of the bottom, so scrolling up to read history
+  is no longer interrupted by the next token.
+
 ## [1.3.1] — 2026-10-18
 
 A patch that makes the project check itself: **continuous integration** on every push,

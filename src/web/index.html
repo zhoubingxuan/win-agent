@@ -351,6 +351,26 @@
               Turn a tool off with its switch to hide it from the model. All on = all enabled.
             </p>
             <div id="s-tools" class="tool-grid"></div>
+            <p class="muted" id="s-toolsNote"></p>
+
+            <h4 data-i18n="settings.audit">Change log and undo</h4>
+            <p class="muted" data-i18n="settings.auditHint">
+              Every change the tools make is appended to the audit log, and each one that can be
+              restored faithfully stays on an undo stack until the server restarts. Files are copied
+              aside before they are touched, so /undo and the button below put them back.
+            </p>
+            <label class="switch">
+              <input type="checkbox" id="s-auditLog" />
+              <span class="slider" aria-hidden="true"></span>
+              <span data-i18n="settings.auditOn">Record changes and allow undo</span>
+            </label>
+            <div class="kv wide"><span data-i18n="settings.auditFile">log file</span><code id="a-file">…</code></div>
+            <div class="kv wide"><span data-i18n="settings.auditUndoable">can be undone</span><code id="a-pending">…</code></div>
+            <div class="audit-list" id="a-list"></div>
+            <div class="actions">
+              <button type="button" id="a-undo" class="ghost" data-i18n="settings.auditUndo">Undo the last change</button>
+              <span id="a-msg" class="muted"></span>
+            </div>
 
             <h4 data-i18n="settings.customCommands">Custom commands</h4>
             <p class="muted" data-i18n-html="settings.customHint">

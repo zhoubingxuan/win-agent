@@ -204,10 +204,22 @@ export const filesTool: Tool = {
           return `Refused: ${target} already exists. Pass overwrite=true to replace it.`;
         }
         if (ctx.dryRun) return `DRY RUN: would write ${content.length} chars to ${target}`;
+        // Save the old version before touching it: /undo puts this back.
+        const backup = existing ? await ctx.backup(target) : null;
         await fs.mkdir(path.dirname(target), { recursive: true });
         // Overwriting a file that Windows wrote as UTF-16 keeps it UTF-16.
         const previous = existing ? await readText(target).catch(() => null) : null;
         await writeTextLike(target, content, previous);
+        ctx.record({
+          action: "write",
+          summary: `wrote ${content.length} characters to ${target}`,
+          paths: [target],
+          steps: !existing
+            ? [{ kind: "remove", path: target }]
+            : backup
+              ? [{ kind: "restore", path: target, backup }]
+              : [],
+        });
         return `Wrote ${content.length} characters to ${target}`;
       }
 
@@ -215,12 +227,24 @@ export const filesTool: Tool = {
         const target = resolvePath(arg(args, "path"));
         const content = argOpt(args, "content") ?? "";
         if (ctx.dryRun) return `DRY RUN: would append ${content.length} chars to ${target}`;
+        const existed = (await statSafe(target)) !== null;
+        const backup = existed ? await ctx.backup(target) : null;
         await fs.mkdir(path.dirname(target), { recursive: true });
         // Appending bytes to a UTF-16 file in UTF-8 would corrupt it, so read the
         // existing text and rewrite the whole file in its own encoding.
         const existing = await readText(target).catch(() => null);
         if (existing) await writeTextLike(target, existing.text + content, existing);
         else await fs.appendFile(target, encodeText(content, "utf8", false));
+        ctx.record({
+          action: "append",
+          summary: `appended ${content.length} characters to ${target}`,
+          paths: [target],
+          steps: !existed
+            ? [{ kind: "remove", path: target }]
+            : backup
+              ? [{ kind: "restore", path: target, backup }]
+              : [],
+        });
         return `Appended ${content.length} characters to ${target}`;
       }
 
@@ -246,7 +270,14 @@ export const filesTool: Tool = {
         if (ctx.dryRun) {
           return `DRY RUN: would replace ${replaced} occurrence(s) in ${target}\n${diffPreview(original, updated)}`;
         }
+        const backup = await ctx.backup(target);
         await writeTextLike(target, updated, file);
+        ctx.record({
+          action: "edit",
+          summary: `replaced ${replaced} occurrence(s) in ${target}`,
+          paths: [target],
+          steps: backup ? [{ kind: "restore", path: target, backup }] : [],
+        });
         const leftover =
           occurrences > replaced
             ? `\nnote: ${occurrences} occurrences existed, only ${replaced} replaced — pass all=true to replace every one`
@@ -258,8 +289,17 @@ export const filesTool: Tool = {
         const source = resolvePath(arg(args, "source"));
         const destination = resolvePath(arg(args, "destination"));
         if (ctx.dryRun) return `DRY RUN: would copy ${source} -> ${destination}`;
+        // Only a copy that created something new can be undone: overwriting an
+        // existing folder would need a copy of the whole folder to restore.
+        const existed = (await statSafe(destination)) !== null;
         await fs.mkdir(path.dirname(destination), { recursive: true });
         await fs.cp(source, destination, { recursive: true, force: argBool(args, "overwrite", false) });
+        ctx.record({
+          action: "copy",
+          summary: `copied ${source} -> ${destination}`,
+          paths: [source, destination],
+          steps: existed ? [] : [{ kind: "remove", path: destination }],
+        });
         return `Copied ${source} -> ${destination}`;
       }
 
@@ -270,6 +310,10 @@ export const filesTool: Tool = {
           return "Cancelled by user.";
         }
         if (ctx.dryRun) return `DRY RUN: would move ${source} -> ${destination}`;
+        // Moving onto an existing file replaces it without a word, so keep a copy
+        // of what was there: otherwise "undo" would put the source back and leave
+        // the replaced file gone for good.
+        const replaced = (await statSafe(destination)) !== null ? await ctx.backup(destination) : null;
         await fs.mkdir(path.dirname(destination), { recursive: true });
         await fs.rename(source, destination).catch(async (error: NodeJS.ErrnoException) => {
           if (error.code === "EXDEV") {
@@ -278,6 +322,17 @@ export const filesTool: Tool = {
           } else {
             throw error;
           }
+        });
+        ctx.record({
+          action: "move",
+          summary: `moved ${source} -> ${destination}`,
+          paths: [source, destination],
+          // Steps run in reverse (see src/audit.ts), so the file moves back first
+          // and only then is the replaced destination restored.
+          steps: [
+            ...(replaced ? [{ kind: "restore" as const, path: destination, backup: replaced }] : []),
+            { kind: "move", from: destination, to: source },
+          ],
         });
         return `Moved ${source} -> ${destination}`;
       }
@@ -289,14 +344,32 @@ export const filesTool: Tool = {
           return "Cancelled by user.";
         }
         if (ctx.dryRun) return `DRY RUN: would delete ${target}`;
+        // A deleted file or folder is the one thing users ask for back, so keep a
+        // copy until either /undo is used or the next run sweeps the folder.
+        const backup = await ctx.backup(target);
         await fs.rm(target, { recursive, force: true });
-        return `Deleted ${target}`;
+        ctx.record({
+          action: "delete",
+          summary: `deleted ${target}${recursive ? " (recursive)" : ""}`,
+          paths: [target],
+          steps: backup ? [{ kind: "restore", path: target, backup }] : [],
+        });
+        return `Deleted ${target}${backup ? "" : " (not undoable: too large to copy aside)"}`;
       }
 
       case "mkdir": {
         const target = resolvePath(arg(args, "path"));
         if (ctx.dryRun) return `DRY RUN: would create folder ${target}`;
+        const existed = (await statSafe(target)) !== null;
         await fs.mkdir(target, { recursive: true });
+        ctx.record({
+          action: "mkdir",
+          summary: `created folder ${target}`,
+          paths: [target],
+          // Undo removes the folder only if it is still empty, and only when this
+          // call was what created it.
+          steps: existed ? [] : [{ kind: "rmdir", path: target }],
+        });
         return `Created folder ${target}`;
       }
 
@@ -364,6 +437,11 @@ export const filesTool: Tool = {
         await runPs(
           `Compress-Archive -LiteralPath ${psQuote(source)} -DestinationPath ${psQuote(destination)} -Force`,
         );
+        ctx.record({
+          action: "zip",
+          summary: `created archive ${destination}`,
+          paths: [destination],
+        });
         return `Created archive ${destination}`;
       }
 
@@ -374,6 +452,13 @@ export const filesTool: Tool = {
         await runPs(
           `Expand-Archive -LiteralPath ${psQuote(source)} -DestinationPath ${psQuote(destination)} -Force`,
         );
+        // Extraction can overwrite any number of files in an existing folder, so
+        // there is nothing small enough to snapshot: logged, not undoable.
+        ctx.record({
+          action: "unzip",
+          summary: `extracted ${source} -> ${destination}`,
+          paths: [destination],
+        });
         return `Extracted ${source} -> ${destination}`;
       }
 

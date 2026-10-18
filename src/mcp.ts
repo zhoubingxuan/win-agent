@@ -484,6 +484,13 @@ export class McpManager {
         }
         try {
           const result = await this.call(fullName, args);
+          // What an MCP server does on the other side is out of our hands, so the
+          // audit log keeps at least the call itself: server, tool, arguments.
+          ctx.record({
+            action: tool.name,
+            summary: `called MCP tool ${server.name}/${tool.name} with ${JSON.stringify(args).slice(0, 200)}`,
+            paths: [fullName],
+          });
           return result.isError ? `Error: ${result.text}` : result.text;
         } catch (error) {
           return `Error: ${(error as Error).message}`;

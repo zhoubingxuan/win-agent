@@ -21,6 +21,7 @@ import {
   updateSettings,
 } from "./settings.js";
 import { configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
+import { auditLog, configureAudit } from "./audit.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { VERSION } from "./version.js";
 import { capabilityReport, capabilities as endpointCapabilities, discoverLocalModels, listModelsAt, localEndpointsFor, probeContextLimits } from "./providers.js";
@@ -206,6 +207,10 @@ function applySettings(): string[] {
   const notices: string[] = [];
   configurePowerShell(s.powershell);
   configurePowerShellDiagnostics(s.psEnglishErrors);
+  // The audit log is a setting like any other: switching it off mid-run stops both
+  // the log file and the undo stack.
+  configureAudit(s.auditLog);
+  if (auditLog().error()) notices.push(`warning: ${auditLog().error()}`);
 
   // A settings file that had a BOM or does not parse is worth saying out loud:
   // otherwise it just looks like the settings were ignored.
@@ -362,6 +367,7 @@ function buildTools() {
     enabledTools: s.enabledTools,
     customTools: s.customTools,
     webSearchUrl: s.webSearchUrl,
+    agentMode: s.agentMode,
   });
 }
 
@@ -465,6 +471,20 @@ const host: CommandHost = {
     startNewConversation();
   },
   toolNames: () => buildTools().names(),
+  withheld: () => buildTools().withheld(),
+  audit: (limit = 15) => ({
+    enabled: auditLog().isEnabled(),
+    file: auditLog().file(),
+    problem: auditLog().error(),
+    entries: auditLog().list(limit),
+    pending: auditLog().pending(),
+  }),
+  undo: async (count: number) => {
+    // Undoing in the middle of a turn would race the agent: it may be about to
+    // write the very file being restored. Stop the turn first.
+    if (running) throw new Error(BUSY);
+    return auditLog().undo(count);
+  },
   applySettings,
   cwd: getTerminalCwd,
   setCwd: setTerminalCwd,
@@ -648,6 +668,7 @@ const server = http.createServer(async (req, res) => {
           enabledTools: null,
           customTools: s.customTools,
           webSearchUrl: s.webSearchUrl,
+          agentMode: s.agentMode,
         }).names();
         return json(res, 200, {
           version: VERSION,
@@ -655,6 +676,7 @@ const server = http.createServer(async (req, res) => {
           cwd: getTerminalCwd(),
           tools: tools.names(),
           allTools,
+          withheld: tools.withheld(),
           catalog: tools.describe({ verbose: s.agentMode === "guided" }),
           settings: publicSettings(),
           history: conversation.messages.filter((m) => m.role !== "system"),
@@ -1007,6 +1029,38 @@ const server = http.createServer(async (req, res) => {
           clients.delete(res);
         });
         return;
+      }
+
+      case "GET /api/audit": {
+        const wanted = Number(url.searchParams.get("n") ?? 20);
+        const limit = Number.isFinite(wanted) ? Math.min(Math.max(Math.trunc(wanted), 0), 500) : 20;
+        return json(res, 200, {
+          enabled: auditLog().isEnabled(),
+          file: auditLog().file(),
+          undoDir: auditLog().backupDir(),
+          problem: auditLog().error(),
+          entries: auditLog().list(limit),
+          pending: auditLog().pending(),
+        });
+      }
+
+      case "GET /api/undo":
+        return json(res, 200, { pending: auditLog().pending(), enabled: auditLog().isEnabled() });
+
+      case "POST /api/undo": {
+        const body = await readJsonBody(req);
+        const wanted = Number(body.count ?? 1);
+        if (!Number.isInteger(wanted) || wanted < 1 || wanted > 50) {
+          return json(res, 400, { error: "count must be an integer between 1 and 50" });
+        }
+        if (running) return json(res, 409, { error: BUSY });
+        const result = await auditLog().undo(wanted);
+        broadcast({ type: "audit", undone: result.undone.length, ok: result.ok });
+        return json(res, 200, {
+          ...result,
+          entries: auditLog().list(10),
+          pending: auditLog().pending(),
+        });
       }
 
       case "POST /api/chat": {

@@ -43,6 +43,12 @@ export function createCustomTool(tools: CustomTool[]): Tool {
       const script = `$arg = ${psQuote(argValue)}; ${tool.script}`;
       const res = await runPowerShell(script);
       const output = `${res.stdout}${res.stderr}`.trim() || "(no output)";
+      // Recorded like the raw shell: a custom command is a script, and the log
+      // should say which one ran with which argument. Never undoable.
+      ctx.record({
+        action,
+        summary: `ran custom command "${action}"${argValue ? ` with arg ${argValue.replace(/\s+/g, " ").trim().slice(0, 80)}` : ""}`,
+      });
       return res.code === 0 ? output : `exit code ${res.code}\n${explainPowerShellError(output)}`;
     },
   };

@@ -36,6 +36,9 @@ const tools = createWindowsTools(async () => true, { dryRun: false });
 const call = (name, args) => tools.execute(name, JSON.stringify(args));
 const scratch = path.join(os.tmpdir(), `win-agent-test-${process.pid}`);
 fs.mkdirSync(scratch, { recursive: true });
+// These checks change real files, so keep the audit log they produce out of the
+// data folder of the copy you are working in (dataDir() is resolved lazily).
+process.env.AGENT_DATA_DIR = path.join(scratch, "data");
 
 try {
   /* ---------------------------------------------------------------------- */

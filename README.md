@@ -156,6 +156,8 @@ A form for **every** setting, plus:
 - **Web search page** — the search engine the `web` tool queries.
 - **Enabled tools** switches — flip a tool off to hide it from the model.
 - **Custom commands** editor — add your own PowerShell one-liners as new tools.
+- **Change log and undo** — the audit log file, how many changes can be undone, and one
+  button (see [Audit log and undo](#audit-log-and-undo)).
 - **Web port** — changing it moves the server to the new port immediately.
 
 Every field here has a matching terminal command (`/model`, `/set`, `/enable`, …):
@@ -174,6 +176,7 @@ agent has **two modes**. One slider (normal ↔ guided) on the Settings tab, or
 | System prompt | your prompt, the language rule, **plus a numbered operating procedure** | your prompt and the language rule |
 | Tool catalogue | every tool also lists its **required arguments** | tool names, actions and descriptions |
 | Tool calls per step | **exactly one** — extra calls are skipped and answered with a note | as many as the model emits |
+| Raw `powershell` tool | **not offered at all** — the model must use the structured actions | offered |
 | Best for | LM Studio / Ollama 3B–14B models | cloud models (GPT-4 class, Claude, DeepSeek) |
 
 What the guided procedure actually says (English and Chinese versions ship in the
@@ -188,12 +191,22 @@ box — the language follows the `language` setting):
 6. Write paths exactly as the user gave them; never guess.
 7. Announce a destructive step in one sentence before doing it.
 8. When the task is done, answer in plain text without calling a tool.
+9. There is no shell in this mode: never write command lines or scripts.
 
 Why it helps: small models are excellent at "one tool, one result" and poor at
 planning six calls ahead. Forcing one call per step keeps every decision anchored to
 a real tool result instead of a guessed one, and the explicit rules remove the
 "invent a tool that does not exist" and "answer as if the command succeeded"
 failure modes.
+
+Guided mode also **withholds the `powershell` tool**: the model is not told it exists,
+and if it calls it anyway the answer is
+`Error: the raw shell is switched off in guided mode. do not write commands or scripts…`
+plus the list of structured tools to use instead. A 7B model that is asked to compute
+free space with `Get-CimInstance` will write five broken scripts; asked for
+`system { action: "disk" }` it succeeds. Use `normal` mode (slider, `/mode normal`)
+when you want the shell back — it also comes back in the **Tools** panel note and in
+`/tools` output.
 
 Switch to `normal` when you are driving a big model and want it to batch
 independent calls; nothing else changes — same tools, same approvals, same memory.
@@ -580,6 +593,70 @@ provider. Two caveats, because the numbers are only as good as the endpoint:
 | Settings → **Conversation records** | data folder, open conversation, archived list, **Open data folder** |
 | Terminal | `/usage`, `/conversations`, `/data` |
 
+### Audit log and undo
+
+Every change a tool makes is appended to `data/audit.jsonl` — one JSON object per
+line, append-only, so `Get-Content data\audit.jsonl -Tail 20` works and nothing is
+lost if the server is killed. Changes that can be *faithfully* reversed also go onto
+an undo stack, and `/undo` (or **Undo the last change** in Settings → *Change log and
+undo*) runs their steps in reverse order.
+
+```
+3. 2026-10-18 12:04:11  files edit: replaced 1 occurrence(s) in D:\app\config.json  (undoable)
+2. 2026-10-18 12:03:58  registry set: set HKCU:\Software\MyApp\theme (DWord)
+1. 2026-10-18 12:03:41  files mkdir: created folder D:\app\logs  (undoable)
+```
+
+| Where | What it does |
+| --- | --- |
+| Settings → **Change log and undo** | the log file, how many changes can be undone, **Undo the last change** |
+| Terminal | `/audit [n]`, `/undo`, `/undo <n>`, `/undo list` |
+| API | `GET /api/audit`, `GET /api/undo`, `POST /api/undo` |
+| Setting | `auditLog` (default `true`) — switch it off and nothing is recorded and nothing can be undone |
+
+What `/undo` puts back, and how:
+
+| Tool | Action | Reversed by |
+| --- | --- | --- |
+| `files` | `write` · `append` · `edit` on an existing file | the file is copied into `data/undo/` first, then put back byte for byte |
+| `files` | `write` · `append` of a new file | deleting the file |
+| `files` | `delete` | the file **or the whole folder tree** is copied aside first, then restored |
+| `files` | `move` | moving it back — and, if the move replaced an existing file, restoring that file from a copy taken before the move |
+| `files` | `mkdir` | removing the folder — but only while it is still empty |
+| `files` | `copy` that created something new | deleting the copy |
+| `registry` | `set` | the previous value written back **with its original type** (`DWord`, `MultiString`, `ExpandString`, …); a value that did not exist is removed again |
+| `registry` | `delete` | the value written back with its original type |
+| `system` | `env_set` | the previous value restored — or the variable removed again if there was none |
+| `scheduled_tasks` | `create` of a task that did not exist | unregistering it |
+| `scheduled_tasks` | `delete` | the task definition is exported to XML before deleting, and re-registered on undo |
+
+Everything else is recorded but **not** undoable, and the log entry says so:
+
+- `copy` and `unzip` that overwrote existing files (the only way back would be a copy
+  of what was there — extract into a new folder instead),
+- a registry value or task whose previous state could not be read,
+- anything bigger than 64 MB, where the copy would cost more than the change,
+- the actions with no inverse at all: starting/stopping a service or process,
+  `shutdown`, `ui`, the clipboard, firewall and network changes, `zip`,
+  `scheduled_tasks run`.
+
+The two raw-script escape hatches — `powershell` and your own `custom` commands — are
+recorded too, with the script (or the command and its argument) quoted in the summary.
+They are never undoable, because what a script did cannot be described, only quoted.
+MCP tool calls are recorded the same way: server, tool and arguments.
+
+Undo itself asks for no approval — you asked for it explicitly — but it **is** refused
+while a turn is running (the API answers `409`), because the agent may be about to
+write the very file being restored. There is no undo of an undo (that is just a redo,
+and the log has the whole story).
+
+Two limits worth knowing:
+
+- the undo stack lives **in memory**, so a restart clears it — `audit.jsonl` keeps the
+  record of what happened, but `/undo` then answers "nothing to undo";
+- `data/undo/` is swept on every start, because nothing can point at those copies any
+  more.
+
 ---
 
 ## Internal commands — changing things from the web terminal
@@ -634,6 +711,8 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/mcp remove <id>` | delete an MCP server | immediately + saved |
 | `/memory on` · `/memory off` | remember the conversation across restarts | immediately + saved |
 | `/memory clear` | file the open conversation away and start a new one | immediately |
+| `/undo` · `/undo <n>` | reverse the last change (or the last `n`) — see [Audit log and undo](#audit-log-and-undo) | immediately |
+| `/set auditLog <on\|off>` | write the change log and keep the undo stack | immediately + saved |
 | `/port <n>` | web UI port (rebinds the server) | immediately, then reconnect |
 | `/reset` | files the conversation away and starts a new one | immediately |
 | `/reload` | re-reads settings from disk | immediately |
@@ -647,7 +726,9 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/status` | model, endpoint, flags, tool counts, version, context window, the PowerShell binary in use, elevation, agent mode |
 | `/config [key]` | every setting, or a single one |
 | `/get <key>` | one setting |
-| `/tools` | tools, with `[x]` = enabled |
+| `/tools` | tools, with `[x]` = enabled, plus the ones not offered right now (guided mode hides `powershell`) |
+| `/audit [n]` | the last `n` changes (default 15), newest first, with what can still be undone |
+| `/undo list` | what `/undo` would reverse, newest first |
 | `/custom list` | your custom commands |
 | `/profile` | every endpoint, with `*` on the active one |
 | `/models [id]` | the models an endpoint reports (default: the active one); with `syncLocalModels` on, every local server is listed too |
@@ -711,6 +792,7 @@ with a message and nothing changes.
 | `maxSteps` | number | `12` | tool-calling rounds per user turn (1–100) |
 | `temperature` | number | `0` | 0–2 |
 | `agentMode` | `"guided"` \| `"normal"` | `guided` | supervision for small local models (see [Agent modes](#agent-modes--guided-vs-normal)) |
+| `auditLog` | boolean | `true` | append every change to `data/audit.jsonl` and keep the undo stack (see [Audit log and undo](#audit-log-and-undo)) |
 | `language` | `"en"` \| `"zh"` | `zh` | interface text **and** the language the agent replies in |
 | `systemPrompt` | string | *(built-in)* | the agent's instructions |
 | `workdir` | string | process cwd | relative paths resolve here; applied via `chdir` |
@@ -756,6 +838,7 @@ on. Every variable is the upper-case setting name with an `AGENT_` prefix:
 | `AGENT_WORKDIR` | `workdir` | |
 | `AGENT_POWERSHELL` | `powershell` | `pwsh.exe` for PowerShell 7 |
 | `AGENT_MODE` | `agentMode` | `guided` / `normal` |
+| `AGENT_AUDIT_LOG` | `auditLog` | `true` / `false` |
 | `AGENT_PS_ENGLISH_ERRORS` | `psEnglishErrors` | `true` / `false` |
 | `AGENT_WEB_PORT` | `webPort` | |
 | `AGENT_STREAM` | `stream` | `true` / `false` |
@@ -952,6 +1035,9 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `GET` | `/api/state` | running flag, cwd, enabled tools, all tool names, catalog, version, settings, chat history, context budget, endpoint capabilities, memory info, usage totals, data folder, `windows` (PowerShell binary, version, edition, elevation, English-errors flag) |
 | `GET` | `/api/usage` | token totals of the open conversation, all-time totals, per-call list |
 | `GET` | `/api/data` | data folder paths, open conversation, usage, archived conversation list |
+| `GET` | `/api/audit` | `?n=<count>` — the newest `n` audit records plus `pending` (what `/undo` can reverse), the log file and whether logging is on |
+| `GET` | `/api/undo` | `{ pending, enabled }` — what can be reversed right now |
+| `POST` | `/api/undo` | `{ count }` — reverse the newest `count` changes; returns `{ ok, undone, failures, entries, pending }` |
 | `GET` | `/api/conversations` | `{ conversations: [...], current }` |
 | `POST` | `/api/conversations` | `{ action: "new" }` files the open conversation away; `{ action: "load", id }` reopens an archived one |
 | `GET` | `/api/settings` | public settings + settings file path |
@@ -998,6 +1084,7 @@ src/
   server.ts       local web server: static UI + SSE + settings/terminal/port APIs
   settings.ts     the settings store: defaults, validation, persistence, env merge
   store.ts        the data folder: open conversation, archives, token totals
+  audit.ts        the change log (data/audit.jsonl) + the in-memory undo stack
   version.ts      reads the version from package.json (one source of truth)
   context.ts      token estimation + context budgeting (what to send, what to trim)
   providers.ts    endpoint compatibility memory + context-length discovery
@@ -1032,6 +1119,7 @@ scripts/
   test-i18n.mjs       the en/zh dictionaries, the HTML attributes and the help text
   test-docs.mjs       the docs against the code: routes, settings, commands, links
   test-api.mjs        the real HTTP server + a mock model, on a temp data folder
+  test-audit.mjs      the change log and undo, against a temp folder (live on Windows)
   test-windows.mjs    live Windows checks: PowerShell, elevation, files, services
   fixtures/
     mock-mcp-server.mjs  a tiny MCP server used by test-mcp.mjs
@@ -1075,6 +1163,7 @@ npm run test:mode           # agent modes, JSON repair, encodings (no model need
 npm run test:i18n           # both dictionaries, the HTML keys and the help text
 npm run test:docs           # the docs against the code: routes, settings, links
 npm run test:api            # the whole HTTP API, against a mock model
+npm run test:audit          # the audit log and undo, against a temp folder
 npm run test:windows        # live Windows checks: PowerShell, elevation, files, services
 npm run test:all            # all of the above
 ```
@@ -1107,7 +1196,7 @@ The Windows job runs the *live* checks too (`test:windows`): a real PowerShell, 
 UTF-16 files, the real registry. Nothing is mocked there except the model endpoint,
 which is a throwaway HTTP server built into the suite.
 
-Three suites exist specifically to keep this repository honest as it grows:
+Four suites exist specifically to keep this repository honest as it grows:
 
 - **`test:api`** starts the real server (`src/server.ts`, temp data folder) and a mock
   model, then drives every route the browser UI uses: settings round-trips, a refused
@@ -1124,11 +1213,17 @@ Three suites exist specifically to keep this repository honest as it grows:
   the reference table is a real setting **with the documented default**, every
   `/command` in the tables is implemented, every `AGENT_*` variable exists, every
   relative link and every `#anchor` resolves, and every example file is indexed.
+- **`test:audit`** records real changes in a temp folder and then reverses them for
+  real: a file is written, appended to, edited, moved, copied and deleted (a folder
+  tree included), registry values are set and removed, an environment variable is
+  created and restored, and after every one of them `/undo` is asked to put the
+  machine back — byte for byte, type for type. It also pins the cases that must *not*
+  claim to be undoable, and that guided mode never offers the raw shell.
 
-Run the three of them locally the same way CI does:
+Run them locally the same way CI does:
 
 ```powershell
-npm run test:i18n && npm run test:docs && npm run test:api
+npm run test:i18n && npm run test:docs && npm run test:api && npm run test:audit
 ```
 
 A bug that `test:api` caught on its first run is worth knowing about, because it is the

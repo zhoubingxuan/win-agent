@@ -22,6 +22,9 @@ html,
 body {
   margin: 0;
   height: 100%;
+  /* The panes scroll, never the page: the log, the terminal and the settings form
+     each keep their own scrollbar, and the topbar/composer stay put. */
+  overflow: hidden;
   background: var(--bg);
   color: var(--text);
   font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
@@ -31,6 +34,7 @@ body {
   display: grid;
   grid-template-columns: 280px 1fr;
   height: 100vh;
+  overflow: hidden;
 }
 
 /* Sidebar ------------------------------------------------------------------ */
@@ -220,6 +224,37 @@ body {
   text-align: right;
 }
 
+/* Audit log (change log + undo) ------------------------------------------- */
+
+.audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 10px 0 4px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.audit-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.audit-item .grow {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Quick endpoint / model switchers in the sidebar -------------------------- */
 
 .stack {
@@ -282,6 +317,7 @@ body {
 /* Chat toolbar (working directory / endpoint / model) --------------------- */
 
 .chatbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
   gap: 10px;
@@ -667,9 +703,14 @@ button.ghost.small {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* Without this the grid row grows to fit the conversation and the whole page
+     scrolls instead of the log. */
+  min-height: 0;
+  overflow: hidden;
 }
 
 .topbar {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -915,6 +956,7 @@ button.ghost.small {
 /* Composer ----------------------------------------------------------------- */
 
 .composer {
+  flex: 0 0 auto;
   display: flex;
   gap: 10px;
   padding: 12px 18px 16px;
@@ -1065,6 +1107,7 @@ button.ghost.small {
 }
 
 .term-input {
+  flex: 0 0 auto;
   display: flex;
   gap: 8px;
   align-items: center;
@@ -1109,6 +1152,7 @@ button.ghost.small {
 }
 
 .term-hint {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 12px;

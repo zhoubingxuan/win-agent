@@ -40,6 +40,12 @@ export const powershellTool: Tool = {
     const { code, stdout, stderr } = await runPowerShell(script);
     const output = `${stdout}${stderr}`.trim();
     const body = output || "(no output)";
+    // The one tool whose effect cannot be described, only quoted: the audit log
+    // records the script itself (first 200 characters), tagged as not undoable.
+    ctx.record({
+      action: "run",
+      summary: `ran PowerShell: ${script.replace(/\s+/g, " ").trim().slice(0, 200)}`,
+    });
     // The escape hatch is exactly where a Windows hint matters most: "access is
     // denied" is obvious to a human and a dead end for a model.
     return code === 0 ? body : `PowerShell exited with code ${code}:\n${explainPowerShellError(body)}`;

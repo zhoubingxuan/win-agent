@@ -360,6 +360,85 @@ try {
 
   /* ---------------------------------------------------------------------- */
 
+  section("audit log and undo");
+  {
+    const state = await api("/api/state");
+    check("guided mode does not offer the raw shell", !state.data.tools.includes("powershell"), JSON.stringify(state.data.tools));
+    check(
+      "and says why in the withheld list",
+      state.data.withheld.some((item) => item.name === "powershell" && item.reason),
+      JSON.stringify(state.data.withheld),
+    );
+
+    const audit = await api("/api/audit?n=5");
+    check(
+      "the audit log is on by default and lives in the data folder",
+      audit.data.enabled === true && audit.data.file.startsWith(dataDir),
+      JSON.stringify(audit.data.file),
+    );
+    check("nothing has been changed yet", Array.isArray(audit.data.entries) && audit.data.entries.length === 0, JSON.stringify(audit.data.entries));
+    check("the undo stack is empty too", Array.isArray(audit.data.pending) && audit.data.pending.length === 0);
+
+    const pending = await api("/api/undo");
+    check("GET /api/undo reports an empty stack", pending.status === 200 && pending.data.pending.length === 0);
+    const nothing = await api("/api/undo", "POST", { count: 1 });
+    check(
+      "undoing with an empty stack is not an error",
+      nothing.status === 200 && nothing.data.ok === false && /nothing to undo/.test(nothing.data.message),
+      JSON.stringify(nothing.data),
+    );
+
+    const bad = await api("/api/undo", "POST", { count: 0 });
+    check("an impossible count is refused", bad.status === 400, JSON.stringify(bad.data));
+
+    const auditCmd = await api("/api/terminal", "POST", { input: "/audit" });
+    check("/audit prints the log file", auditCmd.data.output.includes(audit.data.file), String(auditCmd.data.output).slice(0, 300));
+    check("/audit says nothing has changed yet", /nothing has been changed/.test(auditCmd.data.output), String(auditCmd.data.output).slice(0, 300));
+
+    const undoCmd = await api("/api/terminal", "POST", { input: "/undo" });
+    check("/undo explains an empty stack", /nothing to undo/.test(undoCmd.data.output), String(undoCmd.data.output).slice(0, 300));
+    const undoList = await api("/api/terminal", "POST", { input: "/undo list" });
+    check("/undo list explains an empty stack", /nothing to undo/.test(undoList.data.output), String(undoList.data.output).slice(0, 300));
+    const undoBad = await api("/api/terminal", "POST", { input: "/undo zero" });
+    check("/undo rejects nonsense with the usage line", /usage/i.test(undoBad.data.output), String(undoBad.data.output).slice(0, 200));
+
+    // Switching the log off has to stop both the recording and the undo.
+    await api("/api/settings", "POST", { auditLog: false });
+    const off = await api("/api/audit");
+    check("the switch reaches the log", off.data.enabled === false);
+    const offUndo = await api("/api/undo", "POST", { count: 1 });
+    check("undo refuses while logging is off", /switched off/.test(offUndo.data.message), JSON.stringify(offUndo.data));
+    const offCmd = await api("/api/terminal", "POST", { input: "/audit" });
+    check("the terminal says logging is off", /switched off/.test(offCmd.data.output), String(offCmd.data.output).slice(0, 200));
+    await api("/api/settings", "POST", { auditLog: true });
+
+    // Normal mode is the way back to the raw shell.
+    await api("/api/settings", "POST", { agentMode: "normal" });
+    const normal = await api("/api/state");
+    check(
+      "normal mode offers the raw shell again",
+      normal.data.tools.includes("powershell") && normal.data.withheld.length === 0,
+      JSON.stringify(normal.data.withheld),
+    );
+    const toolsCmd = await api("/api/terminal", "POST", { input: "/tools" });
+    check("/tools lists it again", /\[x\] powershell/.test(toolsCmd.data.output), String(toolsCmd.data.output).slice(0, 400));
+    await api("/api/settings", "POST", { agentMode: "guided" });
+    const backToGuided = await api("/api/terminal", "POST", { input: "/tools" });
+    check(
+      "/tools explains what is not offered in guided mode",
+      /not offered/.test(backToGuided.data.output) && !/\[x\] powershell/.test(backToGuided.data.output),
+      String(backToGuided.data.output).slice(0, 400),
+    );
+    const guidedStatus = await api("/api/terminal", "POST", { input: "/status" });
+    check(
+      "/status reports the change log and the withheld tool",
+      /audit\s+:/.test(guidedStatus.data.output) && /withheld\s+:/.test(guidedStatus.data.output),
+      String(guidedStatus.data.output).slice(0, 600),
+    );
+  }
+
+  /* ---------------------------------------------------------------------- */
+
   section("conversations, usage and data");
   {
     const reset = await api("/api/reset", "POST", {});

@@ -74,13 +74,37 @@ section("agent mode: guided");
   check("guided catalogue spells out required arguments", /arguments: path \(required\), max/.test(prompt));
   check("guided keeps the user's own prompt", prompt.includes(DEFAULTS.systemPrompt));
   check("the mode is what changes, not the language rule", prompt.includes("Always answer the user in English"));
+  check("guided says there is no shell in this mode", /no shell in this mode/.test(prompt));
 }
 
 section("agent mode: guided in Chinese");
 {
   const prompt = systemPromptOf("guided", "zh");
   check("the procedure is translated", prompt.includes("操作规范（请严格遵守）"));
+  check("the no-shell rule is translated", prompt.includes("本模式没有命令行工具"));
   check("the language rule follows the setting", prompt.includes("始终使用简体中文回答用户"));
+}
+
+section("withheld tools");
+{
+  const registry = new ToolRegistry(async () => true).register(fakeTool);
+  check("everything registered is offered by default", registry.names().includes("files"));
+  check("nothing is withheld by default", registry.withheld().length === 0);
+
+  registry.withhold(["files"], "off for now", "use something else");
+  check("a withheld tool is not offered", !registry.names().includes("files"));
+  check("it is not in the catalogue", !/^- files:/m.test(registry.describe()), registry.describe());
+  check("it is not sent as a schema", registry.schemas().length === 0);
+
+  const hidden = registry.withheld();
+  check("the withheld list names it", hidden.length === 1 && hidden[0].name === "files" && hidden[0].reason === "off for now");
+
+  const refused = await registry.execute("files", "{}");
+  check("calling it answers with the reason", refused.startsWith("Error:") && refused.includes("off for now"), refused);
+  check("and with what to do instead", refused.includes("use something else"), refused);
+
+  const typo = await registry.execute("file", "{}");
+  check("a typo never suggests a withheld tool", !/Did you mean "files"/.test(typo), typo);
 }
 
 section("agent mode: guidanceFor");

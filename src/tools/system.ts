@@ -154,9 +154,27 @@ export const systemTool: Tool = {
           return "Cancelled by user.";
         }
         if (ctx.dryRun) return `DRY RUN: would set ${scope} ${name}=${value}`;
+        // Read the old value first, so /undo can restore it (or remove the
+        // variable again when there was none).
+        const previous = await runPs(
+          `[Environment]::GetEnvironmentVariable(${psQuote(name)}, ${psQuote(scope)})`,
+        );
         await runPs(
           `[Environment]::SetEnvironmentVariable(${psQuote(name)}, ${psQuote(value)}, ${psQuote(scope)})`,
         );
+        ctx.record({
+          action: "env_set",
+          summary: `set ${scope} environment variable ${name}`,
+          steps: [
+            {
+              kind: "script",
+              label: previous === "" ? `remove ${name}` : `restore ${name}=${previous}`,
+              script:
+                `[Environment]::SetEnvironmentVariable(${psQuote(name)}, ` +
+                `${previous === "" ? "$null" : psQuote(previous)}, ${psQuote(scope)})`,
+            },
+          ],
+        });
         return `Set ${scope} environment variable ${name}.`;
       }
 
