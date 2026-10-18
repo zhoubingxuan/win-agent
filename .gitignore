@@ -1,7 +1,10 @@
 node_modules/
 dist/
 *.log
-versions/
+
+# versions/ is published on purpose: one folder per released version, each one a
+# complete, runnable copy of the framework (see versions/INDEX.md).
+# dist/ and node_modules/ stay out: `npm run build` / `npm install` rebuild them.
 
 # Agent data: settings.json (API keys!), history, usage and archived conversations
 data/

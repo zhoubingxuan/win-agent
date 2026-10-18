@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.1.0",
+  "createdAt": "2026-10-18T05:01:00.166Z",
+  "node": ">=20.3",
+  "files": 41,
+  "bytes": 413169,
+  "note": "Built for small local models that run out of context and for endpoints that only partly implement the OpenAI API. Everything below is visible and adjustable…"
+}

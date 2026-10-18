@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+versions/
+
+# Agent data: settings.json (API keys!), history, usage and archived conversations
+data/
+
+# Local environment
+.env
+.env.local
