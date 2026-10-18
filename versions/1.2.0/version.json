@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.2.0",
+  "createdAt": "2026-10-18T06:31:51.485Z",
+  "node": ">=20.3",
+  "files": 54,
+  "bytes": 598885,
+  "note": "Three things that make the agent reach further without making it harder to drive: it can now use **tools that live in other programs** (MCP), it can **see…"
+}

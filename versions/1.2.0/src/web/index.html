@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>win-agent</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="logo">▮</span>
+          <div>
+            <div class="brand-name">win-agent <span class="brand-version" id="version"></span></div>
+            <div class="brand-sub" data-i18n="brand.sub">Windows automation for local LLMs</div>
+          </div>
+        </div>
+
+        <section class="panel">
+          <h2 data-i18n="sidebar.runtime">Runtime</h2>
+          <label class="stack">
+            <span data-i18n="sidebar.endpoint">endpoint</span>
+            <select id="q-profile"></select>
+          </label>
+          <label class="stack">
+            <span data-i18n="sidebar.model">model</span>
+            <select id="q-model"></select>
+          </label>
+          <div class="kv"><span data-i18n="sidebar.cwd">cwd</span><code id="cwd">…</code></div>
+          <div class="kv"><span data-i18n="sidebar.status">status</span><span id="conn" class="dot offline">offline</span></div>
+        </section>
+
+        <section class="panel">
+          <h2 data-i18n="sidebar.usage">Usage</h2>
+          <div class="usage-grid">
+            <span data-i18n="usage.in">input</span><code id="u-in">—</code>
+            <span data-i18n="usage.out">output</span><code id="u-out">—</code>
+            <span data-i18n="usage.total">total</span><code id="u-total">—</code>
+            <span data-i18n="usage.speed">speed</span><code id="u-speed">—</code>
+            <span data-i18n="usage.cache">cache</span><code id="u-cache">—</code>
+            <span data-i18n="usage.context">context</span><code id="u-context">—</code>
+            <span data-i18n="usage.allTime">all time</span><code id="u-all">—</code>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2 data-i18n="sidebar.behaviour">Behaviour</h2>
+          <label class="switch"><input type="checkbox" id="dryRun" /><span class="slider" aria-hidden="true"></span><span data-i18n="common.dryRun">Dry run</span></label>
+          <label class="switch"><input type="checkbox" id="autoApprove" /><span class="slider" aria-hidden="true"></span><span data-i18n="common.autoApprove">Auto-approve</span></label>
+          <button id="openSettings" class="ghost" data-i18n="sidebar.openSettings">Open settings</button>
+        </section>
+
+        <section class="panel grow">
+          <h2 data-i18n="sidebar.tools">Tools</h2>
+          <div id="tools" class="chips"></div>
+        </section>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <nav class="tabs">
+            <button class="tab active" data-tab="chat" data-i18n="tab.chat">Chat</button>
+            <button class="tab" data-tab="terminal" data-i18n="tab.terminal">Terminal</button>
+            <button class="tab" data-tab="settings" data-i18n="tab.settings">Settings</button>
+          </nav>
+          <div class="spacer"></div>
+          <span id="notice" class="notice"></span>
+          <span id="title" data-i18n="title.ready">Ready</span>
+          <select id="language" class="lang-select" title="Language / 语言">
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
+        </header>
+
+        <!-- Chat --------------------------------------------------------- -->
+        <section id="view-chat" class="view active">
+          <div id="log" class="log">
+            <div class="empty" id="empty">
+              <h3 data-i18n="chat.emptyTitle">Ask the agent to do something on this PC</h3>
+              <p data-i18n="chat.emptyText">
+                It exposes Windows tasks as simple tools, so a small local model can run them.
+              </p>
+              <div class="examples">
+                <button class="example" data-i18n="chat.ex1">How much free space is left on C:?</button>
+                <button class="example" data-i18n="chat.ex2">Is the print spooler running?</button>
+                <button class="example" data-i18n="chat.ex3">List the top 10 processes by memory</button>
+                <button class="example" data-i18n="chat.ex4">Which listening ports are open?</button>
+              </div>
+            </div>
+          </div>
+          <div class="chatbar">
+            <label class="chatbar-field grow">
+              <span data-i18n="chat.workdir">workdir</span>
+              <select id="chat-workdir" title="Working directory"></select>
+            </label>
+            <button type="button" id="chat-browse" class="ghost small" data-i18n="chat.browse">Browse…</button>
+            <span class="chatbar-sep"></span>
+            <label class="chatbar-field">
+              <span data-i18n="chat.endpoint">endpoint</span>
+              <select id="chat-profile"></select>
+            </label>
+            <label class="chatbar-field">
+              <span data-i18n="chat.model">model</span>
+              <select id="chat-model"></select>
+            </label>
+            <button type="button" id="chat-refresh" class="ghost small" data-i18n="chat.refresh">
+              Refresh models
+            </button>
+          </div>
+          <form id="composer" class="composer">
+            <textarea id="input" rows="1" data-i18n-placeholder="chat.placeholder"
+              placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"></textarea>
+            <button id="stop" type="button" class="ghost" data-i18n="chat.stop" hidden>Stop</button>
+            <button id="send" type="submit" data-i18n="chat.send">Send</button>
+          </form>
+        </section>
+
+        <!-- Terminal ----------------------------------------------------- -->
+        <section id="view-terminal" class="view">
+          <div id="term" class="term"></div>
+          <form id="termForm" class="term-input">
+            <span id="termPrompt" class="term-prompt">PS&gt;</span>
+            <input id="termInput" type="text" autocomplete="off" spellcheck="false"
+              data-i18n-placeholder="terminal.placeholder"
+              placeholder="shell command, or /help for internal commands" />
+            <button type="submit" data-i18n="terminal.run">Run</button>
+          </form>
+          <div class="term-hint">
+            <span data-i18n-html="terminal.hint">
+              This is the agent's own terminal. Plain text runs in PowerShell; a line starting with
+              <code>/</code> is an internal command that can reconfigure the agent (try
+              <code>/help</code>).
+            </span>
+            <button type="button" id="termHelp" class="ghost" data-i18n="terminal.commands">
+              Internal commands
+            </button>
+          </div>
+        </section>
+
+        <!-- Settings ----------------------------------------------------- -->
+        <section id="view-settings" class="view">
+          <div class="settings">
+            <div class="settings-head">
+              <h3 data-i18n="settings.title">Settings</h3>
+              <span class="muted" id="settingsFile"></span>
+            </div>
+
+            <h4 data-i18n="settings.endpoints">Endpoints — local server or cloud API</h4>
+            <p class="muted" data-i18n="settings.endpointsHint">
+              One click switches the whole agent between a local model server and a cloud API.
+              Every endpoint keeps its own URL, key and model.
+            </p>
+            <div class="grid">
+              <label>
+                <span data-i18n="settings.activeProfile">Active endpoint</span>
+                <select id="s-profile"></select>
+              </label>
+              <label>
+                <span data-i18n="settings.modelPick">Models offered by this endpoint</span>
+                <select id="s-modelPick"></select>
+              </label>
+              <label>
+                <span data-i18n="settings.newProfileId">New endpoint id</span>
+                <input id="s-newProfileId" type="text" placeholder="work-api" />
+              </label>
+              <div class="block">
+                <span data-i18n="settings.newProfileKind">New endpoint kind</span>
+                <div class="twoway" title="local server ↔ cloud API">
+                  <span data-i18n="settings.kindLocal">local</span>
+                  <label class="switch">
+                    <input type="checkbox" id="s-newProfileApi" />
+                    <span class="slider" aria-hidden="true"></span>
+                  </label>
+                  <span data-i18n="settings.kindApi">API</span>
+                </div>
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" id="p-models" class="ghost" data-i18n="settings.refreshModels">
+                Refresh models
+              </button>
+              <button type="button" id="p-new" class="ghost" data-i18n="settings.newProfile">
+                Add endpoint
+              </button>
+              <button type="button" id="p-remove" class="ghost" data-i18n="settings.removeProfile">
+                Delete endpoint
+              </button>
+              <span id="p-msg" class="muted"></span>
+            </div>
+
+            <div class="grid">
+              <label><span data-i18n="settings.model">Model</span><input id="s-model" type="text" /></label>
+              <label><span data-i18n="settings.baseUrl">API base URL</span><input id="s-baseUrl" type="text" /></label>
+              <label><span data-i18n="settings.apiKey">API key</span><input id="s-apiKey" type="password" /></label>
+              <label><span data-i18n="settings.maxSteps">Max steps</span><input id="s-maxSteps" type="number" min="1" max="100" /></label>
+              <label><span data-i18n="settings.temperature">Temperature</span><input id="s-temperature" type="number" min="0" max="2" step="0.1" /></label>
+              <label>
+                <span data-i18n="settings.language">Language</span>
+                <select id="s-language">
+                  <option value="en">English</option>
+                  <option value="zh">中文</option>
+                </select>
+              </label>
+              <label><span data-i18n="settings.workdir">Working directory</span><input id="s-workdir" type="text" /></label>
+              <label><span data-i18n="settings.powershell">PowerShell binary</span><input id="s-powershell" type="text" /></label>
+              <label><span data-i18n="settings.webPort">Web port</span><input id="s-webPort" type="number" min="1" max="65535" /></label>
+              <label>
+                <span data-i18n="settings.webSearchUrl">Web search page</span>
+                <input id="s-webSearchUrl" type="text" placeholder="https://www.bing.com/search?q={q}" />
+              </label>
+            </div>
+
+            <label class="block">
+              <span data-i18n="settings.systemPrompt">System prompt</span>
+              <textarea id="s-systemPrompt" rows="6"></textarea>
+            </label>
+
+            <div class="row-toggles">
+              <label class="switch"><input type="checkbox" id="s-dryRun" /><span class="slider" aria-hidden="true"></span><span data-i18n="common.dryRun">Dry run</span></label>
+              <label class="switch"><input type="checkbox" id="s-autoApprove" /><span class="slider" aria-hidden="true"></span><span data-i18n="common.autoApprove">Auto-approve</span></label>
+              <label class="switch"><input type="checkbox" id="s-autoOpenBrowser" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.openOnStart">Open browser on start</span></label>
+              <label class="switch"><input type="checkbox" id="s-stream" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.stream">Stream replies</span></label>
+            </div>
+
+            <h4 data-i18n="settings.context">Context window and robustness</h4>
+            <p class="muted" data-i18n="settings.contextHint">
+              Small local models have a small window. The agent measures every request and quietly
+              drops the oldest exchanges (and squeezes huge tool results) when it would not fit — the
+              stored conversation is never shortened. Leave 0 to use the length the endpoint reports.
+            </p>
+            <div class="kv wide"><span data-i18n="settings.contextNow">right now</span><code id="s-contextNow">…</code></div>
+            <div class="grid">
+              <label>
+                <span data-i18n="settings.contextLimit">Context limit (tokens, 0 = auto)</span>
+                <input id="s-contextLimit" type="number" min="0" max="2000000" step="256" />
+              </label>
+              <label>
+                <span data-i18n="settings.requestTimeoutMs">Request timeout (ms)</span>
+                <input id="s-requestTimeoutMs" type="number" min="5000" max="3600000" step="1000" />
+              </label>
+              <label>
+                <span data-i18n="settings.maxRetries">Retries (429 / 5xx / network)</span>
+                <input id="s-maxRetries" type="number" min="0" max="10" />
+              </label>
+            </div>
+            <div class="actions">
+              <button type="button" id="p-diagnose" class="ghost" data-i18n="settings.diagnose">
+                Test this endpoint
+              </button>
+              <span id="diag-msg" class="muted"></span>
+            </div>
+            <pre id="diag-out" class="diag" hidden></pre>
+
+            <h4 data-i18n="settings.memory">Memory</h4>
+            <div class="row-toggles">
+              <label class="switch"><input type="checkbox" id="s-remember" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.remember">Remember the conversation across restarts</span></label>
+            </div>
+            <p class="muted" id="s-memoryInfo"></p>
+
+            <h4 data-i18n="settings.data">Conversation records</h4>
+            <p class="muted" data-i18n="settings.dataHint">
+              Every conversation is written to the data folder, with its token totals. Clearing the
+              conversation files the open one away and starts a new one. Click an archived one to
+              reopen it.
+            </p>
+            <div class="kv wide"><span data-i18n="settings.dataDir">folder</span><code id="d-dir">…</code></div>
+            <div class="kv wide"><span data-i18n="settings.dataConv">open conversation</span><code id="d-conv">…</code></div>
+            <div class="kv wide"><span data-i18n="settings.dataUsage">conversation usage</span><code id="d-usage">…</code></div>
+            <div class="kv wide"><span data-i18n="settings.dataArchived">archived</span><code id="d-archived">…</code></div>
+            <div id="d-list" class="archived-list"></div>
+            <div class="actions">
+              <button type="button" id="d-open" class="ghost" data-i18n="settings.openData">Open data folder</button>
+            </div>
+
+            <h4 data-i18n="settings.localModels">Local model sync</h4>
+            <p class="muted" data-i18n="settings.localModelsHint">
+              Ask every local server — LM Studio (port 1234) and Ollama (port 11434) — which models it
+              can load, and show them all in one list. Picking a model from another server switches
+              the endpoint for you. Everything stays on this machine.
+            </p>
+            <div class="row-toggles">
+              <label class="switch"><input type="checkbox" id="s-syncLocalModels" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.syncLocalModels">Sync the models of every local server</span></label>
+            </div>
+            <div id="sync-list" class="fleet"></div>
+
+            <h4 data-i18n="settings.mcp">MCP — Model Context Protocol</h4>
+            <p class="muted" data-i18n-html="settings.mcpHint">
+              MCP lets the agent use tools that live in other programs: a filesystem server, git,
+              a database, your own HTTP service. Add one with its start command (<code>stdio</code>,
+              e.g. <code>npx -y @modelcontextprotocol/server-filesystem D:\</code>) or with a URL
+              (<code>http</code>). Their tools appear in the model's tool list as
+              <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> and ask for approval before they run.
+            </p>
+            <div class="row-toggles">
+              <label class="switch"><input type="checkbox" id="s-mcpEnabled" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpEnabled">Master switch: enable MCP</span></label>
+              <span id="mcp-state" class="muted"></span>
+            </div>
+            <div id="mcp-list" class="mcp-list"></div>
+            <div class="mcp-add">
+              <input id="m-id" type="text" data-i18n-placeholder="settings.mcpId" placeholder="id (a-z, 0-9, _)" />
+              <div class="twoway" title="stdio ↔ HTTP">
+                <span data-i18n="settings.mcpStdio">stdio</span>
+                <label class="switch">
+                  <input type="checkbox" id="m-http" />
+                  <span class="slider" aria-hidden="true"></span>
+                </label>
+                <span data-i18n="settings.mcpHttp">HTTP</span>
+              </div>
+              <input id="m-target" type="text" data-i18n-placeholder="settings.mcpCommand"
+                placeholder="npx -y @modelcontextprotocol/server-filesystem D:\" />
+              <label class="switch" title="Run this server's tools without asking"><input type="checkbox" id="m-auto" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpAuto">auto-approve</span></label>
+              <button type="button" id="m-add" class="ghost" data-i18n="settings.mcpAdd">Add server</button>
+            </div>
+            <div class="actions">
+              <button type="button" id="m-refresh" class="ghost" data-i18n="settings.mcpRefresh">Reconnect &amp; refresh tools</button>
+              <span id="m-msg" class="muted"></span>
+            </div>
+
+            <h4 data-i18n="settings.enabledTools">Enabled tools</h4>
+            <p class="muted" data-i18n="settings.enabledToolsHint">
+              Turn a tool off with its switch to hide it from the model. All on = all enabled.
+            </p>
+            <div id="s-tools" class="tool-grid"></div>
+
+            <h4 data-i18n="settings.customCommands">Custom commands</h4>
+            <p class="muted" data-i18n-html="settings.customHint">
+              Add your own commands. Each becomes an action of the <code>custom</code> tool and runs
+              as PowerShell; the model's <code>arg</code> value is available as <code>$arg</code>.
+            </p>
+            <div id="s-custom" class="custom-list"></div>
+            <div class="custom-add">
+              <input id="c-name" type="text" data-i18n-placeholder="settings.namePlaceholder" placeholder="name (a-z, _)" />
+              <input id="c-desc" type="text" data-i18n-placeholder="settings.descPlaceholder" placeholder="description" />
+              <input id="c-script" type="text" data-i18n-placeholder="settings.scriptPlaceholder"
+                placeholder="PowerShell, e.g. Get-Date -Format o" />
+              <button type="button" id="c-add" class="ghost" data-i18n="settings.add">Add</button>
+            </div>
+
+            <div class="actions">
+              <button id="s-save" class="primary" data-i18n="settings.save">Save settings</button>
+              <button id="s-reload" class="ghost" data-i18n="settings.reload">Reload from disk</button>
+              <button id="s-resetChat" class="ghost" data-i18n="settings.newConversation">New conversation</button>
+              <span id="s-msg" class="muted"></span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="dirDialog">
+      <div class="dir-head">
+        <strong data-i18n="dir.title">Choose the agent's working directory</strong>
+        <button type="button" id="dir-close" class="ghost small" data-i18n="dir.close">Close</button>
+      </div>
+      <div class="dir-bar">
+        <button type="button" id="dir-up" class="ghost small" data-i18n="dir.up">Up</button>
+        <button type="button" id="dir-drives" class="ghost small" data-i18n="dir.drives">Drives</button>
+        <input id="dir-path" type="text" spellcheck="false" placeholder="D:\" />
+        <button type="button" id="dir-go" class="ghost small" data-i18n="dir.go">Open</button>
+      </div>
+      <div id="dir-list" class="dir-list"></div>
+      <div class="dir-foot">
+        <code id="dir-current">…</code>
+        <button type="button" id="dir-use" class="primary" data-i18n="dir.use">Use this folder</button>
+      </div>
+    </dialog>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
