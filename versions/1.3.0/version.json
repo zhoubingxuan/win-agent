@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.3.0",
+  "createdAt": "2026-10-18T07:36:46.411Z",
+  "node": ">=20.3",
+  "files": 60,
+  "bytes": 708534,
+  "note": "Two changes that make the agent better at its actual job: it now **supervises a small local model instead of hoping**, and it **survives the Windows machine it…"
+}
