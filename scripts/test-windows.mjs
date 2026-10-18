@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { buildTaskScript } from "../src/tools/automation.js";
 import { createWindowsTools } from "../src/tools/index.js";
-import { isElevated, powerShellInfo, resolvePowerShell, runPowerShell } from "../src/util/ps.js";
+import { detectElevation, isElevated, powerShellInfo, resolvePowerShell, runPowerShell } from "../src/util/ps.js";
 
 let failures = 0;
 let passed = 0;
@@ -52,6 +52,21 @@ try {
     check("elevation is known or explicitly unknown", info.elevated === null || typeof info.elevated === "boolean");
     check("isElevated() agrees with the probe", isElevated() === info.elevated);
     check("English diagnostics are on by default", info.englishErrors === true);
+
+    // Two callers share one probe. With the elevation probe already cached, the
+    // version probe is the only slow part left - and a second caller arriving in
+    // that window used to get the half-filled object (elevation known, version
+    // empty), which is what the UI panel then showed forever.
+    await detectElevation();
+    const first = powerShellInfo(true);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const second = await powerShellInfo();
+    check(
+      "a second caller during the probe never sees a half-filled answer",
+      second.found ? /^\d+\.\d+/.test(second.version) && !!second.edition : true,
+      JSON.stringify(second),
+    );
+    check("both callers end up with the same answer", JSON.stringify(await first) === JSON.stringify(second), JSON.stringify(second));
   }
 
   section("error messages");
@@ -66,13 +81,31 @@ try {
     check("the error is in English", /Cannot find any service/i.test(notFound), notFound.slice(0, 200));
     check("no CJK characters leak into errors", !/[\u4e00-\u9fff]/.test(notFound), notFound.slice(0, 200));
 
-    const denied = await call("powershell", {
-      script: `New-Item -Path (Join-Path $env:ProgramFiles 'win-agent-test.txt') -ItemType File -Force`,
-      readOnly: true,
-    });
-    check("a permission failure is reported", /denied|already exists|administrator/i.test(denied), denied.slice(0, 300));
-    if (isElevated() === false) {
+    // Program Files is the simplest read-only target on a normal install. It is
+    // only read-only when this process is *not* elevated, so the check is skipped
+    // where it cannot mean anything (and nothing is ever left behind: CI must not
+    // leave files on Program Files either).
+    const target = path.join(process.env.ProgramFiles ?? "C:\\Program Files", "win-agent-test.txt");
+    let blocked = false;
+    try {
+      if (fs.existsSync(target)) fs.rmSync(target);
+    } catch {
+      blocked = true;
+    }
+    if (isElevated() === true || blocked) {
+      console.log(`  skip  Program Files is writable here, or holds a file we cannot remove`);
+    } else {
+      const denied = await call("powershell", {
+        script: `New-Item -Path (Join-Path $env:ProgramFiles 'win-agent-test.txt') -ItemType File -Force`,
+        readOnly: true,
+      });
+      check("a permission failure is reported", /denied/i.test(denied), denied.slice(0, 300));
       check("a permission failure says what to do about it", /NOT elevated|administrator rights/i.test(denied));
+      try {
+        if (fs.existsSync(target)) fs.rmSync(target, { force: true });
+      } catch {
+        // read-only is the point of the test
+      }
     }
   }
 

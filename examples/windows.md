@@ -1,7 +1,7 @@
 # Windows compatibility / Windows 兼容性
 
 Every item below was a bug found on an ordinary Windows 11 machine, reproduced there,
-fixed, and pinned by a test. `npm run test:windows` runs 55 checks **against the
+fixed, and pinned by a test. `npm run test:windows` runs 57 checks **against the
 machine you are on** — it starts a real PowerShell, reads a real service, writes real
 UTF-16 files and kills a real hung process.
 
@@ -11,7 +11,7 @@ powershell binary
   ok   powershell.exe resolves to an absolute path
   ok   the version reads back
   ...
-55 passed, 0 failed
+57 passed, 0 failed
 ```
 
 ## 1. PowerShell 5.1 *and* PowerShell 7
@@ -176,7 +176,7 @@ Error: the command did not finish within 30000 ms and was killed (with everythin
 ## Running the checks yourself
 
 ```powershell
-npm run test:windows     # 55 live checks on this machine (needs no model)
+npm run test:windows     # 57 live checks on this machine (needs no model)
 npm run test:mode        # 74 model-free checks: modes, JSON repair, encodings, CLIXML
 ```
 

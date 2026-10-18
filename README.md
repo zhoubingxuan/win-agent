@@ -739,9 +739,32 @@ from the UI/terminal updates that profile, and switching profile rewrites them.
 
 **Where settings come from (in order):** built-in defaults → the settings file →
 environment variables. Runtime changes from the UI/terminal are written to the
-settings file and take effect immediately. Environment variables use the upper-case
-key name with an `AGENT_` prefix — e.g. `AGENT_MODE=normal`,
-`AGENT_PS_ENGLISH_ERRORS=false`, `AGENT_LANGUAGE=en`.
+settings file and take effect immediately.
+
+Environment variables are for the *first* start (a shortcut, a container, a second
+copy): they are read before the file, so saving anything from the UI wins from then
+on. Every variable is the upper-case setting name with an `AGENT_` prefix:
+
+| Variable | Setting | Notes |
+| --- | --- | --- |
+| `AGENT_MODEL` | `model` | |
+| `AGENT_BASE_URL` | `baseUrl` | `OPENAI_BASE_URL` is accepted too |
+| `AGENT_API_KEY` | `apiKey` | `OPENAI_API_KEY` is accepted too |
+| `AGENT_MAX_STEPS` | `maxSteps` | |
+| `AGENT_LANGUAGE` | `language` | `en` / `zh` |
+| `AGENT_SYSTEM_PROMPT` | `systemPrompt` | |
+| `AGENT_WORKDIR` | `workdir` | |
+| `AGENT_POWERSHELL` | `powershell` | `pwsh.exe` for PowerShell 7 |
+| `AGENT_MODE` | `agentMode` | `guided` / `normal` |
+| `AGENT_PS_ENGLISH_ERRORS` | `psEnglishErrors` | `true` / `false` |
+| `AGENT_WEB_PORT` | `webPort` | |
+| `AGENT_STREAM` | `stream` | `true` / `false` |
+| `AGENT_CONTEXT_LIMIT` | `contextLimit` | tokens; `0` = auto |
+| `AGENT_REQUEST_TIMEOUT_MS` | `requestTimeoutMs` | |
+| `AGENT_MAX_RETRIES` | `maxRetries` | |
+| `AGENT_WEB_SEARCH_URL` | `webSearchUrl` | the `{q}` search template |
+| `AGENT_SETTINGS_FILE` | — | where `settings.json` lives |
+| `AGENT_DATA_DIR` | — | the whole data folder (settings + history) |
 
 **Settings file:** `data/settings.json` in the installation folder (override with
 `AGENT_SETTINGS_FILE`, or move the whole folder with `AGENT_DATA_DIR`). It contains
@@ -818,7 +841,7 @@ run.
 
 The agent is meant to survive a *real* Windows machine, not a clean one. Every item
 below was a bug that showed up on an ordinary Windows 11 box and is covered by
-`npm run test:windows` (55 checks that run against the machine you are on).
+`npm run test:windows` (57 checks that run against the machine you are on).
 
 ### PowerShell 5.1 and PowerShell 7
 
@@ -1006,9 +1029,14 @@ scripts/
   test-models.mjs     local model discovery: LM Studio / Ollama routes, merging
   test-isolation.mjs  two copies never share data or a version number
   test-mode.mjs       agent modes + JSON repair + encodings (model-free, any platform)
+  test-i18n.mjs       the en/zh dictionaries, the HTML attributes and the help text
+  test-docs.mjs       the docs against the code: routes, settings, commands, links
+  test-api.mjs        the real HTTP server + a mock model, on a temp data folder
   test-windows.mjs    live Windows checks: PowerShell, elevation, files, services
   fixtures/
     mock-mcp-server.mjs  a tiny MCP server used by test-mcp.mjs
+.github/workflows/
+  ci.yml          typecheck + build + the whole suite on windows-latest (node 20 & 22)
 examples/         copy-paste examples: tool calls, prompts, custom commands,
                   MCP servers, HTTP API scripts, ready-made settings.json files
 versions/
@@ -1016,6 +1044,7 @@ versions/
   1.1.0/          one folder per version: the complete agent at that version
   1.1.1/
   1.2.0/
+  1.3.0/
 data/             settings, conversation records and token totals
 .git/             git history (branch main, one tag per version)
 ```
@@ -1043,6 +1072,9 @@ npm run test:mcp            # MCP client checks against a mock MCP server (stdio
 npm run test:models         # local model sync: LM Studio / Ollama discovery + merging
 npm run test:isolation      # two copies never share data or a version number
 npm run test:mode           # agent modes, JSON repair, encodings (no model needed)
+npm run test:i18n           # both dictionaries, the HTML keys and the help text
+npm run test:docs           # the docs against the code: routes, settings, links
+npm run test:api            # the whole HTTP API, against a mock model
 npm run test:windows        # live Windows checks: PowerShell, elevation, files, services
 npm run test:all            # all of the above
 ```
@@ -1058,6 +1090,51 @@ Two guards keep a version from going missing: `npm run version:set` refuses to b
 the version while the current one has no backup (`--force` overrides), and
 `npm run version:show` reports how many files have drifted from the newest backup
 (`npm run version:diff` lists them).
+
+### Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to `main`,
+every tag and every pull request — no model, no LM Studio/Ollama, no network beyond
+`npm ci`:
+
+| Job | Runs | What it proves |
+| --- | --- | --- |
+| `windows-latest · node 20.x` and `· node 22.x` | `npm ci` → `typecheck` → `build` → `test:all` | the documented minimum Node version works, the build is clean, and every suite passes on a machine that is not yours |
+| `docs and examples` (ubuntu) | `typecheck`, the platform-independent suites, `test:docs` | nothing in the pure code accidentally depends on Windows, and `test:windows` **skips cleanly** off Windows |
+
+The Windows job runs the *live* checks too (`test:windows`): a real PowerShell, real
+UTF-16 files, the real registry. Nothing is mocked there except the model endpoint,
+which is a throwaway HTTP server built into the suite.
+
+Three suites exist specifically to keep this repository honest as it grows:
+
+- **`test:api`** starts the real server (`src/server.ts`, temp data folder) and a mock
+  model, then drives every route the browser UI uses: settings round-trips, a refused
+  value changing nothing, profile add/use/remove, the terminal (`/status`, `/mode`,
+  a failing shell command), conversations, usage, abort/approve, port validation — and
+  one complete model turn, checked all the way into `data/history.json`.
+- **`test:i18n`** reads both dictionaries out of `src/web/app.js` and compares them key
+  by key: nothing missing in `zh`, no placeholder added or dropped, every
+  `data-i18n` attribute and every `t()` call resolvable, no unused string — then does
+  the same for the terminal messages and checks that `/help` only advertises commands
+  that really exist.
+- **`test:docs`** reads the README, the CHANGELOG and `examples/` against the source:
+  every route the server answers is documented (and vice versa), every settings key in
+  the reference table is a real setting **with the documented default**, every
+  `/command` in the tables is implemented, every `AGENT_*` variable exists, every
+  relative link and every `#anchor` resolves, and every example file is indexed.
+
+Run the three of them locally the same way CI does:
+
+```powershell
+npm run test:i18n && npm run test:docs && npm run test:api
+```
+
+A bug that `test:api` caught on its first run is worth knowing about, because it is the
+kind only an end-to-end test finds: `GET /api/state` could answer while the PowerShell
+probe was still running, and that early reply carried a half-filled `windows` object
+(elevation known, version and edition still empty) — which the Settings panel then
+cached. The probe is now published in one piece, and `test:windows` pins it.
 
 ### Version isolation / 版本隔离
 

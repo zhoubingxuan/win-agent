@@ -231,9 +231,22 @@ const bootNotices = [
   ...legacyMovedFiles().map((name) => `moved .win-agent/${name} into ${dataDir()}`),
 ];
 
+// The terminal keeps its own working directory (so `cd` feels persistent across
+// lines); start it in the configured workdir instead of wherever the server was
+// launched from. After this it only moves when the workdir setting changes.
+try {
+  if (getTerminalCwd() !== path.resolve(getSettings().workdir)) {
+    setTerminalCwd(getSettings().workdir);
+  }
+} catch {
+  // applySettings() has already reported the problem with the workdir.
+}
+
 /* -------------------------------------------------------------------------- */
 /* MCP                                                                        */
-/* -------------------------------------------------------------------------- *//**
+/* -------------------------------------------------------------------------- */
+
+/**
  * Connect to the enabled MCP servers and refresh the tool cache. Never throws:
  * a server that is down must not stop the agent from starting.
  */
@@ -1101,6 +1114,7 @@ server.listen(boundPort, "127.0.0.1", () => {
     const version = info.version ? ` ${info.version}` : "";
     const where = info.exe === getSettings().powershell ? "" : ` (resolved from ${getSettings().powershell})`;
     console.log(`  powershell : ${info.exe}${version}${where}`);
+    if (info.note) console.log(`  warning    : ${info.note}`);
     if (!info.found) console.log("  warning: no PowerShell binary found - set the \"PowerShell binary\" setting");
     else if (info.elevated === false) console.log("  elevated   : no - service/firewall/machine-wide changes will be refused");
     else if (info.elevated === true) console.log("  elevated   : yes (administrator)");

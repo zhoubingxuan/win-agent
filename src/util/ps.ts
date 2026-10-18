@@ -334,12 +334,15 @@ export interface PowerShellInfo {
   elevated: boolean | null;
   /** Errors are forced to English (so a small model can read them). */
   englishErrors: boolean;
+  /** Why the version is unknown, when it is - so the panel is never just blank. */
+  note?: string;
 }
 
 /** Version, edition, elevation and the binary actually used (cached). */
 export function powerShellInfo(force = false): Promise<PowerShellInfo> {
-  if (cachedInfo && !force) return Promise.resolve(cachedInfo);
+  // One probe at a time; a second caller shares the answer instead of racing it.
   if (pendingInfo) return pendingInfo;
+  if (cachedInfo && !force) return Promise.resolve(cachedInfo);
   pendingInfo = detectPowerShellInfo().finally(() => {
     pendingInfo = null;
   });
@@ -348,7 +351,11 @@ export function powerShellInfo(force = false): Promise<PowerShellInfo> {
 
 async function detectPowerShellInfo(): Promise<PowerShellInfo> {
   const { exe, found } = resolvePowerShell();
-  cachedInfo = { exe, found, version: "", edition: "", elevated: await detectElevation(), englishErrors: ENGLISH_ERRORS };
+  const elevated = await detectElevation();
+  let version = "";
+  let edition = "";
+  let note: string | undefined;
+
   if (found) {
     try {
       const out = await runPs(
@@ -356,13 +363,19 @@ async function detectPowerShellInfo(): Promise<PowerShellInfo> {
         { timeoutMs: 20_000 },
       );
       const parsed = JSON.parse(out) as { version?: string; edition?: string };
-      cachedInfo = { ...cachedInfo, version: parsed.version ?? "", edition: parsed.edition ?? "" };
-    } catch {
-      // A host that refuses to answer is not a reason to fail; the panel just
-      // shows what is known.
+      version = parsed.version ?? "";
+      edition = parsed.edition ?? "";
+    } catch (error) {
+      // A host that refuses to answer is not a reason to fail; the panel says so.
+      note = `could not read $PSVersionTable (${(error as Error).message.split("\n")[0]})`;
     }
+  } else {
+    note = "no PowerShell binary was found";
   }
-  cachedInfo = { ...cachedInfo, englishErrors: ENGLISH_ERRORS };
+
+  // Published once, complete: a half-filled object here used to leak into a
+  // concurrent /api/state reply (elevation known, version still empty).
+  cachedInfo = { exe, found, version, edition, elevated, englishErrors: ENGLISH_ERRORS, note };
   return cachedInfo;
 }
 

@@ -1572,7 +1572,8 @@ function renderWindows() {
   const info = state.windows;
   if (!info) return;
   const version = info.version ? ` ${info.version}${info.edition ? ` (${info.edition})` : ""}` : "";
-  setText(el("w-shell"), `${info.exe}${version}${info.found ? "" : " — NOT FOUND"}`);
+  const note = info.note ? ` — ${info.note}` : info.found ? "" : " — NOT FOUND";
+  setText(el("w-shell"), `${info.exe}${version}${note}`);
   setText(
     el("w-admin"),
     t(info.elevated === true ? "settings.adminYes" : info.elevated === false ? "settings.adminNo" : "settings.adminUnknown"),

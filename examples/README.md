@@ -44,3 +44,7 @@ PS> /exec Get-PSDrive C | Select-Object Used,Free
 
 > The examples use `D:\new` as the installation folder and `HKCU\Software\win-agent`
 > as a scratch registry key. Change the paths to yours.
+
+Every file here is checked by `npm run test:docs`: the links resolve, the files exist,
+the settings keys are real, and the commands are implemented. If an example stops
+matching the code, CI fails before a reader does.

@@ -13,6 +13,72 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.3.1] — 2026-10-18
+
+A patch that makes the project check itself: **continuous integration** on every push,
+and three test suites that pin the things that used to be checked by hand — the HTTP
+API, the two languages, and the documentation. No tool, setting or prompt changed;
+this release is about not breaking the next one.
+
+### Added
+
+- **CI** (`.github/workflows/ci.yml`) on every push to `main`, every tag and every pull
+  request: `npm ci` → `typecheck` → `build` → `test:all` on **windows-latest** with both
+  Node 20.x (the documented minimum) and 22.x. A second job runs the
+  platform-independent suites on ubuntu, which is where `test:windows` must skip
+  cleanly rather than fail. No model, no LM Studio/Ollama, no network beyond `npm ci`:
+  the model endpoints in the suites are mock servers.
+- **`npm run test:api`** (94 checks) — starts the real `src/server.ts` against a temp
+  data folder and a mock model, then drives the whole API exactly like the browser UI:
+  every route's shape, the settings round-trip (and a refused value changing *nothing*),
+  the `apiKey` never appearing in a reply, profile create/use/remove, the terminal
+  (`/status`, `/mode`, an unknown command, a failing shell line), conversations,
+  usage, abort/approve, port validation, drives listing — plus a complete model turn
+  checked all the way into `data/history.json`.
+- **`npm run test:i18n`** (25 checks) — reads both dictionaries out of `src/web/app.js`
+  and compares them key by key: nothing missing in `zh`, no placeholder added or
+  dropped, placeholders numbered without gaps, every `data-i18n` attribute and every
+  `t("…")` call resolvable in both languages, no unused string — then the same for the
+  terminal messages in `src/commands.ts`, and `/help` may only advertise commands the
+  dispatcher really implements (both languages).
+- **`npm run test:docs`** (21 checks) — reads the README, the CHANGELOG and `examples/`
+  against the source: every route the server answers is documented and vice versa,
+  every settings key in the reference table is a real setting **with the documented
+  default**, every `/command` in the tables is implemented, every documented `AGENT_*`
+  variable exists (and every one in the source is documented), every relative link and
+  every `#anchor` resolves, every file in `examples/` is indexed, `versions/INDEX.md`
+  lists every version folder, and the CHANGELOG documents the current version.
+- **A complete environment-variable table** in the README. The code had supported
+  sixteen `AGENT_*` variables and only five were documented; `test:docs` now fails if
+  that drifts again.
+
+### Fixed
+
+- **`GET /api/state` could answer with a half-filled `windows` object.** The PowerShell
+  probe published a preliminary result (elevation known, version and edition still
+  empty) before asking for the version, and any request that arrived in that window —
+  including the one the browser makes while the page is loading — got it and cached it
+  in the Settings panel. The probe is now published in one piece, there is one probe at
+  a time (a second caller shares the answer instead of racing it), and when the version
+  genuinely cannot be read the panel says *why* (`windows.note`) instead of showing a
+  blank line. Found by `test:api` on its first run; pinned in `test:windows` (57 checks
+  now) with a second caller arriving in the middle of the probe.
+- **The web terminal started in the wrong folder.** The terminal keeps its own working
+  directory (so `cd` lasts across lines) and it was initialised from the folder the
+  server happened to be launched in, not from the `workdir` setting — so the chat
+  toolbar and the terminal disagreed with the setting until the first `/workdir`. It is
+  now started in the configured `workdir`; after that it still only moves when you ask.
+- **`test:windows` no longer leaves a file behind on Program Files**, and it skips the
+  permission check where it cannot mean anything (an elevated shell, or a leftover file
+  it cannot remove) instead of failing on a writable Program Files.
+
+### Changed
+
+- The README's test list, architecture tree and the "Windows compatibility" section now
+  match the new suites; `examples/README.md` states that every example is verified by
+  CI. **`test:windows` grew from 55 to 57 checks.**
+
+
 ## [1.3.0] — 2026-10-18
 
 Two changes that make the agent better at its actual job: it now **supervises a small

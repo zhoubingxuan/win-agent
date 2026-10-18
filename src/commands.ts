@@ -165,7 +165,9 @@ interface Messages {
   mcpNoTools: string;
 }
 
-const MESSAGES: Record<Language, Messages> = {
+/** Every message the terminal prints, per language. Exported so the i18n test can
+ *  check that the two dictionaries stay in lockstep. */
+export const MESSAGES: Record<Language, Messages> = {
   en: {
     help: `Internal commands — everything here can also be changed from the Settings tab.
 
@@ -610,7 +612,7 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         `language   : ${s.language}`,
         `workdir    : ${s.workdir}`,
         `powershell : ${s.powershell}`,
-        `shell      : ${info.exe}${info.version ? ` ${info.version}` : ""}${info.found ? "" : "  (NOT FOUND)"}`,
+        `shell      : ${info.exe}${info.version ? ` ${info.version}` : ""}${info.note ? `  (${info.note})` : ""}`,
         `admin      : ${admin}`,
         `psErrors   : ${s.psEnglishErrors ? m().onWord : m().offWord}`,
         `mode       : ${s.agentMode === "guided" ? m().modeGuided : m().modeNormal}`,
