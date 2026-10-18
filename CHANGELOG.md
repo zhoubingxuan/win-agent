@@ -13,6 +13,47 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-10-18
+
+A patch for the two things 1.4.0 got wrong in practice, both found by driving a real
+7B model through the browser UI: a turn could end with nothing on screen, and the
+conversation could stop following its own output. No tool, setting or prompt changed.
+
+### Fixed
+
+- **A model that answers with nothing no longer ends the turn in silence.** A small
+  reasoning model can spend its whole completion in the thinking channel — the usage
+  line reads `↓94 (88 reasoning)` and not one character of visible text arrives — and
+  the agent loop accepted that as the final answer: no bubble, no error, nothing to
+  read, and the user repeated the question because it looked like the model had done
+  nothing. The agent now asks once more, with a nudge appended to that one request
+  ("Your last reply was empty: no text for the user and no tool call. Reply to the user
+  now, in plain text."), and if the reply is still empty it says so in the answer
+  itself: `(no answer: the model returned an empty reply after 88 characters of
+  thinking. Send it again, or pick another model.)` When the reply was nothing but
+  chat-template artefacts, the notice quotes what the model actually produced instead.
+  The notice is written into the conversation record, so a reload shows the same thing,
+  and it is translated for the Chinese UI.
+- **The chat pane follows its own output again.** The scroll fix in 1.4.0 decided
+  whether to follow by measuring the distance to the bottom *after* appending, so a
+  single tall tool result (a `system disk` listing, a file tree, a long error) pushed
+  the view past the 120 px guard — and every token after it, the answer included, went
+  off screen while the reader sat still. The decision is now made by real scroll events,
+  so it survives an append of any size: the tail of the log is followed while you are
+  at the bottom, and reading history is left alone. A reload jumps to the newest
+  message (the layout used to leave you wherever it landed — often near the top of a
+  long conversation), and sending a message always brings the newest output back into
+  view.
+
+### Changed
+
+- `scripts/test-api.mjs` grew to 120 checks: its mock model can now answer with nothing
+  at all, and two checks pin both halves of the fix — the retry really happens (the
+  second request carries the nudge) and the user is told, in the stored history, what
+  happened.
+- `npm run release` now includes `LICENSE` in the version folders, so a restored copy
+  is complete.
+
 ## [1.4.0] — 2026-10-18
 
 The release that makes a small model **safe to leave alone**: every change it makes is

@@ -58,6 +58,18 @@ const mock = http.createServer((req, res) => {
       res.end(JSON.stringify({ object: "list", data: [{ id: "mock-1" }, { id: "mock-2" }] }));
       return;
     }
+    // A model that answers with nothing at all (all of it went to "thinking"):
+    // used by the empty-reply checks at the end of this suite.
+    if (JSON.stringify(body.messages ?? []).includes("EMPTY_REPLY_TEST")) {
+      res.end(
+        JSON.stringify({
+          model: "mock-1",
+          choices: [{ index: 0, message: { role: "assistant", content: "" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 12, completion_tokens: 40, total_tokens: 52, reasoning_tokens: 40 },
+        }),
+      );
+      return;
+    }
     res.end(
       JSON.stringify({
         model: "mock-1",
@@ -532,6 +544,46 @@ try {
     check("the conversation can be reset again", cleared.status === 200 && cleared.data.ok === true);
     const empty2 = await api("/api/state");
     check("the history is empty after the reset", empty2.data.history.length === 0);
+  }
+
+  /* ---------------------------------------------------------------------- */
+
+  section("a model that answers with nothing");
+  {
+    // The whole point: a small reasoning model can return no text at all. The turn
+    // has to ask once more, and if that fails too it must still say so out loud
+    // instead of leaving an empty bubble behind.
+    requests.length = 0;
+    const sent = await api("/api/chat", "POST", { message: "EMPTY_REPLY_TEST what is the date" });
+    check("the message is accepted", sent.status === 202, JSON.stringify(sent.data));
+
+    const deadline = Date.now() + 30_000;
+    let final = null;
+    while (Date.now() < deadline) {
+      final = (await api("/api/state")).data;
+      if (!final.running && final.history.length >= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    const calls = requests.filter((r) => r.path.includes("/chat/completions"));
+    check("the empty reply was asked for again, with a nudge", calls.length === 2, JSON.stringify(calls.map((c) => c.path)));
+    check(
+      "the nudge says what was wrong",
+      JSON.stringify(calls.at(-1)?.body?.messages ?? []).includes("Your last reply was empty"),
+      JSON.stringify(calls.at(-1)?.body?.messages ?? []).slice(-200),
+    );
+
+    const last = final?.history?.at(-1);
+    check("the turn ended instead of hanging", final?.running === false, JSON.stringify(final?.history?.length));
+    check(
+      "and the user is told what happened, not given a blank bubble",
+      last?.role === "assistant" && /no answer: the model returned an empty reply/.test(last.content),
+      JSON.stringify(last),
+    );
+    check(
+      "the same text is what a reload shows",
+      (await api("/api/state")).data.history.at(-1).content === last.content,
+    );
   }
 } catch (error) {
   failures += 1;

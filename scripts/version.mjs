@@ -39,6 +39,7 @@ const SNAPSHOT_ITEMS = [
   "tsconfig.json",
   "README.md",
   "CHANGELOG.md",
+  "LICENSE",
   ".env.example",
   ".gitignore",
 ];

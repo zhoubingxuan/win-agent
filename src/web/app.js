@@ -513,10 +513,33 @@ function setText(node, text) {
 
 // Follow new output only while the reader is already at the bottom: the panes scroll
 // themselves now, so yanking the view down mid-history would lose their place.
+//
+// The flag is set by real scroll events rather than measured at append time, so one
+// tall tool result cannot strand the view above the answer that follows it.
+const NEAR_BOTTOM = 120;
+let followLog = true;
+
+log.addEventListener("scroll", () => {
+  followLog = log.scrollHeight - log.scrollTop - log.clientHeight < NEAR_BOTTOM;
+});
+
+function atBottom(node) {
+  return node.scrollHeight - node.scrollTop - node.clientHeight < NEAR_BOTTOM;
+}
+
 function followBottom(node) {
-  if (node.scrollHeight - node.scrollTop - node.clientHeight < 120) {
-    node.scrollTop = node.scrollHeight;
-  }
+  if (node === log ? followLog : atBottom(node)) node.scrollTop = node.scrollHeight;
+}
+
+/** Jump to the newest output: a reload, or the reader just sent something. */
+function scrollToBottom(node) {
+  node.scrollTop = node.scrollHeight;
+  if (node === log) followLog = true;
+  // One more pass after the layout settles: bubbles, usage rows and wrapped text
+  // can still add a few pixels after the first measurement.
+  requestAnimationFrame(() => {
+    if (node === log ? followLog : atBottom(node)) node.scrollTop = node.scrollHeight;
+  });
 }
 
 function showNotice(text, ms = 4000) {
@@ -982,6 +1005,8 @@ function handle(ev) {
   switch (ev.type) {
     case "user":
       addBubble("user", ev.text);
+      // A message was just sent (probably by this reader): show the newest output.
+      scrollToBottom(log);
       break;
     case "assistant":
       addBubble("assistant", ev.text);
@@ -1825,6 +1850,7 @@ async function refreshState() {
 /** Empty the chat view (starting or loading a conversation). */
 function clearLog() {
   log.innerHTML = "";
+  followLog = true;
   openTools = [];
   pendingUsage = null;
   pendingUsageAnchor = null;
@@ -1877,6 +1903,9 @@ function renderHistory(entries, calls = []) {
     }
   }
   flushUsage();
+  // A reload replays the whole conversation: start at the newest message, not at
+  // whatever position the layout happened to leave behind.
+  scrollToBottom(log);
 }
 
 function switchTab(name) {

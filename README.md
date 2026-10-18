@@ -113,7 +113,12 @@ Three tabs, all talking to the same local server over SSE.
 - **Refresh models** (or the button in Settings) asks every local server which
   models it can load — see [Local model sync](#local-model-sync--lm-studio--ollama).
 - Answers **stream in live**; while a reasoning model is still thinking you see a
-  `thinking…` line instead of a frozen screen.
+  `thinking…` line instead of a frozen screen. If the model then produces no text at
+  all, it is asked once more; if that fails too, the answer says so instead of leaving
+  a blank bubble (see [Troubleshooting](#troubleshooting)).
+- The conversation scrolls **inside its own pane**: new output follows only while you
+  are at the bottom, so scrolling up to read history is not interrupted. A reload, and
+  sending your own message, always jump to the newest output.
 - **Stop** (or `Esc`, or `/stop` in the terminal) aborts the task that is running.
 - Every tool call is a card you can expand to see its result.
 - Destructive actions pop up **Approve / Deny** buttons (see *Safety*).
@@ -1389,6 +1394,7 @@ Then register it in `src/tools/index.ts`.
 | An MCP tool fails without a reason | open the tool card in the chat log (or the server's own output) — MCP errors are passed through verbatim |
 | Web search returns nothing | the search page may have changed or be blocked — set **Web search page** to one that works (try `https://html.duckduckgo.com/html/?q={q}` or your own SearXNG) |
 | Reply appears all at once | `stream` is off, or the endpoint ignores `stream: true`; turn **Stream replies** on |
+| The reply is empty — `(no answer: the model returned an empty reply after N characters of thinking…)` | `glm-4.7-flash` sends the whole completion back in its reasoning channel: LM Studio logs `↓94 (88 reasoning)` and no text. The agent asks once more automatically; if it is still empty, send the message again, raise the model's output limit in LM Studio, or lower `contextLimit` — a very long prompt makes this more likely. `/diagnose` shows whether the endpoint can return text at all |
 | `this model's maximum context length is N tokens` | the endpoint reported a window bigger than the model really has — set `contextLimit` to the real one (LM Studio shows it next to the context slider), or run `/context` to see what the agent thinks it is |
 | The agent "forgets" the beginning of a long task | expected: the request was trimmed to fit. Raise `contextLimit` (if the model can take it) or start a new conversation — the old one is archived, not lost |
 | Endpoint errors about `tools` / `stream` | `/diagnose` shows which field it rejects; the agent already retries without it and remembers. `/caps` lists what was dropped |

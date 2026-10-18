@@ -109,6 +109,33 @@ export function splitToolCalls(
 export const SKIPPED_TOOL_CALL =
   "Skipped: guided mode runs one tool per step. Read the result above, then call the next tool.";
 
+/**
+ * Appended (for one request only, never stored) when a model answers with nothing
+ * at all: no text for the user and no tool call. Small reasoning models do this
+ * after a long think - the whole completion lands in the thinking channel and the
+ * visible answer comes back empty - and asking once more usually gets an answer.
+ */
+export const EMPTY_REPLY_NUDGE =
+  "Your last reply was empty: no text for the user and no tool call. Reply to the user now, in plain text.";
+
+/**
+ * What the user sees when even the nudged retry produced nothing. Better a stated
+ * reason than a blank bubble that never explains itself.
+ */
+export function blankReply(language: Language | undefined, thinking: number, raw: string): string {
+  const zh = language === "zh";
+  if (raw) {
+    const snippet = raw.replace(/\s+/g, " ").slice(0, 60);
+    return zh
+      ? `（模型没有给出回复，只输出了模板标记：“${snippet}”。请重新发送，或换一个模型。）`
+      : `(no answer: the model's reply was only chat-template artefacts — "${snippet}". Send it again, or pick another model.)`;
+  }
+  const spent = thinking > 0 ? (zh ? `（思考了 ${thinking} 个字符）` : ` after ${thinking} characters of thinking`) : "";
+  return zh
+    ? `（模型没有给出回复${spent}。请重新发送，或换一个模型。）`
+    : `(no answer: the model returned an empty reply${spent}. Send it again, or pick another model.)`;
+}
+
 /** An agent that drives the model and the Windows tools until a task is done. */
 export class Agent {
   private readonly history: ChatMessage[];
@@ -183,6 +210,10 @@ export class Agent {
   async run(userInput: string, signal?: AbortSignal): Promise<string> {
     this.history.push({ role: "user", content: userInput });
 
+    // Characters of "thinking" this turn produced. When the model answers with
+    // nothing, this number is the only clue about where the answer went.
+    let thinking = 0;
+
     for (let step = 1; step <= this.config.maxSteps; step++) {
       signal?.throwIfAborted();
       this.events.onStep?.(step, this.config.maxSteps);
@@ -197,13 +228,34 @@ export class Agent {
       this.lastContext = plan.stats;
       if (plan.stats.trimmed) this.events.onContext?.(plan.stats);
 
-      const { message, usage } = await chat(this.config, plan.messages, this.tools.schemas(), {
-        signal,
-        stream: this.config.stream,
-        onDelta: (text) => this.events.onAssistantDelta?.(text),
-        onReasoning: (text) => this.events.onReasoning?.(text),
-      });
+      const request = (messages: ChatMessage[]) =>
+        chat(this.config, messages, this.tools.schemas(), {
+          signal,
+          stream: this.config.stream,
+          onDelta: (text) => this.events.onAssistantDelta?.(text),
+          onReasoning: (text) => {
+            thinking += text.length;
+            this.events.onReasoning?.(text);
+          },
+        });
+
+      let { message, usage } = await request(plan.messages);
       this.events.onUsage?.(usage);
+
+      // Nothing to show and nothing to run: give it one more chance with a nudge
+      // before the turn can end on an empty reply (see EMPTY_REPLY_NUDGE).
+      if (!message.tool_calls?.length && !String(message.content ?? "").trim()) {
+        try {
+          const retry = await request([...plan.messages, { role: "system", content: EMPTY_REPLY_NUDGE }]);
+          this.events.onUsage?.(retry.usage);
+          if (retry.message.tool_calls?.length || String(retry.message.content ?? "").trim()) {
+            message = retry.message;
+          }
+        } catch {
+          // An endpoint that dislikes a late system message (or a request that has
+          // simply had enough): fall through to the empty-reply notice below.
+        }
+      }
 
       // Fallback: let small models express a tool call as text.
       if ((!message.tool_calls || message.tool_calls.length === 0) && message.content) {
@@ -215,6 +267,7 @@ export class Agent {
       }
 
       const toolCalls = message.tool_calls ?? [];
+      const rawContent = typeof message.content === "string" ? message.content : "";
 
       // Clean up template artefacts before the text is shown or stored.
       if (typeof message.content === "string") {
@@ -228,7 +281,16 @@ export class Agent {
       this.history.push(message);
 
       if (toolCalls.length === 0) {
-        return message.content ?? "";
+        let text = message.content;
+        if (!text) {
+          // Never end a turn on a blank bubble: say what happened instead. The
+          // message object is already in the history, so the record matches what
+          // the user was told.
+          text = blankReply(this.config.language, thinking, rawContent.trim());
+          message.content = text;
+          this.events.onAssistantText?.(text);
+        }
+        return text;
       }
 
       const { go, extra } = splitToolCalls(toolCalls, this.config.agentMode);
