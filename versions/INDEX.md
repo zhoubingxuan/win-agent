@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 1.5.0 | 2026-10-19 13:10 | 71 | How much of the agent's *process* the chat shows is now a slider with three stops, and the model's reasoning becomes something you can read instead of a… |
 | 1.4.2 | 2026-10-18 10:20 | 69 |  |
 | 1.4.1 | 2026-10-18 09:32 | 68 | A patch for the two things 1.4.0 got wrong in practice, both found by driving a real 7B model through the browser UI: a turn could end with nothing on screen,… |
 | 1.4.0 | 2026-10-18 09:07 | 67 | The release that makes a small model **safe to leave alone**: every change it makes is now written down, everything that can be taken back is one `/undo` away,… |
