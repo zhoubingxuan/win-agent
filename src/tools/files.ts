@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { jailPath } from "../sandbox.js";
 import { psQuote, runPs } from "../util/ps.js";
 import { decodeText, encodeText, type DecodedText } from "../util/text.js";
 import { arg, argBool, argEnum, argNum, argOpt, type Tool } from "./registry.js";
@@ -22,10 +23,6 @@ const ACTIONS = [
   "zip",
   "unzip",
 ] as const;
-
-function resolvePath(value: string): string {
-  return path.resolve(process.cwd(), value);
-}
 
 async function statSafe(target: string): Promise<{ size: number; mtime: string } | null> {
   try {
@@ -149,7 +146,7 @@ export const filesTool: Tool = {
 
     switch (action) {
       case "list": {
-        const dir = resolvePath(argOpt(args, "path") ?? ".");
+        const dir = jailPath(argOpt(args, "path") ?? ".");
         const entries = await fs.readdir(dir, { withFileTypes: true });
         if (entries.length === 0) return `(empty folder) ${dir}`;
         const lines: string[] = [`Contents of ${dir}:`];
@@ -165,7 +162,7 @@ export const filesTool: Tool = {
       }
 
       case "tree": {
-        const dir = resolvePath(argOpt(args, "path") ?? ".");
+        const dir = jailPath(argOpt(args, "path") ?? ".");
         const depth = argNum(args, "depth", 3);
         const max = argNum(args, "max", 200);
         const items = await walk(dir, depth, max);
@@ -180,7 +177,7 @@ export const filesTool: Tool = {
       }
 
       case "read": {
-        const target = resolvePath(arg(args, "path"));
+        const target = jailPath(arg(args, "path"));
         const file = await readText(target);
         if (file.binary) {
           const size = (await statSafe(target))?.size ?? 0;
@@ -196,7 +193,7 @@ export const filesTool: Tool = {
       }
 
       case "write": {
-        const target = resolvePath(arg(args, "path"));
+        const target = jailPath(arg(args, "path"));
         const content = argOpt(args, "content") ?? "";
         const overwrite = argBool(args, "overwrite", false);
         const existing = await statSafe(target);
@@ -224,7 +221,7 @@ export const filesTool: Tool = {
       }
 
       case "append": {
-        const target = resolvePath(arg(args, "path"));
+        const target = jailPath(arg(args, "path"));
         const content = argOpt(args, "content") ?? "";
         if (ctx.dryRun) return `DRY RUN: would append ${content.length} chars to ${target}`;
         const existed = (await statSafe(target)) !== null;
@@ -249,7 +246,7 @@ export const filesTool: Tool = {
       }
 
       case "edit": {
-        const target = resolvePath(arg(args, "path"));
+        const target = jailPath(arg(args, "path"));
         const find = arg(args, "find");
         const replace = argOpt(args, "replace") ?? "";
         const all = argBool(args, "all", false);
@@ -286,8 +283,8 @@ export const filesTool: Tool = {
       }
 
       case "copy": {
-        const source = resolvePath(arg(args, "source"));
-        const destination = resolvePath(arg(args, "destination"));
+        const source = jailPath(arg(args, "source"));
+        const destination = jailPath(arg(args, "destination"));
         if (ctx.dryRun) return `DRY RUN: would copy ${source} -> ${destination}`;
         // Only a copy that created something new can be undone: overwriting an
         // existing folder would need a copy of the whole folder to restore.
@@ -304,8 +301,8 @@ export const filesTool: Tool = {
       }
 
       case "move": {
-        const source = resolvePath(arg(args, "source"));
-        const destination = resolvePath(arg(args, "destination"));
+        const source = jailPath(arg(args, "source"));
+        const destination = jailPath(arg(args, "destination"));
         if (!(await ctx.approve(`move/rename ${source} -> ${destination}`))) {
           return "Cancelled by user.";
         }
@@ -338,7 +335,7 @@ export const filesTool: Tool = {
       }
 
       case "delete": {
-        const target = resolvePath(arg(args, "path"));
+        const target = jailPath(arg(args, "path"));
         const recursive = argBool(args, "recursive", false);
         if (!(await ctx.approve(`permanently delete ${target}${recursive ? " (recursive)" : ""}`))) {
           return "Cancelled by user.";
@@ -358,7 +355,7 @@ export const filesTool: Tool = {
       }
 
       case "mkdir": {
-        const target = resolvePath(arg(args, "path"));
+        const target = jailPath(arg(args, "path"));
         if (ctx.dryRun) return `DRY RUN: would create folder ${target}`;
         const existed = (await statSafe(target)) !== null;
         await fs.mkdir(target, { recursive: true });
@@ -374,7 +371,7 @@ export const filesTool: Tool = {
       }
 
       case "search": {
-        const dir = resolvePath(argOpt(args, "path") ?? ".");
+        const dir = jailPath(argOpt(args, "path") ?? ".");
         const pattern = argOpt(args, "pattern") ?? "*";
         const depth = argNum(args, "depth", 5);
         const max = argNum(args, "max", 100);
@@ -392,7 +389,7 @@ export const filesTool: Tool = {
       }
 
       case "grep": {
-        const dir = resolvePath(argOpt(args, "path") ?? ".");
+        const dir = jailPath(argOpt(args, "path") ?? ".");
         const pattern = arg(args, "pattern");
         const max = argNum(args, "max", 50);
         const regex = new RegExp(pattern, "i");
@@ -424,15 +421,15 @@ export const filesTool: Tool = {
       }
 
       case "hash": {
-        const target = resolvePath(arg(args, "path"));
+        const target = jailPath(arg(args, "path"));
         const algorithm = argEnum(args, "algorithm", ["sha256", "sha1", "md5"] as const);
         const data = await fs.readFile(target);
         return `${algorithm.toUpperCase()} ${createHash(algorithm).update(data).digest("hex")}  ${target}`;
       }
 
       case "zip": {
-        const source = resolvePath(arg(args, "source"));
-        const destination = resolvePath(arg(args, "destination"));
+        const source = jailPath(arg(args, "source"));
+        const destination = jailPath(arg(args, "destination"));
         if (ctx.dryRun) return `DRY RUN: would zip ${source} -> ${destination}`;
         await runPs(
           `Compress-Archive -LiteralPath ${psQuote(source)} -DestinationPath ${psQuote(destination)} -Force`,
@@ -446,8 +443,8 @@ export const filesTool: Tool = {
       }
 
       case "unzip": {
-        const source = resolvePath(arg(args, "source"));
-        const destination = resolvePath(argOpt(args, "destination") ?? ".");
+        const source = jailPath(arg(args, "source"));
+        const destination = jailPath(argOpt(args, "destination") ?? ".");
         if (ctx.dryRun) return `DRY RUN: would extract ${source} -> ${destination}`;
         await runPs(
           `Expand-Archive -LiteralPath ${psQuote(source)} -DestinationPath ${psQuote(destination)} -Force`,

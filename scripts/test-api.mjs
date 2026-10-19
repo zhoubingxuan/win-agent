@@ -504,7 +504,9 @@ try {
     check("the terminal says logging is off", /switched off/.test(offCmd.data.output), String(offCmd.data.output).slice(0, 200));
     await api("/api/settings", "POST", { auditLog: true });
 
-    // Normal mode is the way back to the raw shell.
+    // Normal mode is the way back to the raw shell. The sandbox withholds it too,
+    // so it is switched off for this check; test-sandbox.mjs owns that behaviour.
+    await api("/api/settings", "POST", { sandbox: false });
     await api("/api/settings", "POST", { agentMode: "normal" });
     const normal = await api("/api/state");
     check(
@@ -514,7 +516,7 @@ try {
     );
     const toolsCmd = await api("/api/terminal", "POST", { input: "/tools" });
     check("/tools lists it again", /\[x\] powershell/.test(toolsCmd.data.output), String(toolsCmd.data.output).slice(0, 400));
-    await api("/api/settings", "POST", { agentMode: "guided" });
+    await api("/api/settings", "POST", { agentMode: "guided", sandbox: true });
     const backToGuided = await api("/api/terminal", "POST", { input: "/tools" });
     check(
       "/tools explains what is not offered in guided mode",

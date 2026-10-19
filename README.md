@@ -42,6 +42,9 @@ What that means in practice:
   way), the answers plus the model's reasoning, or the whole machine room with every
   tool call and its token count. From the toolbar, Settings, `/verbosity` or
   `AGENT_VERBOSITY` — see [Output detail](#output-detail).
+- **A sandbox** — every file path stays inside the working directory, and the raw
+  shell and custom commands are withheld while it is on (it is on by default). One
+  switch in the chat sidebar, in Settings, or `/sandbox off` — see [Sandbox](#sandbox).
 - **Windows-hardened** — PowerShell 5.1 *and* 7, errors always in English, editors
   that wrote UTF-16 files still read correctly, hung commands are killed with their
   whole process tree, and "access denied" becomes a sentence that says what to do.
@@ -165,6 +168,8 @@ A form for **every** setting, plus:
   [Agent modes](#agent-modes--guided-vs-normal)).
 - **Output detail** — how much of the process the chat log shows (see
   [Output detail](#output-detail)).
+- **Sandbox** — the folder fence, on by default: file paths stay inside the working
+  directory and the two scripting tools are withheld (see [Sandbox](#sandbox)).
 - **Endpoints** — switch the whole agent between a local model server and a cloud
   API with one click (a local ↔ API slider when adding one), and pick the model
   from the list the endpoint actually reports.
@@ -236,6 +241,49 @@ independent calls; nothing else changes — same tools, same approvals, same mem
 
 `examples/modes.md` shows both prompts side by side and how to measure which one
 your model prefers.
+
+---
+
+## Sandbox
+
+A local model that misreads a path can delete the wrong folder, so the agent is
+confined to one folder by default.
+
+**`sandbox` is on out of the box.** While it is on:
+
+- every path a tool is handed has to land inside the **working directory** — the
+  folder shown next to `cwd` in the web UI, and the folder `files`, `web download`
+  and the audit backups work in. `..\..\Windows\System32`, another drive, an
+  absolute path somewhere else: all refused *before anything is touched*, with a
+  message that says what to do instead;
+- junctions and symlinks are resolved first, so a link inside the folder that
+  points outside is not a way out;
+- the **raw shell** (`powershell`) and **custom commands** (`custom`) are withheld:
+  a script reaches anywhere the user can, and checking a path in front of it does
+  not change that. Calling one anyway answers with the reason and points at the
+  structured tools — the same treatment `guided` mode gives the shell.
+
+A refused path reads like this in the chat:
+
+```text
+Refused: C:\Windows\System32\drivers\etc\hosts is outside the sandbox (D:\projects\site),
+so nothing was touched. Work inside D:\projects\site, change the working directory,
+or switch the sandbox off in Settings.
+```
+
+**Switch it off** when the job really is outside the folder (installing into
+`C:\Program Files`, editing something in `%APPDATA%`): the switch is in the chat
+sidebar *and* in Settings and applies at once, `/sandbox off` does it from the
+terminal, and `"sandbox": false` or `AGENT_SANDBOX=false` does it before the first
+start.
+
+What the sandbox deliberately does **not** cover, because none of it is a file path:
+services, processes, the registry, scheduled tasks, environment variables — each has
+its own tool and its own approval prompt. **MCP servers** are separate programs you
+configured yourself: they run with your rights and are not confined.
+
+`examples/sandbox.md` shows a refused path, the same task with the sandbox off, and
+what the model is told instead.
 
 ---
 
@@ -753,6 +801,7 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/custom remove <name>` | deletes a custom command | immediately |
 | `/dry-run <on\|off>` | describe actions instead of doing them | immediately |
 | `/auto-approve <on\|off>` | skip approval prompts | immediately |
+| `/sandbox <on\|off>` | keep file paths inside the working directory, and withhold the scripting tools | immediately |
 | `/stream <on\|off>` | stream the reply token by token | next turn |
 | `/set contextLimit <tokens>` | the context window to budget against (0 = use what the endpoint reports) | next turn |
 | `/set requestTimeoutMs <ms>` | how long one LLM request may take | next call |
@@ -860,6 +909,7 @@ with a message and nothing changes.
 | `autoOpenBrowser` | boolean | `true` | open the browser on start |
 | `dryRun` | boolean | `false` | describe actions instead of doing them |
 | `autoApprove` | boolean | `false` | skip approval prompts |
+| `sandbox` | boolean | `true` | keep every file path inside the working directory, and withhold the scripting tools (see [Sandbox](#sandbox)) |
 | `remember` | boolean | `true` | keep the conversation in `data/history.json` |
 | `stream` | boolean | `true` | stream replies token by token |
 | `contextLimit` | number | `0` | tokens to budget against; `0` = use what the endpoint reports (see [Context window](#context-window)) |
@@ -896,6 +946,7 @@ on. Every variable is the upper-case setting name with an `AGENT_` prefix:
 | `AGENT_WORKDIR` | `workdir` | |
 | `AGENT_POWERSHELL` | `powershell` | `pwsh.exe` for PowerShell 7 |
 | `AGENT_MODE` | `agentMode` | `guided` / `normal` |
+| `AGENT_SANDBOX` | `sandbox` | `true` / `false` |
 | `AGENT_VERBOSITY` | `verbosity` | `answer` / `thinking` / `full` |
 | `AGENT_AUDIT_LOG` | `auditLog` | `true` / `false` |
 | `AGENT_PS_ENGLISH_ERRORS` | `psEnglishErrors` | `true` / `false` |
@@ -965,8 +1016,8 @@ Custom commands run arbitrary PowerShell, so they always require approval
 | `scheduled_tasks` | list, info, create, delete, run |
 | `registry` | get, list, set, delete |
 | `ui` | clipboard_get, clipboard_set, screenshot, open, notify |
-| `powershell` | raw script escape hatch (always confirmed) |
-| `custom` | your own commands (only present when you add some) |
+| `powershell` | raw script escape hatch (always confirmed; withheld while the sandbox is on) |
+| `custom` | your own commands (only present when you add some; withheld while the sandbox is on) |
 
 Any tool can be hidden from the model with `enabledTools` / the switches on the
 Settings tab.
@@ -1144,6 +1195,7 @@ src/
   settings.ts     the settings store: defaults, validation, persistence, env merge
   store.ts        the data folder: open conversation, archives, token totals
   audit.ts        the change log (data/audit.jsonl) + the in-memory undo stack
+  sandbox.ts      the folder fence: the working-directory root, jailPath(), refusals
   version.ts      reads the version from package.json (one source of truth)
   context.ts      token estimation + context budgeting (what to send, what to trim)
   providers.ts    endpoint compatibility memory + context-length discovery
@@ -1175,6 +1227,7 @@ scripts/
   test-models.mjs     local model discovery: LM Studio / Ollama routes, merging
   test-isolation.mjs  two copies never share data or a version number
   test-mode.mjs       agent modes + JSON repair + encodings (model-free, any platform)
+  test-sandbox.mjs    the folder fence: refusals, junctions, the withheld scripting tools
   test-i18n.mjs       the en/zh dictionaries, the HTML attributes and the help text
   test-docs.mjs       the docs against the code: routes, settings, commands, links
   test-api.mjs        the real HTTP server + a mock model, on a temp data folder
@@ -1401,6 +1454,8 @@ recoverable, and the `CHANGELOG.md` entry is all that remains of it.
 - `dryRun` makes the agent report what it *would* do and change nothing.
 - Non-interactive runs deny destructive actions unless `--yes` (CLI) or
   `autoApprove` is set.
+- `sandbox` is on by default: every file path stays inside the working directory,
+  and the two scripting tools are withheld (see [Sandbox](#sandbox)).
 - The raw `powershell` tool and all `custom` commands are always confirmed.
 - **MCP tools** are confirmed on every call unless you mark that server
   **auto-approve** — remember an MCP server is a program that runs with *your*

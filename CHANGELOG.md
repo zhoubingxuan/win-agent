@@ -13,8 +13,36 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-10-19
+
+The agent is fenced into one folder. A file path that points outside the working
+directory is refused *before* anything is touched, and the two tools that could walk
+around the fence — a raw script and a custom command — are not offered while it is on.
+It is on by default; one switch turns it off.
+
 ### Added
 
+- **Sandbox — every file path stays inside the working directory** (`sandbox`, on by
+  default). The switch exists in the chat sidebar *and* in Settings and applies at
+  once, `/sandbox on|off` does it from the terminal, and `"sandbox": false` /
+  `AGENT_SANDBOX=false` does it before the first start. `files` (list, tree, read,
+  write, append, edit, copy, move, delete, mkdir, search, grep, hash, zip, unzip) and
+  `web` (download) resolve every path against the working directory and refuse the
+  rest with `Refused: … is outside the sandbox (…), so nothing was touched` plus the
+  three ways out: work inside the folder, change the working directory, or switch the
+  sandbox off.
+- **Junctions and symlinks are followed first** (`realpath`), so a link that sits
+  inside the folder but points outside is not a way out — the check happens on the
+  real location, not on the string.
+- **The scripting tools are withheld while the sandbox is on.** `powershell` and
+  `custom` run arbitrary code, which no path check can confine; calling one answers
+  with the reason and points at the structured tools instead of "unknown tool". In
+  `guided` mode the shell keeps its own, earlier reason, because that is the accurate
+  one there.
+- **`npm run test:sandbox`** (38 checks): the fence itself, `..` / absolute / sibling
+  paths, a junction pointing out, a refused write that leaves no file, the withheld
+  tools and their messages, and that switching the sandbox off lets the same calls
+  through.
 - **An `.AGREEMENT` file**, in the repository root and inside every
   `versions/<version>/` folder. It is a standalone copy of the terms that already live
   in `LICENSE` (Apache 2.0), `NOTICE` and the ecosystem notice at the top of the
@@ -22,6 +50,13 @@ drifted from the newest backup.
   (`zhoubingxuan`). `SNAPSHOT_ITEMS` in `scripts/version.mjs` carries it into new
   snapshots, and `npm run test:docs` checks that the root copy and all the version
   folders exist and agree.
+
+### Changed
+
+- A path outside the sandbox comes back as `Refused: …` rather than `Error: …`, so the
+  model treats it as "change the argument", not "retry the same call".
+- `examples/sandbox.md` walks through a refused path end to end, the four ways to
+  switch the fence, and how to work outside the folder on purpose.
 
 ## [1.5.0] — 2026-10-19
 

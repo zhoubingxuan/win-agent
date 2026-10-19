@@ -1,5 +1,6 @@
 import type { ToolSchema } from "../llm.js";
 import { auditLog, type AuditEntry, type AuditInput } from "../audit.js";
+import { SandboxRefusal } from "../sandbox.js";
 import { parseToolArguments } from "../util/json.js";
 
 /** Per-execution context handed to every tool. */
@@ -239,6 +240,9 @@ export class ToolRegistry {
     try {
       return await tool.run(args, ctx);
     } catch (error) {
+      // A path outside the sandbox is a refusal, not a failure: the model has to
+      // change the path, not retry the same one (see src/sandbox.ts).
+      if (error instanceof SandboxRefusal) return `Refused: ${error.message}`;
       return `Error: ${(error as Error).message}`;
     }
   }

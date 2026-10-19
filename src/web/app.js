@@ -30,6 +30,7 @@ const I18N = {
     "sidebar.tools": "Tools",
     "common.dryRun": "Dry run",
     "common.autoApprove": "Auto-approve",
+    "common.sandbox": "Sandbox",
     "tab.chat": "Chat",
     "tab.terminal": "Terminal",
     "tab.settings": "Settings",
@@ -152,6 +153,8 @@ const I18N = {
     "settings.auditDone": "undid {0} change(s)",
     "settings.auditNothing": "nothing to undo",
     "settings.auditLine": "{0}  {1} {2}: {3}",
+    "settings.sandboxHint":
+      "Sandbox (on by default): every file path has to point inside the working directory, and the PowerShell and custom-command tools are withheld. Turn it off to work outside the folder.",
     "settings.toolsWithheld": "not offered right now: {0}",
     "settings.savedFile": "saved to {0}",
     "settings.saved": "saved: {0}",
@@ -269,6 +272,7 @@ const I18N = {
     "sidebar.tools": "工具",
     "common.dryRun": "试运行",
     "common.autoApprove": "自动批准",
+    "common.sandbox": "沙箱",
     "tab.chat": "对话",
     "tab.terminal": "终端",
     "tab.settings": "设置",
@@ -386,6 +390,8 @@ const I18N = {
     "settings.auditDone": "已撤销 {0} 次改动",
     "settings.auditNothing": "没有可撤销的改动",
     "settings.auditLine": "{0}  {1} {2}：{3}",
+    "settings.sandboxHint":
+      "沙箱（默认开启）：文件路径必须落在工作目录内部，PowerShell 与自定义命令工具会被收起。需要在目录之外操作时把它关掉。",
     "settings.toolsWithheld": "当前不提供：{0}",
     "settings.savedFile": "已保存到 {0}",
     "settings.saved": "已保存：{0}",
@@ -1729,6 +1735,7 @@ function applySettingsToUi(s) {
   renderRuntime(s);
   el("dryRun").checked = s.dryRun;
   el("autoApprove").checked = s.autoApprove;
+  el("sandbox").checked = s.sandbox !== false;
 
   if (s.language && s.language !== lang) {
     lang = s.language;
@@ -1757,6 +1764,7 @@ function fillSettingsForm(s) {
   el("s-maxRetries").value = s.maxRetries ?? 2;
   el("s-dryRun").checked = !!s.dryRun;
   el("s-autoApprove").checked = !!s.autoApprove;
+  el("s-sandbox").checked = s.sandbox !== false;
   el("s-autoOpenBrowser").checked = !!s.autoOpenBrowser;
   el("s-stream").checked = s.stream !== false;
   el("s-remember").checked = !!s.remember;
@@ -1890,6 +1898,7 @@ async function saveSettings() {
     maxRetries: Number(el("s-maxRetries").value) || 0,
     dryRun: el("s-dryRun").checked,
     autoApprove: el("s-autoApprove").checked,
+    sandbox: el("s-sandbox").checked,
     autoOpenBrowser: el("s-autoOpenBrowser").checked,
     stream: el("s-stream").checked,
     remember: el("s-remember").checked,
@@ -1937,6 +1946,7 @@ async function refreshState() {
   el("termPrompt").textContent = `PS ${data.cwd}>`;
   el("dryRun").checked = data.settings.dryRun;
   el("autoApprove").checked = data.settings.autoApprove;
+  el("sandbox").checked = data.settings.sandbox !== false;
   state.settings = data.settings;
   state.version = data.version ?? state.version;
   setVerbosityControls(data.settings.verbosity);
@@ -2323,6 +2333,12 @@ el("dryRun").addEventListener("change", () =>
 el("autoApprove").addEventListener("change", () =>
   api("/api/settings", "POST", { autoApprove: el("autoApprove").checked }),
 );
+// The sandbox decides which tools exist (the scripting ones are withheld while it
+// is on), so the tool chips have to be redrawn, not just the switch flipped.
+el("sandbox").addEventListener("change", async () => {
+  const result = await api("/api/settings", "POST", { sandbox: el("sandbox").checked });
+  if (!result.error) await refreshState();
+});
 
 // The mode switch explains itself immediately; "Save settings" persists it.
 el("s-guided").addEventListener("change", renderModeState);

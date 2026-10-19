@@ -249,6 +249,7 @@ Change (saved to disk and applied immediately):
   /custom remove <name>      remove a custom command
   /dry-run <on|off>          describe actions instead of doing them
   /auto-approve <on|off>     skip approval prompts
+  /sandbox <on|off>          keep file paths inside the working directory (on by default)
   /stream <on|off>           stream the reply token by token
   /set contextLimit <n>      context window to budget against (0 = ask the endpoint)
   /set requestTimeoutMs <n>  how long one request may take before it is abandoned
@@ -435,6 +436,7 @@ current directory.`,
   /custom remove <name>      删除自定义命令
   /dry-run <on|off>          只报告不真正执行
   /auto-approve <on|off>     跳过审批提示
+  /sandbox <on|off>          文件路径限制在工作目录内（默认开启）
   /stream <on|off>           逐字流式输出回复
   /set contextLimit <n>      上下文窗口预算（0 = 询问接口）
   /set requestTimeoutMs <n>  单次请求最长等待时间，超时即放弃
@@ -905,6 +907,8 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
     case "auto-approve":
     case "autoapprove":
       return setKeys(host, { autoApprove: parseValue(requireArg(rest, "/auto-approve on")) });
+    case "sandbox":
+      return setKeys(host, { sandbox: parseValue(requireArg(rest, "/sandbox on")) });
     case "stream":
       return setKeys(host, { stream: parseValue(requireArg(rest, "/stream on")) });
 

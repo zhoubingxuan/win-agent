@@ -15,6 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { auditLog, configureAudit } from "../src/audit.js";
+import { updateSettings } from "../src/settings.js";
 import { createWindowsTools, GUIDED_NO_SHELL } from "../src/tools/index.js";
 import { runPowerShell } from "../src/util/ps.js";
 
@@ -24,6 +25,10 @@ const scratch = path.join(os.tmpdir(), `win-agent-audit-${process.pid}`);
 process.env.AGENT_DATA_DIR = path.join(scratch, "data");
 const work = path.join(scratch, "work");
 fs.mkdirSync(work, { recursive: true });
+// This suite is about the change log and undo, not about the sandbox: it runs raw
+// PowerShell and works in %TEMP%, so the fence - on by default - is switched off
+// here. scripts/test-sandbox.mjs is where the fence itself is checked.
+updateSettings({ sandbox: false });
 
 let passed = 0;
 let failures = 0;

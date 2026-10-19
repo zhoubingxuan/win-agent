@@ -12,6 +12,7 @@ import { powershellTool } from "./powershell.js";
 import { createWebTool } from "./web.js";
 import { createCustomTool } from "./custom.js";
 import { mcp } from "../mcp.js";
+import { sandboxEnabled } from "../sandbox.js";
 
 export { ToolRegistry } from "./registry.js";
 export type { Approval, Tool, ToolContext } from "./registry.js";
@@ -38,6 +39,18 @@ export const GUIDED_NO_SHELL =
 export const GUIDED_NO_SHELL_HINT =
   'do not write commands or scripts. Use the structured tools instead: system (action ' +
   '"disk" for free space), files, services, processes, network, registry, scheduled_tasks';
+
+/**
+ * Why the scripting tools are withheld while the sandbox is on. A script reaches
+ * anywhere the user can - it cannot be confined to a folder by looking at its
+ * text - so the sandbox closes the two scripting tools rather than pretending to
+ * police them. Everything a small model needs has a structured tool.
+ */
+export const SANDBOX_NO_SCRIPTS =
+  "the sandbox is on, so scripts are not run";
+export const SANDBOX_HINT =
+  "use the structured tools instead (files, system, services, processes, network, " +
+  "registry, scheduled_tasks), or switch the sandbox off in Settings";
 
 /** Build the Windows tool set, honouring the enabled/custom configuration. */
 export function createWindowsTools(approval: Approval, options: ToolOptions = {}): ToolRegistry {
@@ -66,6 +79,24 @@ export function createWindowsTools(approval: Approval, options: ToolOptions = {}
   // Tools offered by MCP servers (see src/mcp.ts). They are refreshed separately
   // - `mcp.ensureFresh()` - so building the tool set stays synchronous.
   for (const tool of mcp.tools(approval, options.dryRun ?? false)) registry.register(tool);
+
+  // The sandbox keeps file paths inside the working directory; the two scripting
+  // tools are the way around that, so they are taken off the menu while it is on.
+  // (After the custom tools are registered, or there would be nothing to withhold.)
+  // Read live from the settings - the same switch jailPath() obeys - so the fence
+  // and the catalogue can never disagree about whether the sandbox is on.
+  if (sandboxEnabled()) {
+    // `withhold()` keeps the first reason, so in guided mode the shell keeps the
+    // guided explanation - that is the accurate one there, and its way out ("use
+    // the structured tools") is the right advice. The sandbox reason then only
+    // appears for tools that were not already withheld for another reason.
+    const already = new Set(registry.withheld().map((entry) => entry.name));
+    registry.withhold(
+      ["powershell", "custom"].filter((name) => !already.has(name)),
+      SANDBOX_NO_SCRIPTS,
+      SANDBOX_HINT,
+    );
+  }
 
   return registry.filter(options.enabledTools ?? null);
 }

@@ -15,6 +15,7 @@ const SUITES = [
   ["mcp", "scripts/test-mcp.mjs", true],
   ["models", "scripts/test-models.mjs", true],
   ["mode", "scripts/test-mode.mjs", true],
+  ["sandbox", "scripts/test-sandbox.mjs", true],
   ["i18n", "scripts/test-i18n.mjs", true],
   ["docs", "scripts/test-docs.mjs", true],
   ["api", "scripts/test-api.mjs", true],

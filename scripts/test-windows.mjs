@@ -9,6 +9,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { buildTaskScript } from "../src/tools/automation.js";
+import { updateSettings } from "../src/settings.js";
 import { createWindowsTools } from "../src/tools/index.js";
 import { detectElevation, isElevated, powerShellInfo, resolvePowerShell, runPowerShell } from "../src/util/ps.js";
 
@@ -31,6 +32,12 @@ if (process.platform !== "win32") {
   console.log("these checks only run on Windows - skipped");
   process.exit(0);
 }
+
+// The sandbox (on by default) would refuse the %TEMP% paths this suite uses and
+// would withhold the raw shell it calls on purpose. The registry reads that switch
+// when it is built, so it has to be off before the first createWindowsTools call.
+// scripts/test-sandbox.mjs is where the fence itself is checked.
+updateSettings({ sandbox: false });
 
 const tools = createWindowsTools(async () => true, { dryRun: false });
 const call = (name, args) => tools.execute(name, JSON.stringify(args));

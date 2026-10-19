@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { jailPath } from "../sandbox.js";
 import { arg, argEnum, argNum, argOpt, type Tool } from "./registry.js";
 
 /**
@@ -346,7 +347,7 @@ export function createWebTool(options: WebToolOptions = {}): Tool {
 
         case "download": {
           const url = arg(args, "url");
-          const target = path.resolve(process.cwd(), arg(args, "path"));
+          const target = jailPath(arg(args, "path"));
           if (!(await ctx.approve(`download ${url} to ${target}`))) return "Cancelled by user.";
           if (ctx.dryRun) return `DRY RUN: would download ${url} to ${target}`;
 

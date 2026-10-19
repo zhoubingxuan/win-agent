@@ -14,6 +14,7 @@ emit, and the terminal lines are exactly what the agent accepts (verified with
 | [prompts.md](prompts.md) | ready-to-send tasks (English + 中文), from one tool call to a multi-step job |
 | [modes.md](modes.md) | the two agent modes (`guided` / `normal`): what changes, and how to pick one |
 | [verbosity.md](verbosity.md) | the output-detail slider (`answer` / `thinking` / `full`): one turn drawn at all three levels |
+| [sandbox.md](sandbox.md) | the folder fence (`sandbox`, on by default): a refused path, what is confined, how to switch it off |
 | [windows.md](windows.md) | Windows compatibility: PowerShell 5.1/7, elevation, encodings, timeouts |
 | [custom-commands.md](custom-commands.md) | turn your own PowerShell one-liners into tools the model can call |
 | [mcp.md](mcp.md) | add MCP servers (stdio + HTTP) and use their tools from the chat |

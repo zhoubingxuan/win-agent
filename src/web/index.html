@@ -48,6 +48,7 @@
           <h2 data-i18n="sidebar.behaviour">Behaviour</h2>
           <label class="switch"><input type="checkbox" id="dryRun" /><span class="slider" aria-hidden="true"></span><span data-i18n="common.dryRun">Dry run</span></label>
           <label class="switch"><input type="checkbox" id="autoApprove" /><span class="slider" aria-hidden="true"></span><span data-i18n="common.autoApprove">Auto-approve</span></label>
+          <label class="switch"><input type="checkbox" id="sandbox" /><span class="slider" aria-hidden="true"></span><span data-i18n="common.sandbox">Sandbox</span></label>
           <button id="openSettings" class="ghost" data-i18n="sidebar.openSettings">Open settings</button>
         </section>
 
@@ -227,6 +228,13 @@
               <label class="switch"><input type="checkbox" id="s-autoOpenBrowser" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.openOnStart">Open browser on start</span></label>
               <label class="switch"><input type="checkbox" id="s-stream" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.stream">Stream replies</span></label>
             </div>
+
+            <label class="switch"><input type="checkbox" id="s-sandbox" /><span class="slider" aria-hidden="true"></span><span data-i18n="common.sandbox">Sandbox</span></label>
+            <p class="muted" data-i18n="settings.sandboxHint">
+              Sandbox (on by default): file paths may only point inside the working directory, and
+              the PowerShell and custom-command tools are withheld. Turn it off to work outside the
+              folder.
+            </p>
 
             <h4 data-i18n="settings.mode">Agent mode — how closely the model is supervised</h4>
             <p class="muted" data-i18n="settings.modeHint">

@@ -176,6 +176,12 @@ export interface Settings {
   // Behaviour
   dryRun: boolean;
   autoApprove: boolean;
+  /**
+   * Confine every file path the tools are handed to the working directory (on by
+   * default). While it is on, the raw shell and custom commands are withheld too.
+   * See src/sandbox.ts.
+   */
+  sandbox: boolean;
   /** normal = plain prompt, guided = step-by-step supervision for small models. */
   agentMode: AgentMode;
   /** How much of the process the chat view shows (see Verbosity). */
@@ -271,6 +277,9 @@ export const DEFAULTS: Settings = {
   autoOpenBrowser: true,
   dryRun: false,
   autoApprove: false,
+  // Safety first: paths stay inside the working directory unless the user turns
+  // the sandbox off. A sandbox that is off by default does nothing for anybody.
+  sandbox: true,
   // The project exists to drive Windows with *small* local models, so the
   // supervised mode is the default. One switch flips it to the plain prompt.
   agentMode: "guided",
@@ -314,6 +323,7 @@ const NUMBER_KEYS: Array<keyof Settings> = [
 const BOOLEAN_KEYS: Array<keyof Settings> = [
   "dryRun",
   "autoApprove",
+  "sandbox",
   "autoOpenBrowser",
   "remember",
   "stream",
@@ -525,6 +535,7 @@ function fromEnv(): Record<string, unknown> {
   if (env.AGENT_POWERSHELL) patch.powershell = env.AGENT_POWERSHELL;
   if (env.AGENT_PS_ENGLISH_ERRORS) patch.psEnglishErrors = env.AGENT_PS_ENGLISH_ERRORS;
   if (env.AGENT_MODE) patch.agentMode = env.AGENT_MODE;
+  if (env.AGENT_SANDBOX) patch.sandbox = env.AGENT_SANDBOX;
   if (env.AGENT_VERBOSITY) patch.verbosity = env.AGENT_VERBOSITY;
   if (env.AGENT_AUDIT_LOG) patch.auditLog = env.AGENT_AUDIT_LOG;
   if (env.AGENT_WEB_PORT) patch.webPort = env.AGENT_WEB_PORT;
