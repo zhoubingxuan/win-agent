@@ -47,6 +47,7 @@ jobs:
       # mcp        - MCP client (stdio + Streamable HTTP) against a mock server
       # models     - LM Studio / Ollama discovery + merging against mock servers
       # mode       - agent modes, JSON repair, text encodings, CLIXML
+      # sandbox    - the folder fence and the command fence (paths, junctions, scripts)
       # i18n       - both dictionaries, the HTML attributes and the help text
       # api        - the real server on a temp data folder + a mock model
       # audit      - the audit log and undo, against a temp folder (live registry on Windows)

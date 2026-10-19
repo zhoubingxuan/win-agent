@@ -188,6 +188,12 @@ export interface Settings {
   verbosity: Verbosity;
   /** Write every change to data/audit.jsonl and keep a stack of undoable ones. */
   auditLog: boolean;
+  /**
+   * How many days the copies that make an undo possible are kept (at least 1,
+   * 7 by default). Past the window the entry stops being undoable, it is not
+   * half-restored. See src/audit.ts.
+   */
+  undoRetentionDays: number;
   /** Persist the conversation to disk so it survives restarts (记忆化). */
   remember: boolean;
   /** Stream replies token by token (lower perceived latency on local models). */
@@ -287,6 +293,8 @@ export const DEFAULTS: Settings = {
   // is the default, and two steps up turn the machine room back on.
   verbosity: "answer",
   auditLog: true,
+  // A week of copies, so "undo" still works tomorrow - and the day after.
+  undoRetentionDays: 7,
   remember: true,
   stream: true,
   contextLimit: 0,
@@ -319,6 +327,7 @@ const NUMBER_KEYS: Array<keyof Settings> = [
   "contextLimit",
   "requestTimeoutMs",
   "maxRetries",
+  "undoRetentionDays",
 ];
 const BOOLEAN_KEYS: Array<keyof Settings> = [
   "dryRun",
@@ -339,6 +348,7 @@ const NUMERIC_RANGE: Record<string, [number, number]> = {
   contextLimit: [0, 2_000_000],
   requestTimeoutMs: [5_000, 3_600_000],
   maxRetries: [0, 10],
+  undoRetentionDays: [1, 365],
 };
 
 const CUSTOM_NAME = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
@@ -538,6 +548,7 @@ function fromEnv(): Record<string, unknown> {
   if (env.AGENT_SANDBOX) patch.sandbox = env.AGENT_SANDBOX;
   if (env.AGENT_VERBOSITY) patch.verbosity = env.AGENT_VERBOSITY;
   if (env.AGENT_AUDIT_LOG) patch.auditLog = env.AGENT_AUDIT_LOG;
+  if (env.AGENT_UNDO_RETENTION_DAYS) patch.undoRetentionDays = env.AGENT_UNDO_RETENTION_DAYS;
   if (env.AGENT_WEB_PORT) patch.webPort = env.AGENT_WEB_PORT;
   if (env.AGENT_STREAM) patch.stream = env.AGENT_STREAM;
   if (env.AGENT_CONTEXT_LIMIT) patch.contextLimit = env.AGENT_CONTEXT_LIMIT;

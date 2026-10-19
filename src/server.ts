@@ -1047,6 +1047,7 @@ const server = http.createServer(async (req, res) => {
           enabled: auditLog().isEnabled(),
           file: auditLog().file(),
           undoDir: auditLog().backupDir(),
+          retentionDays: auditLog().retentionDays(),
           problem: auditLog().error(),
           entries: auditLog().list(limit),
           pending: auditLog().pending(),
@@ -1058,12 +1059,19 @@ const server = http.createServer(async (req, res) => {
 
       case "POST /api/undo": {
         const body = await readJsonBody(req);
+        // Two ways in: the newest change ({ count }), or one picked from the list
+        // ({ seq }) - which is what the rollback button next to a row sends.
+        const hasSeq = body.seq !== undefined;
+        const seq = Number(body.seq);
         const wanted = Number(body.count ?? 1);
-        if (!Number.isInteger(wanted) || wanted < 1 || wanted > 50) {
+        if (hasSeq && (!Number.isInteger(seq) || seq < 1)) {
+          return json(res, 400, { error: "seq must be a positive integer" });
+        }
+        if (!hasSeq && (!Number.isInteger(wanted) || wanted < 1 || wanted > 50)) {
           return json(res, 400, { error: "count must be an integer between 1 and 50" });
         }
         if (running) return json(res, 409, { error: BUSY });
-        const result = await auditLog().undo(wanted);
+        const result = hasSeq ? await auditLog().undoEntry(seq) : await auditLog().undo(wanted);
         broadcast({ type: "audit", undone: result.undone.length, ok: result.ok });
         return json(res, 200, {
           ...result,
@@ -1168,6 +1176,10 @@ server.listen(boundPort, "127.0.0.1", () => {
     })()}`,
   );
   console.log(`  settings   : ${settingsFile()}`);
+  // Copies older than the retention window go now, not at the next write: the log
+  // is what makes an old change undoable, so the window has to be honoured even on
+  // a server that is only read from.
+  void auditLog().sweep();
   if (getSettings().mcpEnabled) console.log("  mcp        : connecting to the configured servers…");
   for (const notice of bootNotices) console.log(`  ${notice}`);
 

@@ -143,18 +143,20 @@ const I18N = {
     "settings.noCustom": "(no custom commands yet)",
     "settings.audit": "Change log and undo",
     "settings.auditHint":
-      "Every change the tools make is appended to the audit log, and each one that can be restored faithfully stays on an undo stack until the server restarts. Files are copied aside before they are touched, so /undo and the button below put them back byte for byte. A change that could not be saved (a folder bigger than 64 MB) is still recorded - just without an undo.",
+      "Every change the tools make is appended to the audit log, and each one that can be restored faithfully can be rolled back from this list - today, tomorrow, or next week. Files are copied aside before they are touched; the copies are kept for the number of days below, so a restart loses nothing. A change that could not be saved (a folder bigger than 64 MB) is still recorded - just without a rollback.",
     "settings.auditOn": "Record changes and allow undo",
+    "settings.auditRetention": "Keep undo copies for (days)",
     "settings.auditFile": "log file",
     "settings.auditUndoable": "can be undone",
     "settings.auditUndo": "Undo the last change",
+    "settings.auditRollback": "Roll back",
     "settings.auditEmpty": "(nothing has been changed yet)",
     "settings.auditOff": "switched off - nothing is being recorded",
     "settings.auditDone": "undid {0} change(s)",
     "settings.auditNothing": "nothing to undo",
     "settings.auditLine": "{0}  {1} {2}: {3}",
     "settings.sandboxHint":
-      "Sandbox (on by default): every file path has to point inside the working directory, and the PowerShell and custom-command tools are withheld. Turn it off to work outside the folder.",
+      "Sandbox (on by default): every file path has to point inside the working directory, and a PowerShell script is read before it runs - a path that leaves the folder, a $env: that resolves outside it, or a disk-destroying command is refused instead of approved. Turn it off to work outside the folder.",
     "settings.toolsWithheld": "not offered right now: {0}",
     "settings.savedFile": "saved to {0}",
     "settings.saved": "saved: {0}",
@@ -380,18 +382,20 @@ const I18N = {
     "settings.noCustom": "（还没有自定义命令）",
     "settings.audit": "改动记录与撤销",
     "settings.auditHint":
-      "工具做的每一次改动都会追加到改动记录（audit）里；能够忠实还原的改动会留在撤销栈上，直到服务重启。文件在修改前会先备份一份，所以 /undo 和下面的按钮可以逐字节还原。无法备份的改动（例如超过 64 MB 的文件夹）仍然会记录，只是不能撤销。",
+      "工具做的每一次改动都会追加到改动记录（audit）里；能够忠实还原的改动，可以在这个列表里逐条回档——今天、明天、下周都行。文件在修改前会先备份一份，备份按下方的天数保留，服务重启也不会丢。无法备份的改动（例如超过 64 MB 的文件夹）仍然会记录，只是不能回档。",
     "settings.auditOn": "记录改动并允许撤销",
+    "settings.auditRetention": "撤销备份保留（天）",
     "settings.auditFile": "记录文件",
     "settings.auditUndoable": "可撤销",
     "settings.auditUndo": "撤销最近一次改动",
+    "settings.auditRollback": "回档",
     "settings.auditEmpty": "（还没有任何改动）",
     "settings.auditOff": "已关闭 —— 不会记录任何改动",
     "settings.auditDone": "已撤销 {0} 次改动",
     "settings.auditNothing": "没有可撤销的改动",
     "settings.auditLine": "{0}  {1} {2}：{3}",
     "settings.sandboxHint":
-      "沙箱（默认开启）：文件路径必须落在工作目录内部，PowerShell 与自定义命令工具会被收起。需要在目录之外操作时把它关掉。",
+      "沙箱（默认开启）：文件路径必须落在工作目录内部；PowerShell 脚本在执行前会先被读一遍——路径离开目录、$env: 解析到外面、或涉及毁盘的命令，都会被拒绝而不是送进审批。需要在目录之外操作时把它关掉。",
     "settings.toolsWithheld": "当前不提供：{0}",
     "settings.savedFile": "已保存到 {0}",
     "settings.saved": "已保存：{0}",
@@ -1079,6 +1083,9 @@ function renderAudit(report) {
   const undo = el("a-undo");
   undo.disabled = report.enabled === false || (report.pending?.length ?? 0) === 0;
   list.innerHTML = "";
+  // What can still be rolled back, by number: one button per such row, so a
+  // specific change can be picked instead of "the newest one".
+  const rollbackable = new Set((report.pending ?? []).map((entry) => entry.seq));
   const entries = report.entries ?? [];
   if (entries.length === 0) {
     const p = document.createElement("div");
@@ -1101,6 +1108,15 @@ function renderAudit(report) {
     flag.className = "muted";
     setText(flag, entry.undoable && entry.action !== "undo" ? t("settings.auditUndoable") : "");
     row.append(line, flag);
+    if (rollbackable.has(entry.seq)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "ghost";
+      button.textContent = t("settings.auditRollback");
+      button.title = `${entry.summary ?? ""}`;
+      button.addEventListener("click", () => requestUndo({ seq: entry.seq }, button));
+      row.appendChild(button);
+    }
     list.appendChild(row);
   }
 }
@@ -1772,6 +1788,7 @@ function fillSettingsForm(s) {
   el("s-guided").checked = (s.agentMode ?? "guided") === "guided";
   el("s-psEnglishErrors").checked = s.psEnglishErrors !== false;
   el("s-auditLog").checked = s.auditLog !== false;
+  el("s-undoRetentionDays").value = s.undoRetentionDays ?? 7;
   setVerbosityControls(s.verbosity);
   renderModeState();
   customTools = (s.customTools ?? []).map((c) => ({ ...c }));
@@ -1907,6 +1924,7 @@ async function saveSettings() {
     verbosity: LEVELS[Number(el("s-verbosity").value)] ?? "answer",
     psEnglishErrors: el("s-psEnglishErrors").checked,
     auditLog: el("s-auditLog").checked,
+    undoRetentionDays: Number(el("s-undoRetentionDays").value) || 7,
     enabledTools: allChecked ? null : enabled,
     customTools,
   };
@@ -2311,11 +2329,11 @@ el("s-auditLog").addEventListener("change", async () => {
   await refreshAudit();
 });
 
-el("a-undo").addEventListener("click", async () => {
-  const button = el("a-undo");
-  button.disabled = true;
+/** Ask for a rollback and say what happened in the panel. */
+async function requestUndo(body, button) {
+  if (button) button.disabled = true;
   setText(el("a-msg"), "…");
-  const result = await api("/api/undo", "POST", { count: 1 });
+  const result = await api("/api/undo", "POST", body);
   if (result.error) {
     setText(el("a-msg"), `${t("error.prefix")}${result.error}`);
   } else {
@@ -2325,7 +2343,9 @@ el("a-undo").addEventListener("click", async () => {
     setText(el("a-msg"), result.failures?.length ? `${text} — ${result.failures.join("; ")}` : text);
   }
   await refreshAudit();
-});
+}
+
+el("a-undo").addEventListener("click", () => requestUndo({ count: 1 }, el("a-undo")));
 
 el("dryRun").addEventListener("change", () =>
   api("/api/settings", "POST", { dryRun: el("dryRun").checked }),
@@ -2333,8 +2353,8 @@ el("dryRun").addEventListener("change", () =>
 el("autoApprove").addEventListener("change", () =>
   api("/api/settings", "POST", { autoApprove: el("autoApprove").checked }),
 );
-// The sandbox decides which tools exist (the scripting ones are withheld while it
-// is on), so the tool chips have to be redrawn, not just the switch flipped.
+// The sandbox changes how the shell is treated (an unfenced script vs. one that is
+// read first), so the tool chips have to be redrawn, not just the switch flipped.
 el("sandbox").addEventListener("change", async () => {
   const result = await api("/api/settings", "POST", { sandbox: el("sandbox").checked });
   if (!result.error) await refreshState();

@@ -483,6 +483,22 @@ try {
     const bad = await api("/api/undo", "POST", { count: 0 });
     check("an impossible count is refused", bad.status === 400, JSON.stringify(bad.data));
 
+    // One specific entry, as the rollback button next to a row sends it.
+    const badSeq = await api("/api/undo", "POST", { seq: 0 });
+    check("an impossible seq is refused", badSeq.status === 400, JSON.stringify(badSeq.data));
+    const gone = await api("/api/undo", "POST", { seq: 99 });
+    check(
+      "an unknown seq says so instead of crashing",
+      gone.status === 200 && gone.data.ok === false && /no longer be undone/.test(gone.data.message),
+      JSON.stringify(gone.data),
+    );
+
+    check("the retention window is reported", audit.data.retentionDays === 7, String(audit.data.retentionDays));
+    await api("/api/settings", "POST", { undoRetentionDays: 14 });
+    const longer = await api("/api/audit");
+    check("a longer retention reaches the log", longer.data.retentionDays === 14, String(longer.data.retentionDays));
+    await api("/api/settings", "POST", { undoRetentionDays: 7 });
+
     const auditCmd = await api("/api/terminal", "POST", { input: "/audit" });
     check("/audit prints the log file", auditCmd.data.output.includes(audit.data.file), String(auditCmd.data.output).slice(0, 300));
     check("/audit says nothing has changed yet", /nothing has been changed/.test(auditCmd.data.output), String(auditCmd.data.output).slice(0, 300));
@@ -500,13 +516,14 @@ try {
     check("the switch reaches the log", off.data.enabled === false);
     const offUndo = await api("/api/undo", "POST", { count: 1 });
     check("undo refuses while logging is off", /switched off/.test(offUndo.data.message), JSON.stringify(offUndo.data));
+    const offSeq = await api("/api/undo", "POST", { seq: 1 });
+    check("rolling back one entry is refused too", /switched off/.test(offSeq.data.message), JSON.stringify(offSeq.data));
     const offCmd = await api("/api/terminal", "POST", { input: "/audit" });
     check("the terminal says logging is off", /switched off/.test(offCmd.data.output), String(offCmd.data.output).slice(0, 200));
     await api("/api/settings", "POST", { auditLog: true });
 
-    // Normal mode is the way back to the raw shell. The sandbox withholds it too,
-    // so it is switched off for this check; test-sandbox.mjs owns that behaviour.
-    await api("/api/settings", "POST", { sandbox: false });
+    // Normal mode is the way back to the raw shell. With the sandbox on, the shell
+    // is offered there too - the script itself is read before it runs (1.6.0).
     await api("/api/settings", "POST", { agentMode: "normal" });
     const normal = await api("/api/state");
     check(
@@ -516,7 +533,7 @@ try {
     );
     const toolsCmd = await api("/api/terminal", "POST", { input: "/tools" });
     check("/tools lists it again", /\[x\] powershell/.test(toolsCmd.data.output), String(toolsCmd.data.output).slice(0, 400));
-    await api("/api/settings", "POST", { agentMode: "guided", sandbox: true });
+    await api("/api/settings", "POST", { agentMode: "guided" });
     const backToGuided = await api("/api/terminal", "POST", { input: "/tools" });
     check(
       "/tools explains what is not offered in guided mode",

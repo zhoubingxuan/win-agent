@@ -255,6 +255,14 @@ body {
   white-space: nowrap;
 }
 
+/* The rollback button that belongs to one row: small enough to sit in the line. */
+.audit-item button {
+  padding: 1px 8px;
+  font-size: 11px;
+  font-family: var(--mono);
+  line-height: 1.5;
+}
+
 /* Quick endpoint / model switchers in the sidebar -------------------------- */
 
 .stack {

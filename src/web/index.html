@@ -231,9 +231,10 @@
 
             <label class="switch"><input type="checkbox" id="s-sandbox" /><span class="slider" aria-hidden="true"></span><span data-i18n="common.sandbox">Sandbox</span></label>
             <p class="muted" data-i18n="settings.sandboxHint">
-              Sandbox (on by default): file paths may only point inside the working directory, and
-              the PowerShell and custom-command tools are withheld. Turn it off to work outside the
-              folder.
+              Sandbox (on by default): every file path has to point inside the working directory,
+              and a PowerShell script is read before it runs - a path that leaves the folder, a
+              $env: that resolves outside it, or a disk-destroying command is refused instead of
+              approved. Turn it off to work outside the folder.
             </p>
 
             <h4 data-i18n="settings.mode">Agent mode — how closely the model is supervised</h4>
@@ -387,13 +388,18 @@
             <h4 data-i18n="settings.audit">Change log and undo</h4>
             <p class="muted" data-i18n="settings.auditHint">
               Every change the tools make is appended to the audit log, and each one that can be
-              restored faithfully stays on an undo stack until the server restarts. Files are copied
-              aside before they are touched, so /undo and the button below put them back.
+              restored faithfully can be rolled back from this list - today, tomorrow, or next
+              week. Files are copied aside before they are touched; the copies are kept for the
+              number of days below, so a restart loses nothing.
             </p>
             <label class="switch">
               <input type="checkbox" id="s-auditLog" />
               <span class="slider" aria-hidden="true"></span>
               <span data-i18n="settings.auditOn">Record changes and allow undo</span>
+            </label>
+            <label class="block">
+              <span data-i18n="settings.auditRetention">Keep undo copies for (days)</span>
+              <input id="s-undoRetentionDays" type="number" min="1" max="365" step="1" />
             </label>
             <div class="kv wide"><span data-i18n="settings.auditFile">log file</span><code id="a-file">…</code></div>
             <div class="kv wide"><span data-i18n="settings.auditUndoable">can be undone</span><code id="a-pending">…</code></div>

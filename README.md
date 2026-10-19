@@ -42,9 +42,9 @@ What that means in practice:
   way), the answers plus the model's reasoning, or the whole machine room with every
   tool call and its token count. From the toolbar, Settings, `/verbosity` or
   `AGENT_VERBOSITY` — see [Output detail](#output-detail).
-- **A sandbox** — every file path stays inside the working directory, and the raw
-  shell and custom commands are withheld while it is on (it is on by default). One
-  switch in the chat sidebar, in Settings, or `/sandbox off` — see [Sandbox](#sandbox).
+- **A sandbox** — every file path stays inside the working directory, and a PowerShell
+  script is read before it runs (it is on by default). One switch in the chat sidebar,
+  in Settings, or `/sandbox off` — see [Sandbox](#sandbox).
 - **Windows-hardened** — PowerShell 5.1 *and* 7, errors always in English, editors
   that wrote UTF-16 files still read correctly, hung commands are killed with their
   whole process tree, and "access denied" becomes a sentence that says what to do.
@@ -168,8 +168,9 @@ A form for **every** setting, plus:
   [Agent modes](#agent-modes--guided-vs-normal)).
 - **Output detail** — how much of the process the chat log shows (see
   [Output detail](#output-detail)).
-- **Sandbox** — the folder fence, on by default: file paths stay inside the working
-  directory and the two scripting tools are withheld (see [Sandbox](#sandbox)).
+- **Sandbox** — the folder fence and the command fence, on by default: file paths stay
+  inside the working directory and a script is read before it runs (see
+  [Sandbox](#sandbox)).
 - **Endpoints** — switch the whole agent between a local model server and a cloud
   API with one click (a local ↔ API slider when adding one), and pick the model
   from the list the endpoint actually reports.
@@ -258,10 +259,13 @@ confined to one folder by default.
   message that says what to do instead;
 - junctions and symlinks are resolved first, so a link inside the folder that
   points outside is not a way out;
-- the **raw shell** (`powershell`) and **custom commands** (`custom`) are withheld:
-  a script reaches anywhere the user can, and checking a path in front of it does
-  not change that. Calling one anyway answers with the reason and points at the
-  structured tools — the same treatment `guided` mode gives the shell.
+- a **PowerShell script is read before it runs** (the *command fence*, new in 1.6.0).
+  A literal path out of the folder, a `..`, a `$env:` that resolves outside it, a
+  path built from a variable that is not set, a download piped into
+  `Invoke-Expression`, or one of the commands that destroy a volume, a partition
+  table or the boot configuration (`Format-Volume`, `Clear-Disk`,
+  `Initialize-Disk`, `Remove-Partition`, `diskpart`, `bcdedit`) is **refused
+  instead of approved**. Everything else goes to the normal approval prompt.
 
 A refused path reads like this in the chat:
 
@@ -271,6 +275,24 @@ so nothing was touched. Work inside D:\projects\site, change the working directo
 or switch the sandbox off in Settings.
 ```
 
+and a refused script, where the fence has to read the text to see the path:
+
+```text
+Refused: "C:\Windows\System32\drivers\etc\hosts" is outside the sandbox (D:\projects\site),
+so the script was not run. The sandbox is on (D:\projects\site): work inside that folder,
+change the working directory, or switch the sandbox off in Settings.
+```
+
+> **A guard, not a jail — and worth saying plainly.** The command fence reads the
+> script as text, so it catches the escapes that are *written down*: a literal path, a
+> `..`, a `$env:` value, a quoted path with spaces, a known destructive command, a
+> download-and-run. A path the script only learns while it runs — `Join-Path $root $sub`
+> where `$sub` came out of a file — cannot be checked by anything that reads text. What
+> the fence buys is that the obvious, and by far the most common, escape is a clear
+> refusal *before* anything runs, not a post-mortem in the audit log. An OS-level
+> sandbox (restricted token, job object, AppContainer) is a different piece of work and
+> is not what this is.
+
 **Switch it off** when the job really is outside the folder (installing into
 `C:\Program Files`, editing something in `%APPDATA%`): the switch is in the chat
 sidebar *and* in Settings and applies at once, `/sandbox off` does it from the
@@ -279,11 +301,12 @@ start.
 
 What the sandbox deliberately does **not** cover, because none of it is a file path:
 services, processes, the registry, scheduled tasks, environment variables — each has
-its own tool and its own approval prompt. **MCP servers** are separate programs you
-configured yourself: they run with your rights and are not confined.
+its own tool and its own approval prompt. Your own `custom` commands are code you wrote
+and approved, and **MCP servers** are separate programs you configured yourself: both
+run with your rights and are not confined.
 
-`examples/sandbox.md` shows a refused path, the same task with the sandbox off, and
-what the model is told instead.
+`examples/sandbox.md` shows a refused path, a refused script, the same task with the
+sandbox off, and what the model is told instead.
 
 ---
 
@@ -701,22 +724,27 @@ provider. Two caveats, because the numbers are only as good as the endpoint:
 
 Every change a tool makes is appended to `data/audit.jsonl` — one JSON object per
 line, append-only, so `Get-Content data\audit.jsonl -Tail 20` works and nothing is
-lost if the server is killed. Changes that can be *faithfully* reversed also go onto
-an undo stack, and `/undo` (or **Undo the last change** in Settings → *Change log and
-undo*) runs their steps in reverse order.
+lost if the server is killed. Changes that can be *faithfully* reversed carry the
+steps that put the machine back, and **those steps are the undo stack**: `/undo` (or
+**Undo the last change**, or the **Roll back** button next to any row in Settings →
+*Change log and undo*) runs them in reverse order.
+
+The log is also the stack, so a change made last Tuesday can still be rolled back
+today, and a restart loses nothing:
 
 ```
-3. 2026-10-18 12:04:11  files edit: replaced 1 occurrence(s) in D:\app\config.json  (undoable)
+3. 2026-10-18 12:04:11  files edit: replaced 1 occurrence(s) in D:\app\config.json  (undoable)  [Roll back]
 2. 2026-10-18 12:03:58  registry set: set HKCU:\Software\MyApp\theme (DWord)
-1. 2026-10-18 12:03:41  files mkdir: created folder D:\app\logs  (undoable)
+1. 2026-10-18 12:03:41  files mkdir: created folder D:\app\logs  (undoable)  [Roll back]
 ```
 
 | Where | What it does |
 | --- | --- |
-| Settings → **Change log and undo** | the log file, how many changes can be undone, **Undo the last change** |
+| Settings → **Change log and undo** | the log file, how many changes can be undone, **Undo the last change**, and a **Roll back** button on every row that can still be reversed |
 | Terminal | `/audit [n]`, `/undo`, `/undo <n>`, `/undo list` |
-| API | `GET /api/audit`, `GET /api/undo`, `POST /api/undo` |
-| Setting | `auditLog` (default `true`) — switch it off and nothing is recorded and nothing can be undone |
+| API | `GET /api/audit`, `GET /api/undo`, `POST /api/undo` with `{ count }` or `{ seq }` |
+| Settings | `auditLog` (default `true`) — switch it off and nothing new is recorded and nothing can be undone |
+| Setting | `undoRetentionDays` (default `7`, 1–365) — how long the copies in `data/undo/` are kept |
 
 What `/undo` puts back, and how:
 
@@ -754,12 +782,21 @@ while a turn is running (the API answers `409`), because the agent may be about 
 write the very file being restored. There is no undo of an undo (that is just a redo,
 and the log has the whole story).
 
-Two limits worth knowing:
+What is kept, and for how long:
 
-- the undo stack lives **in memory**, so a restart clears it — `audit.jsonl` keeps the
-  record of what happened, but `/undo` then answers "nothing to undo";
-- `data/undo/` is swept on every start, because nothing can point at those copies any
-  more.
+- the copies in `data/undo/` are kept for `undoRetentionDays` (7 by default, at least
+  1). They are swept by age — at start and before a new copy is taken — so nothing
+  younger than the window is ever deleted;
+- when a copy does expire (or you delete it by hand), its entry simply stops being
+  undoable. A `restore` with no copy would delete the current file and put nothing
+  back, so the panel drops the button and `/undo` skips that entry instead;
+- an undo is itself an entry in the log (`tool: "undo"`, `ref: <the change it
+  reversed>`), so the same change cannot be reversed twice and the history stays
+  readable.
+
+A practical limit worth knowing: an undo restores what the *tool* changed. If you (or
+another program) edited the file after the agent did, rolling back replaces your edit
+with the copy — that is what "put it back the way it was" means.
 
 ---
 
@@ -801,7 +838,7 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/custom remove <name>` | deletes a custom command | immediately |
 | `/dry-run <on\|off>` | describe actions instead of doing them | immediately |
 | `/auto-approve <on\|off>` | skip approval prompts | immediately |
-| `/sandbox <on\|off>` | keep file paths inside the working directory, and withhold the scripting tools | immediately |
+| `/sandbox <on\|off>` | keep file paths inside the working directory, and read a script before it runs | immediately |
 | `/stream <on\|off>` | stream the reply token by token | next turn |
 | `/set contextLimit <tokens>` | the context window to budget against (0 = use what the endpoint reports) | next turn |
 | `/set requestTimeoutMs <ms>` | how long one LLM request may take | next call |
@@ -900,6 +937,7 @@ with a message and nothing changes.
 | `agentMode` | `"guided"` \| `"normal"` | `guided` | supervision for small local models (see [Agent modes](#agent-modes--guided-vs-normal)) |
 | `verbosity` | `"answer"` \| `"thinking"` \| `"full"` | `answer` | how much of the process the chat log shows (see [Output detail](#output-detail)) |
 | `auditLog` | boolean | `true` | append every change to `data/audit.jsonl` and keep the undo stack (see [Audit log and undo](#audit-log-and-undo)) |
+| `undoRetentionDays` | number | `7` | how long the copies in `data/undo/` are kept, 1–365 (see [Audit log and undo](#audit-log-and-undo)) |
 | `language` | `"en"` \| `"zh"` | `zh` | interface text **and** the language the agent replies in |
 | `systemPrompt` | string | *(built-in)* | the agent's instructions |
 | `workdir` | string | process cwd | relative paths resolve here; applied via `chdir` |
@@ -909,7 +947,7 @@ with a message and nothing changes.
 | `autoOpenBrowser` | boolean | `true` | open the browser on start |
 | `dryRun` | boolean | `false` | describe actions instead of doing them |
 | `autoApprove` | boolean | `false` | skip approval prompts |
-| `sandbox` | boolean | `true` | keep every file path inside the working directory, and withhold the scripting tools (see [Sandbox](#sandbox)) |
+| `sandbox` | boolean | `true` | keep every file path inside the working directory, and read every PowerShell script before it runs (see [Sandbox](#sandbox)) |
 | `remember` | boolean | `true` | keep the conversation in `data/history.json` |
 | `stream` | boolean | `true` | stream replies token by token |
 | `contextLimit` | number | `0` | tokens to budget against; `0` = use what the endpoint reports (see [Context window](#context-window)) |
@@ -949,6 +987,7 @@ on. Every variable is the upper-case setting name with an `AGENT_` prefix:
 | `AGENT_SANDBOX` | `sandbox` | `true` / `false` |
 | `AGENT_VERBOSITY` | `verbosity` | `answer` / `thinking` / `full` |
 | `AGENT_AUDIT_LOG` | `auditLog` | `true` / `false` |
+| `AGENT_UNDO_RETENTION_DAYS` | `undoRetentionDays` | a number of days, 1–365 |
 | `AGENT_PS_ENGLISH_ERRORS` | `psEnglishErrors` | `true` / `false` |
 | `AGENT_WEB_PORT` | `webPort` | |
 | `AGENT_STREAM` | `stream` | `true` / `false` |
@@ -1016,8 +1055,8 @@ Custom commands run arbitrary PowerShell, so they always require approval
 | `scheduled_tasks` | list, info, create, delete, run |
 | `registry` | get, list, set, delete |
 | `ui` | clipboard_get, clipboard_set, screenshot, open, notify |
-| `powershell` | raw script escape hatch (always confirmed; withheld while the sandbox is on) |
-| `custom` | your own commands (only present when you add some; withheld while the sandbox is on) |
+| `powershell` | raw script escape hatch (always confirmed; with the sandbox on the script is read first and refused if a path leaves the folder) |
+| `custom` | your own commands (only present when you add some; not confined — they are code you wrote and approved) |
 
 Any tool can be hidden from the model with `enabledTools` / the switches on the
 Settings tab.
@@ -1145,9 +1184,9 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `GET` | `/api/state` | running flag, cwd, enabled tools, all tool names, catalog, version, settings, chat history, context budget, endpoint capabilities, memory info, usage totals, data folder, `windows` (PowerShell binary, version, edition, elevation, English-errors flag) |
 | `GET` | `/api/usage` | token totals of the open conversation, all-time totals, per-call list |
 | `GET` | `/api/data` | data folder paths, open conversation, usage, archived conversation list |
-| `GET` | `/api/audit` | `?n=<count>` — the newest `n` audit records plus `pending` (what `/undo` can reverse), the log file and whether logging is on |
+| `GET` | `/api/audit` | `?n=<count>` — the newest `n` audit records plus `pending` (what can still be reversed), the log file, whether logging is on, and `retentionDays` |
 | `GET` | `/api/undo` | `{ pending, enabled }` — what can be reversed right now |
-| `POST` | `/api/undo` | `{ count }` — reverse the newest `count` changes; returns `{ ok, undone, failures, entries, pending }` |
+| `POST` | `/api/undo` | `{ count }` — reverse the newest `count` changes; `{ seq }` — roll back one entry by its number (what the **Roll back** button sends); returns `{ ok, undone, failures, entries, pending }` |
 | `GET` | `/api/conversations` | `{ conversations: [...], current }` |
 | `POST` | `/api/conversations` | `{ action: "new" }` files the open conversation away; `{ action: "load", id }` reopens an archived one |
 | `GET` | `/api/settings` | public settings + settings file path |
@@ -1194,8 +1233,8 @@ src/
   server.ts       local web server: static UI + SSE + settings/terminal/port APIs
   settings.ts     the settings store: defaults, validation, persistence, env merge
   store.ts        the data folder: open conversation, archives, token totals
-  audit.ts        the change log (data/audit.jsonl) + the in-memory undo stack
-  sandbox.ts      the folder fence: the working-directory root, jailPath(), refusals
+  audit.ts        the change log (data/audit.jsonl) — which is also the undo stack — plus the copies kept in data/undo/
+  sandbox.ts      the folder fence and the command fence: the working-directory root, jailPath(), scanScript(), refusals
   version.ts      reads the version from package.json (one source of truth)
   context.ts      token estimation + context budgeting (what to send, what to trim)
   providers.ts    endpoint compatibility memory + context-length discovery
@@ -1227,7 +1266,7 @@ scripts/
   test-models.mjs     local model discovery: LM Studio / Ollama routes, merging
   test-isolation.mjs  two copies never share data or a version number
   test-mode.mjs       agent modes + JSON repair + encodings (model-free, any platform)
-  test-sandbox.mjs    the folder fence: refusals, junctions, the withheld scripting tools
+  test-sandbox.mjs    the folder fence and the command fence (model-free, Windows paths)
   test-i18n.mjs       the en/zh dictionaries, the HTML attributes and the help text
   test-docs.mjs       the docs against the code: routes, settings, commands, links
   test-api.mjs        the real HTTP server + a mock model, on a temp data folder
@@ -1273,6 +1312,7 @@ npm run test:mcp            # MCP client checks against a mock MCP server (stdio
 npm run test:models         # local model sync: LM Studio / Ollama discovery + merging
 npm run test:isolation      # two copies never share data or a version number
 npm run test:mode           # agent modes, JSON repair, encodings (no model needed)
+npm run test:sandbox        # the folder fence and the command fence (no model needed)
 npm run test:i18n           # both dictionaries, the HTML keys and the help text
 npm run test:docs           # the docs against the code: routes, settings, links
 npm run test:api            # the whole HTTP API, against a mock model
@@ -1336,7 +1376,10 @@ Four suites exist specifically to keep this repository honest as it grows:
   tree included), registry values are set and removed, an environment variable is
   created and restored, and after every one of them `/undo` is asked to put the
   machine back — byte for byte, type for type. It also pins the cases that must *not*
-  claim to be undoable, and that guided mode never offers the raw shell.
+  claim to be undoable, and that guided mode never offers the raw shell. A second
+  `AuditLog` over the same folder stands in for a restart and proves the stack comes
+  back — and that a copy aged past the retention window is swept away *and* its entry
+  stops offering a rollback.
 
 Run them locally the same way CI does:
 
@@ -1454,8 +1497,8 @@ recoverable, and the `CHANGELOG.md` entry is all that remains of it.
 - `dryRun` makes the agent report what it *would* do and change nothing.
 - Non-interactive runs deny destructive actions unless `--yes` (CLI) or
   `autoApprove` is set.
-- `sandbox` is on by default: every file path stays inside the working directory,
-  and the two scripting tools are withheld (see [Sandbox](#sandbox)).
+- `sandbox` is on by default: every file path stays inside the working directory, and a
+  PowerShell script is read before it runs (see [Sandbox](#sandbox)).
 - The raw `powershell` tool and all `custom` commands are always confirmed.
 - **MCP tools** are confirmed on every call unless you mark that server
   **auto-approve** — remember an MCP server is a program that runs with *your*

@@ -13,6 +13,61 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-10-19
+
+Two halves of the same promise: the sandbox stops taking tools away and starts
+*reading* them, and the changes that do get through can be rolled back long after
+the server that made them is gone.
+
+### Added
+
+- **The command fence: a PowerShell script is read before it runs** (`scanScript()` in
+  `src/sandbox.ts`). With the sandbox on, `powershell` is offered again instead of being
+  withheld, and the script is scanned before the approval prompt: a literal path out of
+  the working directory (`C:\Windows\…`, `\\server\share\…`, with or without quotes), a
+  `..`, a `~\…`, a `$env:NAME` that resolves outside it, a path built from a variable
+  that is not set, `iwr`/`irm`/`DownloadString` piped into `iex`/`Invoke-Expression`, and
+  the commands that destroy something no audit entry can put back (`Format-Volume`,
+  `Clear-Disk`, `Initialize-Disk`, `Remove-Partition`, `diskpart`, `bcdedit`) all come
+  back as `Refused: … so the script was not run`, before anything executes. Everything
+  else reaches the normal approval prompt, so a legitimate `Get-ChildItem` is no longer
+  impossible. The README says plainly what this is: **a guard, not a jail** — a path the
+  script only learns while it runs cannot be read out of text, and closing that needs an
+  OS-level sandbox.
+- **Every change can be rolled back from the list, one row at a time.** `POST /api/undo`
+  takes `{ seq }` as well as `{ count }`, and Settings → *Change log and undo* puts a
+  **Roll back** button on every row that can still be reversed. `/undo <n>` and **Undo
+  the last change** are unchanged.
+- **The copies that make an undo possible are kept for `undoRetentionDays`** (default
+  `7`, 1–365, `AGENT_UNDO_RETENTION_DAYS`). They are swept by age — at start and before a
+  new copy is taken — instead of being deleted on every start. A setting, a number field
+  in Settings, and reported as `retentionDays` by `GET /api/audit`.
+
+### Changed
+
+- **The audit log *is* the undo stack.** What can be undone is rebuilt from
+  `data/audit.jsonl` on every request instead of living in memory, so a restart no
+  longer empties it and a change from last week is still reversible; `seq` continues
+  across runs, an undo is itself a log line (`tool: "undo"`, `ref: <the change>`), and
+  the same change cannot be reversed twice. When a copy has expired (or was deleted by
+  hand) its entry simply stops being undoable — a `restore` with nothing to restore from
+  would delete the current file, so it is skipped instead of half-run.
+- **The sandbox no longer withholds `powershell` or `custom`.** The shell is read
+  instead (above); `custom` is code you wrote and approved yourself and is documented as
+  outside the fence, like an MCP server. `guided` mode still withholds the shell, for its
+  own reason.
+- **`npm run test:sandbox` is now a command-fence suite** (52 checks): backslash paths,
+  quoted paths with spaces, `..`/`~`/`$env:` escapes, an ambient `$env:` that resolves
+  inside (allowed), the destructive-command and download-and-run blocks, and a script
+  that stays inside the folder actually running. `test:audit` grew to 78 checks: a second
+  `AuditLog` over the same folder stands in for a restart and proves the stack comes back,
+  and a copy aged past the retention window is swept away *and* its entry stops offering a
+  rollback.
+- Docs: the README's [Sandbox](README.md#sandbox) and
+  [Audit log and undo](README.md#audit-log-and-undo) sections, the settings / environment
+  / HTTP API tables, `examples/sandbox.md` (a refused script end to end, and the honest
+  limits), and `examples/api.md` (the `{ seq }` rollback).
+
 ## [1.5.1] — 2026-10-19
 
 The agent is fenced into one folder. A file path that points outside the working

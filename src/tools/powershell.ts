@@ -1,9 +1,12 @@
 import { arg, argBool, type Tool } from "./registry.js";
+import { scanScript } from "../sandbox.js";
 import { explainPowerShellError, runPowerShell } from "../util/ps.js";
 
 /**
  * Escape hatch: run an arbitrary PowerShell script. Only use when no structured
  * tool fits. Always requires approval (unless flagged readOnly in --yes mode).
+ * While the sandbox is on, the script is read first and refused if it names a path
+ * outside the working directory (see scanScript in src/sandbox.ts).
  */
 export const powershellTool: Tool = {
   schema: {
@@ -12,7 +15,8 @@ export const powershellTool: Tool = {
       name: "powershell",
       description:
         "Run a raw PowerShell script. Use this ONLY when no other tool fits the task. " +
-        "Prefer the structured tools (files, system, processes, services, network, etc.).",
+        "Prefer the structured tools (files, system, processes, services, network, etc.). " +
+        "With the sandbox on, every path in the script has to point inside the working directory.",
       parameters: {
         type: "object",
         properties: {
@@ -31,6 +35,11 @@ export const powershellTool: Tool = {
   async run(args, ctx) {
     const script = arg(args, "script");
     const readOnly = argBool(args, "readOnly", false);
+
+    // Before anyone is asked to approve it: a path outside the folder is a dead end,
+    // not a decision, and the answer says which one and why.
+    const verdict = scanScript(script);
+    if (!verdict.ok) return `Refused: ${verdict.reason}`;
 
     if (!readOnly && !(await ctx.approve(`run a custom PowerShell script:\n${script}`))) {
       return "Cancelled by user.";

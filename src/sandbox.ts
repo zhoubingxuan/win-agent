@@ -18,10 +18,15 @@ import { getSettings } from "./settings.js";
  *    the way.
  *
  * What it deliberately does not cover: structured tools that act on machine
- * state rather than files (services, processes, registry, scheduled tasks), the
- * raw shell and custom scripts (both are withheld while the sandbox is on, see
- * src/tools/index.ts), and MCP servers, which are separate programs the user
- * configured themselves.
+ * state rather than files (services, processes, registry, scheduled tasks), your
+ * own `custom` commands (they are code you wrote and approved, so they are left
+ * alone), and MCP servers, which are separate programs the user configured.
+ *
+ * The second half of the file is the *command* fence: with the sandbox on, a
+ * PowerShell script is read before it runs (scanScript), so a literal path out of
+ * the folder, a `..`, a `$env:` that resolves outside it, or a disk-destroying
+ * command is refused instead of approved. It is a guard, not a jail - a path the
+ * script only learns while it runs cannot be read - and the README says so.
  */
 
 /** Raised when a path is outside the sandbox. The registry turns it into `Refused: ...`. */
@@ -94,3 +99,124 @@ export function jailPath(value: string): string {
   if (isInside(root, target) && isInside(realPath(root), realPath(target))) return target;
   throw new SandboxRefusal(refusalMessage(target, root));
 }
+
+/* -------------------------------------------------------------------------- */
+/* The command guard: the same fence, applied to a PowerShell script           */
+/* -------------------------------------------------------------------------- */
+
+/** What the guard decided about a script. */
+export type ScriptVerdict = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Commands the sandbox never runs, whatever the arguments say. They are not file
+ * paths, so the fence below cannot see them, and they are the ones that destroy
+ * something no audit entry can put back (a volume, a partition table, a boot
+ * configuration). Everything else a script can do is a decision for the approval
+ * prompt, not for a pattern match.
+ */
+const BLOCKED_COMMANDS: Array<[RegExp, string]> = [
+  [/\bFormat-Volume\b/i, "it formats a volume"],
+  [/\bClear-Disk\b/i, "it wipes a disk"],
+  [/\bInitialize-Disk\b/i, "it re-initialises a disk"],
+  [/\bRemove-Partition\b/i, "it deletes a partition"],
+  [/\bdiskpart\b/i, "it drives diskpart"],
+  [/\bbcdedit\b/i, "it rewrites the boot configuration"],
+];
+
+/** `C:\...`, `C:/...` - one letter, a colon, a separator, and not a URL scheme. */
+const DRIVE_PATH = /(?<![A-Za-z0-9_])[A-Za-z]:[\\/][^\s"'\r\n|;(){}]*/g;
+/** `\\server\share\...` */
+const UNC_PATH = /(?<!\\)\\\\[^\s"'\r\n|;(){}]+/g;
+/** `..\...` and `../...` */
+const PARENT_PATH = /(?<![A-Za-z0-9_.])\.\.[\\/][^\s"'\r\n|;(){}]*/g;
+/** `~\...` */
+const HOME_PATH = /(?<![A-Za-z0-9_])~[\\/][^\s"'\r\n|;(){}]*/g;
+/** `$env:NAME` plus whatever follows it. */
+const ENV_PATH = /\$env:([A-Za-z_][A-Za-z0-9_]*)((?:[\\/][^\s"'\r\n|;(){}]*)?)/gi;
+/** Quoted strings, so a path with a space in it is read whole. */
+const QUOTED = /"([^"\r\n]*)"|'([^'\r\n]*)'/g;
+
+/** Environment variables are case-insensitive on Windows and not on Linux. */
+function envValue(name: string): string | undefined {
+  if (process.env[name] !== undefined) return process.env[name];
+  const upper = name.toUpperCase();
+  const key = Object.keys(process.env).find((entry) => entry.toUpperCase() === upper);
+  return key ? process.env[key] : undefined;
+}
+
+/** The absolute path a token points at, when it is outside the fence; else null. */
+function outsideOf(token: string, root: string): string | null {
+  const candidate = token.trim().replace(/^["']+|["']+$/g, "").replace(/[,;]+$/, "");
+  if (candidate === "") return null;
+  const resolved = path.resolve(process.cwd(), candidate);
+  if (isInside(root, resolved) && isInside(realPath(root), realPath(resolved))) return null;
+  return resolved;
+}
+
+/** The sentence every refusal ends with, so the way out is always in the answer. */
+function scriptRefusal(what: string, root: string): ScriptVerdict {
+  return {
+    ok: false,
+    reason:
+      `${what}, so the script was not run. The sandbox is on (${root}): work inside ` +
+      `that folder, change the working directory, or switch the sandbox off in Settings.`,
+  };
+}
+
+/**
+ * Read a script and decide whether it may run while the sandbox is on.
+ *
+ * It is a guard, not a jail, and the difference is worth being honest about: the
+ * script is text, so a path written as a literal, as `..`, or as `$env:SOMETHING`
+ * is found and checked, and the four ways out are closed. A path the script only
+ * learns while it runs (`Join-Path` over a variable it built itself) cannot be
+ * checked by reading - that is what an OS-level sandbox is for, and it is not what
+ * this is. What the guard buys is that the obvious, and by far the most common,
+ * escape is a clear refusal before anything runs.
+ */
+export function scanScript(script: string): ScriptVerdict {
+  if (!sandboxEnabled()) return { ok: true };
+  const root = sandboxRoot();
+
+  for (const [pattern, label] of BLOCKED_COMMANDS) {
+    if (pattern.test(script)) return scriptRefusal(label, root);
+  }
+
+  // Downloading code and running it is the one thing no amount of reading can check.
+  const downloads = /\b(iwr|irm|Invoke-WebRequest|Invoke-RestMethod|DownloadString|DownloadFile)\b/i.test(script);
+  const evaluates = /\b(iex|Invoke-Expression)\b/i.test(script);
+  if (downloads && evaluates) {
+    return scriptRefusal("it downloads code and runs it (Invoke-Expression)", root);
+  }
+
+  // `$env:` first: it is resolvable here, and it is how a script reaches %APPDATA%
+  // without ever spelling a drive letter.
+  for (const match of script.matchAll(ENV_PATH)) {
+    const name = match[1];
+    const tail = match[2] ?? "";
+    const value = envValue(name);
+    if (value === undefined) {
+      return scriptRefusal(`it builds a path from $env:${name}, which cannot be checked`, root);
+    }
+    const outside = outsideOf(`${value}${tail}`, root);
+    if (outside) return scriptRefusal(`"${outside}" (from $env:${name}) is outside the sandbox`, root);
+  }
+
+  // A quoted path is read whole, so "C:\Program Files\..." is named correctly.
+  for (const match of script.matchAll(QUOTED)) {
+    const text = match[1] ?? match[2] ?? "";
+    if (!/^(?:[A-Za-z]:[\\/]|\\\\|~[\\/]|\.\.[\\/])/.test(text)) continue;
+    const outside = outsideOf(text, root);
+    if (outside) return scriptRefusal(`"${outside}" is outside the sandbox`, root);
+  }
+
+  for (const pattern of [DRIVE_PATH, UNC_PATH, PARENT_PATH, HOME_PATH]) {
+    for (const match of script.matchAll(pattern)) {
+      const outside = outsideOf(match[0], root);
+      if (outside) return scriptRefusal(`"${outside}" is outside the sandbox`, root);
+    }
+  }
+
+  return { ok: true };
+}
+

@@ -14,7 +14,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { auditLog, configureAudit } from "../src/audit.js";
+import { AuditLog, auditLog, configureAudit } from "../src/audit.js";
 import { updateSettings } from "../src/settings.js";
 import { createWindowsTools, GUIDED_NO_SHELL } from "../src/tools/index.js";
 import { runPowerShell } from "../src/util/ps.js";
@@ -295,6 +295,55 @@ try {
     }
     check("everything reversible really was reversed", auditLog().pending().length === 0,
       JSON.stringify(auditLog().pending().map((entry) => [entry.seq, entry.tool, entry.action])));
+  }
+
+  section("the log is the stack: it survives a restart");
+  {
+    const first = at("persisted.txt");
+    await call("files", { action: "write", path: first, content: "one" });
+    const second = at("persisted-2.txt");
+    await call("files", { action: "write", path: second, content: "two" });
+
+    // A second AuditLog over the same data folder is what a restart looks like: the
+    // old code kept the stack in memory and would come back empty.
+    const reopened = new AuditLog(path.join(scratch, "data"), true);
+    check("what can be undone is read back from the log", reopened.pending().length === 2,
+      JSON.stringify(reopened.pending().map((entry) => entry.seq)));
+    check("the default retention is a week", reopened.retentionDays() === 7, String(reopened.retentionDays()));
+
+    const older = reopened.pending().at(-1);
+    const result = await reopened.undoEntry(older.seq);
+    check("one specific change can be rolled back", result.ok && result.undone[0]?.seq === older.seq, result.message);
+    check("that file is gone", !fs.existsSync(first));
+    check("the other file is untouched", fs.existsSync(second));
+    check("rolling the same one back again is refused", !(await reopened.undoEntry(older.seq)).ok);
+    check("the singleton sees the same stack", auditLog().pending().length === 1,
+      JSON.stringify(auditLog().pending().map((entry) => entry.seq)));
+    await undo();
+    check("and it drains", auditLog().pending().length === 0);
+  }
+
+  section("copies outlive the server, but not the retention window");
+  {
+    const target = at("aged.txt");
+    fs.writeFileSync(target, "original", "utf8");
+    await call("files", { action: "write", path: target, content: "changed", overwrite: true });
+
+    const entry = auditLog().pending().at(-1);
+    const backup = entry?.steps.find((step) => step.kind === "restore")?.backup;
+    check("the change is undoable and has a copy", Boolean(backup) && fs.existsSync(backup), String(backup));
+
+    // Age the copy past the window, then let a fresh server sweep it.
+    const old = new Date(Date.now() - 30 * 86_400_000);
+    fs.utimesSync(backup, old, old);
+    const fresh = new AuditLog(path.join(scratch, "data"), true);
+    await fresh.sweep();
+    check("a copy past the window is deleted", !fs.existsSync(backup));
+    check("its entry stops pretending it can be undone",
+      !auditLog().pending().some((item) => item.seq === entry.seq));
+    check("the file is left exactly as it was", fs.readFileSync(target, "utf8") === "changed");
+    await undo();
+    check("nothing is left on the stack", auditLog().pending().length === 0);
   }
 
   section("guided mode keeps the raw shell away from the model");

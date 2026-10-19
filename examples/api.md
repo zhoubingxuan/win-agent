@@ -183,6 +183,41 @@ Answer it (this is the same thing the Approve button does):
 Invoke-RestMethod -Method Post "$base/api/approve" -ContentType application/json -Body '{"id":"<id from the event>","approved":true}'
 ```
 
+## Audit log and rollback / 改动记录与回档
+
+`GET /api/audit` is the change log: the newest records (newest first), plus `pending` —
+the records that can still be reversed, rebuilt from `data/audit.jsonl`, so a restart
+does not empty it.
+
+```powershell
+$a = Invoke-RestMethod "$base/api/audit?n=10"
+$a.entries | Select-Object seq, time, tool, action, summary, undoable
+$a.pending                     # the ones with a copy still on disk
+$a.retentionDays               # how long those copies are kept (7 by default)
+$a.file                        # data\audit.jsonl
+```
+
+Reverse the newest change, or the newest three:
+
+```powershell
+Invoke-RestMethod -Method Post "$base/api/undo" -ContentType application/json -Body '{"count":1}'
+Invoke-RestMethod -Method Post "$base/api/undo" -ContentType application/json -Body '{"count":3}'
+```
+
+Roll back **one specific record** — the same call the **Roll back** button next to a row
+in Settings makes, using the `seq` from the listing above:
+
+```powershell
+$seq = $a.pending[0].seq
+$r = Invoke-RestMethod -Method Post "$base/api/undo" -ContentType application/json -Body "{`"seq`":$seq}"
+$r.ok; $r.message; $r.failures     # failures lists steps that could not run, if any
+```
+
+An entry that has already been reversed, or whose copy has aged past
+`retentionDays`, cannot be rolled back: the answer is `ok: false` with a message saying
+so, never a half-restore. While a turn is running the endpoint answers `409` — the agent
+might be about to write the very file being restored.
+
 ## Conversations / 会话
 
 ```powershell
