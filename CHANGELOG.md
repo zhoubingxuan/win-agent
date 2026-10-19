@@ -13,8 +13,49 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
-## [1.4.2] — 2026-10-18
+## [1.5.0] — 2026-10-19
 
+How much of the agent's *process* the chat shows is now a slider with three stops, and
+the model's reasoning becomes something you can read instead of a character counter.
+Nothing about the work changed — same tools, same arguments, same approvals.
+
+### Added
+
+- **Output detail: `answer` / `thinking` / `full`** (`verbosity`, three-stop slider in the
+  chat toolbar *and* in Settings, `/verbosity` in the terminal, `AGENT_VERBOSITY`).
+  `answer` — the new default — is your message and the model's answer, so a 7B model's
+  dozen tool calls no longer bury the two lines you actually asked for. `thinking` adds
+  the model's reasoning, live and foldable; `full` is the machine room: reasoning, every
+  tool call with its arguments and result, `step n/m` markers and per-call token usage —
+  the 1.4.x view, plus the reasoning. Errors and approval prompts are never hidden.
+  See [Output detail](README.md#output-detail) and
+  [examples/verbosity.md](examples/verbosity.md).
+- **The reasoning is forwarded, not just counted.** `onReasoning` text was thrown away
+  after being counted (`thinking… (94 chars so far)`); the server now streams it to the
+  UI in small batches. It is kept with the conversation — per assistant message, capped
+  at 20 000 characters — so moving the slider up later replays what past turns were
+  thinking. Non-streaming endpoints are replayed the same way, so `stream: false` shows
+  it too.
+- **A `NOTICE` file**, and a **License** section at the end of the README. Apache 2.0
+  §4(d) makes the notice part of every redistribution: it is shipped in each
+  `versions/<version>/` folder, and a fork or plugin has to carry it too. The requirement
+  itself is short — credit the original author (`zhoubingxuan`) in your README,
+  documentation or user interface.
+
+### Changed
+
+- **The reasoning is stripped from every request.** `ChatMessage.reasoning` is ours: the
+  request body is built from a field whitelist (`role`, `content`, `tool_calls`,
+  `tool_call_id`, `name`), so an endpoint that rejects unknown fields never sees it, and a
+  model never reads its own thinking back.
+- **The terminal follows the same setting.** On `answer` the CLI prints the answers (plus
+  approvals and errors); on `full` it prints its `step` / `-> tool` / `<- result` lines.
+  It has nowhere to fold a reasoning block, so the reasoning stays a chat-view thing. The
+  startup banner now says which level is in effect.
+
+### Fixed
+
+- The duplicated empty `[1.4.2]` heading in this file is gone.
 
 ## [1.4.2] — 2026-10-18
 

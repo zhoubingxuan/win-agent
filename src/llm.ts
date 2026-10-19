@@ -19,6 +19,13 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
+  /**
+   * The model's reasoning for this message (reasoning models), kept so the chat
+   * view can show it after a reload. It is *ours*: `outbound()` strips it before
+   * anything is sent, because an endpoint that rejects unknown fields would choke
+   * on it - and a model that reads its own thinking back argues with itself.
+   */
+  reasoning?: string;
 }
 
 export interface ToolSchema {
@@ -51,6 +58,7 @@ interface ChatChunk {
       role?: string;
       content?: string | null;
       reasoning_content?: string | null;
+      reasoning?: string | null;
       tool_calls?: ToolCall[];
     };
     finish_reason?: string | null;
@@ -108,6 +116,31 @@ export interface ChatOptions {
 function toInt(value: unknown): number {
   const num = typeof value === "number" ? value : Number(value);
   return Number.isFinite(num) && num > 0 ? Math.round(num) : 0;
+}
+
+/** Reasoning kept per message. A chatty model can emit megabytes; the view needs a screenful. */
+const REASONING_LIMIT = 20_000;
+
+/** The reasoning text, trimmed to something a browser can render, or undefined. */
+function keepReasoning(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.length <= REASONING_LIMIT) return trimmed;
+  return `${trimmed.slice(0, REASONING_LIMIT)}\n… (${trimmed.length - REASONING_LIMIT} more characters)`;
+}
+
+/**
+ * The messages as the endpoint must see them. Everything the agent stores is
+ * forwarded except what is only ours - today that is `reasoning`.
+ */
+function outbound(messages: ChatMessage[]): Array<Record<string, unknown>> {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.content,
+    ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
+    ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
+    ...(message.name ? { name: message.name } : {}),
+  }));
 }
 
 function toFloat(value: unknown): number | null {
@@ -216,6 +249,7 @@ async function readStream(
 
   let buffer = "";
   let content = "";
+  let reasoningText = "";
   let model: string | null = null;
   let usageRaw: Record<string, unknown> | undefined;
   let stats: Record<string, unknown> = {};
@@ -235,6 +269,7 @@ async function readStream(
     if (typeof reasoning === "string" && reasoning) {
       // A reasoning model starts talking here, before any visible content.
       if (firstTokenMs === null) firstTokenMs = Date.now() - startedAt;
+      reasoningText += reasoning;
       options.onReasoning?.(reasoning);
     }
     if (typeof delta.content === "string" && delta.content) {
@@ -284,10 +319,12 @@ async function readStream(
       function: { name: part.name, arguments: part.args },
     }));
 
+  const kept = keepReasoning(reasoningText);
   const message: ChatMessage = {
     role: "assistant",
     content: content || null,
     ...(tool_calls.length > 0 ? { tool_calls } : {}),
+    ...(kept ? { reasoning: kept } : {}),
   };
   const usage = finishUsage(
     buildUsage({
@@ -366,6 +403,8 @@ export async function chat(
   let attempt = 0;
   let fixes = 0;
   let streamed = false;
+  // Built once: what goes on the wire is not quite what we keep in memory.
+  const outboundMessages = outbound(messages);
 
   // Wrap the callbacks: once a token has been shown we can no longer retry.
   const emit: ChatOptions = {
@@ -377,7 +416,7 @@ export async function chat(
   for (;;) {
     const body: Record<string, unknown> = {
       model: config.model,
-      messages,
+      messages: outboundMessages,
       temperature: config.temperature,
     };
     if (useTools) {
@@ -505,6 +544,13 @@ export async function chat(
     };
     // The endpoint sent it all at once: replay it so the UI still shows something.
     if (chatMessage.content) options.onDelta?.(chatMessage.content);
+    // ... including the reasoning, which is what the "thinking" view is for.
+    const reasoning = message.reasoning_content ?? message.reasoning;
+    if (typeof reasoning === "string" && reasoning) {
+      const kept = keepReasoning(reasoning);
+      if (kept) chatMessage.reasoning = kept;
+      options.onReasoning?.(reasoning);
+    }
 
     const usage = finishUsage(
       buildUsage({

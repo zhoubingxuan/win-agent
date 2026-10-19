@@ -825,18 +825,83 @@ button.ghost.small {
   font-size: 11px;
 }
 
-/* "thinking…" while a reasoning model works (it has not answered yet). */
+/* The model's reasoning: a block you can fold away (see `verbosity`). */
 .thinking {
   align-self: flex-start;
+  max-width: 100%;
   color: var(--muted);
   font-size: 12px;
-  font-style: italic;
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
 }
 
-.thinking::after {
-  content: "▍";
-  margin-left: 2px;
+.thinking summary {
+  cursor: pointer;
+  font-style: italic;
+  list-style: none;
+}
+
+.thinking summary::-webkit-details-marker {
+  display: none;
+}
+
+.thinking summary::before {
+  content: "▸ ";
+}
+
+.thinking[open] summary::before {
+  content: "▾ ";
+}
+
+/* Still thinking: the marker blinks while the block is open. */
+.thinking[open] summary::after {
+  content: " ▍";
   animation: blink 1s steps(2, start) infinite;
+}
+
+.thinking-body {
+  margin-top: 4px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+/* A three-stop detail slider: chat toolbar and Settings ------------------- */
+
+.levels {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 440px;
+}
+
+.levels input[type="range"],
+.chatbar-field input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.chatbar-field input[type="range"] {
+  width: 130px;
+}
+
+.levels-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.chatbar-level {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  padding-bottom: 6px;
 }
 
 /* Tool cards --------------------------------------------------------------- */

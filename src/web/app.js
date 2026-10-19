@@ -48,6 +48,8 @@ const I18N = {
     "chat.send": "Send",
     "chat.stop": "Stop",
     "chat.thinking": "thinking… ({0} chars so far)",
+    "chat.thought": "thinking ({0} chars) — click to read",
+    "chat.detail": "detail",
     "terminal.placeholder": "shell command, or /help for internal commands",
     "terminal.run": "Run",
     "terminal.hint":
@@ -77,6 +79,18 @@ const I18N = {
     "settings.modeNormal": "normal",
     "settings.modeStateGuided": "now: guided — one tool per step, explicit procedure, no raw shell",
     "settings.modeStateNormal": "now: normal — plain prompt, parallel tool calls allowed",
+    "settings.verbosity": "Output detail — how much of the process the chat shows",
+    "settings.verbosityHint":
+      "A view setting, nothing else: the agent does exactly the same work, and the whole record is written to the data folder either way. Answer only shows your message and the model's reply; + thinking adds the model's reasoning in a block you can fold; + tools & usage is the machine room — every tool call with its arguments and result, step markers and token counts.",
+    "settings.verbosityAnswer": "answer only",
+    "settings.verbosityThinking": "+ thinking",
+    "settings.verbosityFull": "+ tools & usage",
+    "settings.verbosityStateAnswer":
+      "now: answer only — your message and the model's answer; tool calls, reasoning and token counts stay out of the log",
+    "settings.verbosityStateThinking":
+      "now: answer + thinking — the model's reasoning appears while it works, and folds away when the answer starts",
+    "settings.verbosityStateFull":
+      "now: everything — reasoning, every tool call with its arguments and result, step markers and token usage",
     "settings.windows": "Windows",
     "settings.windowsHint":
       "What the agent is actually driving. Elevation decides whether services, the firewall and machine-wide settings can be changed at all.",
@@ -273,6 +287,8 @@ const I18N = {
     "chat.send": "发送",
     "chat.stop": "停止",
     "chat.thinking": "思考中…（已 {0} 字符）",
+    "chat.thought": "思考（{0} 字符）—— 点击展开",
+    "chat.detail": "详细",
     "terminal.placeholder": "输入 shell 命令，或输入 /help 查看内部指令",
     "terminal.run": "运行",
     "terminal.hint":
@@ -302,6 +318,15 @@ const I18N = {
     "settings.modeNormal": "普通",
     "settings.modeStateGuided": "当前：高监督 —— 每步只调用一个工具，附操作规范，不提供原始 shell",
     "settings.modeStateNormal": "当前：普通 —— 原始提示词，允许一次调用多个工具",
+    "settings.verbosity": "输出详细程度 —— 对话区显示多少过程",
+    "settings.verbosityHint":
+      "这只是显示设置，agent 做的事情完全一样，完整记录也照样写进数据文件夹。「只显示回答」只有你的消息和模型的回答；「+ 思考过程」会把模型的思考放进一个可折叠的区块；「+ 工具与用量」是机房全开：每次工具调用及其参数和结果、步骤标记、token 用量。",
+    "settings.verbosityAnswer": "只显示回答",
+    "settings.verbosityThinking": "+ 思考过程",
+    "settings.verbosityFull": "+ 工具与用量",
+    "settings.verbosityStateAnswer": "当前：只显示回答 —— 只有你的消息和模型的回答；工具调用、思考过程和 token 用量都不进对话区",
+    "settings.verbosityStateThinking": "当前：回答 + 思考过程 —— 模型工作时显示它的思考，开始回答时自动折叠",
+    "settings.verbosityStateFull": "当前：全部 —— 思考过程、每次工具调用及其参数与结果、步骤标记、token 用量",
     "settings.windows": "Windows",
     "settings.windowsHint": "这里是智能体实际驱动的环境。是否有管理员权限，决定了能不能改服务、防火墙和系统级设置。",
     "settings.winShell": "PowerShell",
@@ -502,8 +527,39 @@ let pendingUsage = null;
 let pendingUsageAnchor = null;
 /** The assistant bubble text is currently being streamed into, if any. */
 let streamBubble = null;
-/** The "thinking…" line shown while a reasoning model works, if any. */
+/** The reasoning block of the step being drawn, if any (see showThinking). */
 let thinkingEl = null;
+let thinkingBody = null;
+let thinkingChars = 0;
+let thinkingClosed = false;
+
+/* ---------------------------------------------------------------- verbosity */
+
+/** The three levels, mirroring VERBOSITY_LEVELS in src/settings.ts. */
+const LEVELS = ["answer", "thinking", "full"];
+
+/** How much of the process the chat draws right now. */
+function verbosity() {
+  const value = String(state.settings?.verbosity ?? "answer");
+  return LEVELS.includes(value) ? value : "answer";
+}
+
+/** The model's reasoning deserves a block. */
+const showsThinking = () => verbosity() !== "answer";
+/** Tool calls, their results, step markers and token captions. */
+const showsProcess = () => verbosity() === "full";
+
+/** i18n keys for the three stops: short label, and the "now:" line under the slider. */
+const LEVEL_NAME = {
+  answer: "settings.verbosityAnswer",
+  thinking: "settings.verbosityThinking",
+  full: "settings.verbosityFull",
+};
+const LEVEL_STATE = {
+  answer: "settings.verbosityStateAnswer",
+  thinking: "settings.verbosityStateThinking",
+  full: "settings.verbosityStateFull",
+};
 
 /* ---------------------------------------------------------------- utilities */
 
@@ -590,6 +646,7 @@ function applyLanguage() {
   renderMcp();
   renderFleet();
   renderModeState();
+  renderVerbosityState();
   renderWindows();
 }
 
@@ -615,7 +672,7 @@ function clearEmpty() {
 
 function addBubble(role, text) {
   clearEmpty();
-  if (role === "assistant") clearThinking();
+  if (role === "assistant") closeThinking();
   // A streamed reply already built this bubble: fill in the final text.
   if (role === "assistant" && streamBubble) {
     const div = streamBubble;
@@ -638,7 +695,7 @@ function addBubble(role, text) {
 /** A live token from the model: grow the streaming bubble (or start one). */
 function addDelta(text) {
   clearEmpty();
-  clearThinking();
+  closeThinking();
   if (!streamBubble) {
     const div = document.createElement("div");
     div.className = "bubble assistant streaming";
@@ -658,25 +715,64 @@ function closeStream(stopped = false) {
   streamBubble = null;
 }
 
-/** One dimmed line showing that a reasoning model is still working. */
-function showThinking(chars) {
+/**
+ * The model's reasoning, live: a block that folds away as soon as the step starts
+ * answering (a wall of thinking would push the answer off the screen). It stays in
+ * the log, so a folded block can be opened again - and a reload redraws it from the
+ * conversation record.
+ */
+function showThinking(text, chars) {
+  if (!showsThinking()) return;
   clearEmpty();
-  if (!thinkingEl) {
-    thinkingEl = document.createElement("div");
+  if (!thinkingEl || thinkingClosed) {
+    thinkingEl = document.createElement("details");
     thinkingEl.className = "thinking";
+    thinkingEl.open = true;
+    const summary = document.createElement("summary");
+    thinkingBody = document.createElement("div");
+    thinkingBody.className = "thinking-body";
+    thinkingEl.append(summary, thinkingBody);
     log.appendChild(thinkingEl);
+    thinkingChars = 0;
+    thinkingClosed = false;
+    setText(summary, t("chat.thinking", 0));
   }
-  setText(thinkingEl, t("chat.thinking", fmtInt(chars)));
+  if (text) thinkingBody.textContent += text;
+  if (chars !== undefined && chars !== null) thinkingChars = chars;
+  const summary = thinkingEl.querySelector("summary");
+  setText(summary, t("chat.thinking", fmtInt(thinkingChars)));
   followBottom(log);
 }
 
-function clearThinking() {
+/** The step is answering: fold its reasoning away but keep it in the log. */
+function closeThinking() {
   if (!thinkingEl) return;
-  thinkingEl.remove();
+  if (!thinkingClosed) {
+    thinkingClosed = true;
+    thinkingEl.open = false;
+    setText(thinkingEl.querySelector("summary"), t("chat.thought", fmtInt(thinkingChars)));
+  }
   thinkingEl = null;
+  thinkingBody = null;
+}
+
+/** A finished reasoning block, for a conversation replayed from disk. */
+function addThought(text) {
+  if (!showsThinking()) return;
+  const details = document.createElement("details");
+  details.className = "thinking";
+  const summary = document.createElement("summary");
+  setText(summary, t("chat.thought", fmtInt(text.length)));
+  const body = document.createElement("div");
+  body.className = "thinking-body";
+  setText(body, text);
+  details.append(summary, body);
+  log.appendChild(details);
+  followBottom(log);
 }
 
 function addStep(step, max) {
+  if (!showsProcess()) return;
   clearEmpty();
   const div = document.createElement("div");
   div.className = "step";
@@ -686,8 +782,9 @@ function addStep(step, max) {
 }
 
 function addToolCall(name, args) {
+  if (!showsProcess()) return null;
   clearEmpty();
-  clearThinking();
+  closeThinking();
   const card = document.createElement("div");
   card.className = "tool";
 
@@ -715,6 +812,7 @@ function addToolCall(name, args) {
 }
 
 function addToolResult(name, result) {
+  if (!showsProcess()) return;
   const index = openTools.findIndex((entry) => entry.name === name);
   const entry = index >= 0 ? openTools.splice(index, 1)[0] : null;
   const failed = /^Error:|exit code/i.test(result);
@@ -841,6 +939,8 @@ function flushUsage() {
 /** A new LLM call started: park its usage until the reply has been drawn. */
 function setUsage(u) {
   flushUsage();
+  // Per-call token captions are part of the machine room (see verbosity).
+  if (!showsProcess()) return;
   pendingUsage = u;
   pendingUsageAnchor = null;
 }
@@ -1015,7 +1115,7 @@ function handle(ev) {
       addDelta(ev.text);
       break;
     case "thinking":
-      showThinking(ev.chars);
+      showThinking(ev.text ?? "", ev.chars);
       break;
     case "step":
       flushUsage();
@@ -1037,7 +1137,7 @@ function handle(ev) {
     case "done":
       flushUsage();
       closeStream();
-      clearThinking();
+      closeThinking();
       if (ev.totals) renderUsage(ev.totals);
       setRunning(false);
       if (el("view-settings").classList.contains("active")) loadData();
@@ -1048,14 +1148,14 @@ function handle(ev) {
     case "stopped":
       flushUsage();
       closeStream(true);
-      clearThinking();
+      closeThinking();
       setRunning(false);
       showNotice(t("notice.stopped"));
       break;
     case "error":
       flushUsage();
       closeStream(true);
-      clearThinking();
+      closeThinking();
       setRunning(false);
       addBubble("error", `${t("error.prefix")}${ev.message}`);
       break;
@@ -1664,6 +1764,7 @@ function fillSettingsForm(s) {
   el("s-guided").checked = (s.agentMode ?? "guided") === "guided";
   el("s-psEnglishErrors").checked = s.psEnglishErrors !== false;
   el("s-auditLog").checked = s.auditLog !== false;
+  setVerbosityControls(s.verbosity);
   renderModeState();
   customTools = (s.customTools ?? []).map((c) => ({ ...c }));
   renderCustomTools();
@@ -1676,6 +1777,33 @@ function fillSettingsForm(s) {
 function renderModeState() {
   const guided = el("s-guided").checked;
   setText(el("s-modeState"), t(guided ? "settings.modeStateGuided" : "settings.modeStateNormal"));
+}
+
+/** The detail level as words: the "now:" line in Settings, the label in the chatbar. */
+function renderVerbosityState(index) {
+  const level = LEVELS[index ?? LEVELS.indexOf(verbosity())] ?? "answer";
+  setText(el("s-verbosityState"), t(LEVEL_STATE[level]));
+  setText(el("chat-verbosityState"), t(LEVEL_NAME[level]));
+}
+
+/** Both sliders follow the setting - it can also change from /set or another tab. */
+function setVerbosityControls(value) {
+  const index = Math.max(0, LEVELS.indexOf(String(value ?? "answer")));
+  el("s-verbosity").value = String(index);
+  el("chat-verbosity").value = String(index);
+  renderVerbosityState(index);
+}
+
+/** Apply a detail level immediately (the sidebar switches work the same way). */
+async function setVerbosity(index) {
+  const level = LEVELS[index] ?? "answer";
+  renderVerbosityState(index);
+  const result = await api("/api/settings", "POST", { verbosity: level });
+  if (result.settings) state.settings = result.settings;
+  applySettingsToUi(result.settings ?? state.settings);
+  // What is already drawn stays as it was drawn; a redraw replays the stored
+  // conversation at the new level. Never mid-turn: that would erase the live log.
+  if (!running) reloadHistory();
 }
 
 /** Which PowerShell is behind the tools, and whether it can change the machine. */
@@ -1767,6 +1895,7 @@ async function saveSettings() {
     remember: el("s-remember").checked,
     syncLocalModels: el("s-syncLocalModels").checked,
     agentMode: el("s-guided").checked ? "guided" : "normal",
+    verbosity: LEVELS[Number(el("s-verbosity").value)] ?? "answer",
     psEnglishErrors: el("s-psEnglishErrors").checked,
     auditLog: el("s-auditLog").checked,
     enabledTools: allChecked ? null : enabled,
@@ -1810,6 +1939,7 @@ async function refreshState() {
   el("autoApprove").checked = data.settings.autoApprove;
   state.settings = data.settings;
   state.version = data.version ?? state.version;
+  setVerbosityControls(data.settings.verbosity);
   state.mcp = data.mcp ?? state.mcp;
   state.windows = data.windows ?? state.windows;
   setText(el("version"), state.version ? `v${state.version}` : "");
@@ -1856,6 +1986,9 @@ function clearLog() {
   pendingUsageAnchor = null;
   streamBubble = null;
   thinkingEl = null;
+  thinkingBody = null;
+  thinkingChars = 0;
+  thinkingClosed = false;
 }
 
 /** Re-draw the chat from whatever conversation is open on the server. */
@@ -1893,6 +2026,8 @@ function renderHistory(entries, calls = []) {
       flushUsage();
       const usage = calls[callIndex++];
       if (usage) setUsage(usage);
+      // The reasoning comes first: it is what the model did before it spoke.
+      if (entry.reasoning) addThought(entry.reasoning);
       if (entry.content) addBubble("assistant", entry.content);
       for (const call of entry.tool_calls ?? []) {
         addToolCall(call.function?.name ?? "?", call.function?.arguments ?? "{}");
@@ -2191,6 +2326,13 @@ el("autoApprove").addEventListener("change", () =>
 
 // The mode switch explains itself immediately; "Save settings" persists it.
 el("s-guided").addEventListener("change", renderModeState);
+
+// The detail slider lives in the chat toolbar as well as in Settings. Both apply
+// at once - it is a view setting, and the toolbar is where you reach for it.
+for (const id of ["chat-verbosity", "s-verbosity"]) {
+  el(id).addEventListener("input", (event) => renderVerbosityState(Number(event.target.value)));
+  el(id).addEventListener("change", (event) => setVerbosity(Number(event.target.value)));
+}
 
 el("c-add").addEventListener("click", () => {
   const name = el("c-name").value.trim();

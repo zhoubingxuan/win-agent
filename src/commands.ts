@@ -6,6 +6,7 @@ import {
   loadSettings,
   normalizeAgentMode,
   normalizeLanguage,
+  normalizeVerbosity,
   publicSettings,
   removeProfile,
   saveSettings,
@@ -132,6 +133,8 @@ interface Messages {
   statusTools: string;
   customDescription: string;
   languageCurrent: string;
+  verbosityCurrent: string;
+  verbosityInvalid: string;
   fileLabel: string;
   profileListHeader: string;
   profileSwitched: string;
@@ -239,6 +242,7 @@ Change (saved to disk and applied immediately):
   /workdir <path>            working directory
   /powershell <exe>          powershell.exe or pwsh.exe
   /mode <guided|normal>      supervision level (guided = one tool per step)
+  /verbosity <level>         how much of the process the chat shows (answer|thinking|full)
   /enable <name...>          enable tools  ( /enable all )
   /disable <name...>         disable tools
   /custom add <name> <ps>    add a custom command (one-line PowerShell)
@@ -306,6 +310,8 @@ current directory.`,
     statusTools: "{0}/{1} enabled",
     customDescription: "Custom command {0}",
     languageCurrent: "language = {0}  (en | zh)",
+    verbosityCurrent: "verbosity = {0}  (answer | thinking | full)",
+    verbosityInvalid: "verbosity must be answer, thinking or full",
     fileLabel: "file: {0}",
     profileListHeader: "endpoints (active = *):",
     profileSwitched: 'switched to profile "{0}"  ({1})',
@@ -422,6 +428,7 @@ current directory.`,
   /workdir <path>            工作目录
   /powershell <exe>          powershell.exe 或 pwsh.exe
   /mode <guided|normal>      监督等级（guided = 每步只调用一个工具）
+  /verbosity <level>         对话区显示多少过程（answer|thinking|full）
   /enable <name...>          启用工具（ /enable all ）
   /disable <name...>         停用工具
   /custom add <name> <ps>    添加自定义命令（单行 PowerShell）
@@ -488,6 +495,8 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
     statusTools: "已启用 {0}/{1}",
     customDescription: "自定义命令 {0}",
     languageCurrent: "language = {0}  （en | zh）",
+    verbosityCurrent: "verbosity = {0}  （answer | thinking | full）",
+    verbosityInvalid: "verbosity 只能是 answer、thinking 或 full",
     fileLabel: "文件：{0}",
     profileListHeader: "接口列表（* = 当前使用）：",
     profileSwitched: '已切换到接口 "{0}"  （{1}）',
@@ -816,6 +825,16 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         throw new Error(m().modeInvalid);
       }
       return setKeys(host, { agentMode: normalizeAgentMode(value) });
+    }
+
+    case "verbosity": {
+      // How much of the process the chat view shows - a display setting only.
+      const value = rest.trim().toLowerCase();
+      if (!value) return format(m().verbosityCurrent, getSettings().verbosity);
+      if (!/^(answer|minimal|quiet|thinking|think|medium|full|strong|verbose|everything|all)$/.test(value)) {
+        throw new Error(m().verbosityInvalid);
+      }
+      return setKeys(host, { verbosity: normalizeVerbosity(value) });
     }
 
     case "tools": {

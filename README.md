@@ -37,6 +37,11 @@ What that means in practice:
   another server switches the endpoint with it.
 - **Chat toolbar** — the working directory (with a folder picker), the endpoint and
   the model sit above the composer, one click each.
+- **Output detail** — another slider decides how much of the *process* the chat log
+  shows: just the answers (the default — a 7B model's dozen tool calls stay out of the
+  way), the answers plus the model's reasoning, or the whole machine room with every
+  tool call and its token count. From the toolbar, Settings, `/verbosity` or
+  `AGENT_VERBOSITY` — see [Output detail](#output-detail).
 - **Windows-hardened** — PowerShell 5.1 *and* 7, errors always in English, editors
   that wrote UTF-16 files still read correctly, hung commands are killed with their
   whole process tree, and "access denied" becomes a sentence that says what to do.
@@ -64,6 +69,9 @@ you> stop the print spooler and disable it from starting automatically
 
 Done: the Spooler service is stopped and set to Disabled.
 ```
+
+> Those `-> tool` / `<- result` lines are the terminal at `verbosity=full`. The default
+> `answer` prints the task and the last line, and nothing else.
 
 ---
 
@@ -124,7 +132,11 @@ Three tabs, all talking to the same local server over SSE.
   are at the bottom, so scrolling up to read history is not interrupted. A reload, and
   sending your own message, always jump to the newest output.
 - **Stop** (or `Esc`, or `/stop` in the terminal) aborts the task that is running.
-- Every tool call is a card you can expand to see its result.
+- A **detail** slider in the toolbar (the same one sits in Settings) decides how much
+  of the process the log shows — see [Output detail](#output-detail). It is a view
+  setting: the agent does exactly the same work at every level.
+- Every tool call is a card you can expand to see its result (at the `+ tools & usage`
+  level).
 - Destructive actions pop up **Approve / Deny** buttons (see *Safety*).
 - Enter sends, Shift+Enter makes a newline; example prompts are one click away.
 
@@ -151,6 +163,8 @@ PS C:\Windows\Temp> /tools
 A form for **every** setting, plus:
 - **Agent mode** — the local ↔ guided slider for small models (see
   [Agent modes](#agent-modes--guided-vs-normal)).
+- **Output detail** — how much of the process the chat log shows (see
+  [Output detail](#output-detail)).
 - **Endpoints** — switch the whole agent between a local model server and a cloud
   API with one click (a local ↔ API slider when adding one), and pick the model
   from the list the endpoint actually reports.
@@ -222,6 +236,39 @@ independent calls; nothing else changes — same tools, same approvals, same mem
 
 `examples/modes.md` shows both prompts side by side and how to measure which one
 your model prefers.
+
+---
+
+## Output detail
+
+A small model chatters: a single question about free disk space can turn into a dozen
+tool calls before it answers. So how much of that process the chat log *draws* is a
+slider with three stops — in the chat toolbar, in Settings, or `/verbosity <level>` in
+the terminal:
+
+| Level | The chat log shows |
+| --- | --- |
+| `answer` *(default)* | your message and the model's answer. Tool calls, reasoning and token counts stay out of the log. A **waiting** turn still shows *Working…* in the title bar, and errors and approval prompts always appear. |
+| `thinking` | the above, plus the model's **reasoning** as it arrives, in a block that folds away the moment the answer starts. Reasoned-out history replays folded. |
+| `full` | the machine room: reasoning, every tool call with its arguments and result, step markers (`step 3/12`) and the token count of every call. |
+
+Three things worth knowing:
+
+- **It changes nothing about the work.** The agent calls the same tools with the same
+  arguments; only the drawing changes. The full process is always broadcast, so moving
+  the slider re-draws the conversation you are looking at.
+- **The record is complete at every level.** The reasoning is stored with the
+  conversation (per assistant message, capped at 20 000 characters per message) so
+  switching to `thinking` later still shows what past turns were thinking. It is
+  never sent back to the model — it is stripped from every request, because an
+  endpoint that rejects unknown fields would choke on it, and a model that reads its
+  own thinking back starts arguing with itself.
+- **The terminal follows the same setting** at its two ends: on `answer` it prints
+  just the answers (plus approvals), on `full` it prints its `-> tool` / `<- result`
+  lines. It has nowhere to fold a reasoning block, so the reasoning itself is a
+  chat-view thing.
+
+`examples/verbosity.md` shows one turn at all three levels.
 
 ---
 
@@ -700,6 +747,7 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/workdir <path>` | working directory (`chdir` + terminal cwd) | immediately |
 | `/powershell <exe>` | `powershell.exe` or `pwsh.exe` | next command |
 | `/mode <guided\|normal>` · `/mode` | supervision level for the model; bare `/mode` prints the current one | next turn |
+| `/verbosity <answer\|thinking\|full>` · `/verbosity` | how much of the process the chat shows; bare `/verbosity` prints the current level | immediately + saved |
 | `/enable <name...>` · `/disable <name...>` · `/enable all` | which tools the model may use | immediately |
 | `/custom add <name> <ps>` | adds a custom command | immediately |
 | `/custom remove <name>` | deletes a custom command | immediately |
@@ -801,6 +849,7 @@ with a message and nothing changes.
 | `maxSteps` | number | `12` | tool-calling rounds per user turn (1–100) |
 | `temperature` | number | `0` | 0–2 |
 | `agentMode` | `"guided"` \| `"normal"` | `guided` | supervision for small local models (see [Agent modes](#agent-modes--guided-vs-normal)) |
+| `verbosity` | `"answer"` \| `"thinking"` \| `"full"` | `answer` | how much of the process the chat log shows (see [Output detail](#output-detail)) |
 | `auditLog` | boolean | `true` | append every change to `data/audit.jsonl` and keep the undo stack (see [Audit log and undo](#audit-log-and-undo)) |
 | `language` | `"en"` \| `"zh"` | `zh` | interface text **and** the language the agent replies in |
 | `systemPrompt` | string | *(built-in)* | the agent's instructions |
@@ -847,6 +896,7 @@ on. Every variable is the upper-case setting name with an `AGENT_` prefix:
 | `AGENT_WORKDIR` | `workdir` | |
 | `AGENT_POWERSHELL` | `powershell` | `pwsh.exe` for PowerShell 7 |
 | `AGENT_MODE` | `agentMode` | `guided` / `normal` |
+| `AGENT_VERBOSITY` | `verbosity` | `answer` / `thinking` / `full` |
 | `AGENT_AUDIT_LOG` | `auditLog` | `true` / `false` |
 | `AGENT_PS_ENGLISH_ERRORS` | `psEnglishErrors` | `true` / `false` |
 | `AGENT_WEB_PORT` | `webPort` | |
@@ -1414,9 +1464,22 @@ Then register it in `src/tools/index.ts`.
 | A restored version "has no settings" | by design: each folder has its own `data/`. Copy `data/settings.json` into it, or set `AGENT_DATA_DIR` so both copies share one folder |
 | Reset everything | delete the `data/` folder |
 
-📢 Ecosystem & Attribution
-win-agent is open-sourced under the Apache License 2.0. You are highly encouraged to use, modify, and build commercial or open-source projects upon it.
+---
 
-To help build a thriving ecosystem, we have one simple request:
-If you build derivative plugins or projects based on win-agent, please explicitly credit the original author in your project's README or UI:
-👉 Author: zhoubingxuan / win-agent
+## License & attribution
+
+**Apache License 2.0** — the full text is in [LICENSE](LICENSE). win-agent is
+open-sourced under it, and you are explicitly encouraged to use it for commercial or
+open-source projects, forks, plugins and extensions. The copyright notice and the
+attribution requirement live in [NOTICE](NOTICE), which travels with every released copy
+(each folder under `versions/` contains both).
+
+To help build a thriving ecosystem, there is one simple request: **if you build
+derivative plugins, forks, or projects based on this work, credit the original author**
+in your project's README, documentation or user interface.
+
+👉 Author: **zhoubingxuan** / win-agent
+
+Apache 2.0 §4(d) is what makes that stick: a redistribution has to carry the contents of
+the `NOTICE` file, so keep it (and this attribution) with whatever you build on top of
+win-agent.

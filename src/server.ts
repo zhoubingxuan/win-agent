@@ -392,10 +392,19 @@ async function runAgent(message: string): Promise<void> {
   // This turn belongs to the conversation that is open right now; keep a direct
   // reference so nothing can be written into a different record mid-turn.
   const convo = conversation;
-  // Reasoning models can think for a long while before any visible text; count
-  // the "thinking" characters and tell the UI now and then.
+  // Reasoning models can think for a long while before any visible text. The chat
+  // view can show that text (verbosity `thinking` and up), so it is forwarded as it
+  // arrives - in small batches, so a token-per-event model does not flood the page.
   let reasoningChars = 0;
-  let lastThinkingAt = 0;
+  let reasoningBuffer = "";
+  const flushThinking = (): void => {
+    if (!reasoningBuffer) return;
+    broadcast({ type: "thinking", text: reasoningBuffer, chars: reasoningChars });
+    reasoningBuffer = "";
+  };
+  // A model that thinks in one long burst would otherwise show nothing until it
+  // answers, so the buffer is also drained on a timer.
+  const thinkingTimer = setInterval(flushThinking, 200);
   const agent = new Agent(
     toConfig(),
     tools,
@@ -404,11 +413,7 @@ async function runAgent(message: string): Promise<void> {
       onAssistantDelta: (text) => broadcast({ type: "delta", text }),
       onReasoning: (text) => {
         reasoningChars += text.length;
-        const now = Date.now();
-        if (now - lastThinkingAt >= 400) {
-          lastThinkingAt = now;
-          broadcast({ type: "thinking", chars: reasoningChars });
-        }
+        reasoningBuffer += text;
       },
       onAssistantText: (text) => broadcast({ type: "assistant", text }),
       onToolCall: (name, args) => broadcast({ type: "tool_call", name, args }),
@@ -431,13 +436,17 @@ async function runAgent(message: string): Promise<void> {
     await agent.run(message, controller.signal);
     // The assistant's text was already streamed as "assistant" events by the
     // agent, so "done" only signals that the turn is over (avoids duplicates).
+    // Whatever the model thought on the last step goes out first.
+    flushThinking();
     broadcast({ type: "done", totals: usageSnapshot(convo) });
   } catch (error) {
     const err = error as Error;
     const stopped = controller.signal.aborted || err.name === "AbortError";
+    flushThinking();
     if (stopped) broadcast({ type: "stopped" });
     else broadcast({ type: "error", message: err.message });
   } finally {
+    clearInterval(thinkingTimer);
     // Keep whatever the model managed to do, even when it failed or was stopped.
     convo.messages = agent.getHistory();
     persistHistory(convo);

@@ -90,6 +90,29 @@ endpoint, where batching independent calls is faster. Everything else — tools,
 approval prompts, memory, context budget — is identical. See
 [modes.md](modes.md).
 
+## The chat log, quiet or loud
+
+`verbosity` is a view setting: it decides how much of the process the chat draws, and
+nothing else. `answer` (the default) is just your message and the model's reply;
+`thinking` adds the model's reasoning in a block that folds away when the answer starts;
+`full` is the machine room — every tool call with its arguments and result, `step n/m`
+markers and per-call token counts.
+
+```json
+{
+  "verbosity": "thinking"
+}
+```
+
+```powershell
+PS> /verbosity full                       # same thing from the terminal
+$env:AGENT_VERBOSITY = "full"             # ... or just for this shell
+```
+
+Note that this file is a *view* setting: `remember: false` is what decides whether the
+conversation is written to `data/history.json` at all. See
+[verbosity.md](verbosity.md).
+
 ## Windows: English errors and the PowerShell in use
 
 `psEnglishErrors` is on by default so error text is English on a Chinese (or German,

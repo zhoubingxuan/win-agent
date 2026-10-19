@@ -49,6 +49,34 @@ export function normalizeAgentMode(value: unknown): AgentMode {
 }
 
 /**
+ * How much of the agent's *process* the chat view shows.
+ *
+ * - `answer` - only your message and the model's answer. The quiet default: a long
+ *   run of tool calls stays out of the way until the answer arrives.
+ * - `thinking` - the above plus the model's reasoning, as a block you can fold open.
+ * - `full` - everything the agent did: reasoning, every tool call with its arguments
+ *   and result, step markers and per-call token usage.
+ *
+ * It changes *nothing* about what the agent does - only what is drawn. The full
+ * process is always broadcast, so switching the level re-renders the same turn.
+ */
+export type Verbosity = "answer" | "thinking" | "full";
+
+export const VERBOSITY_LEVELS: Verbosity[] = ["answer", "thinking", "full"];
+
+/** Accepts aliases in both languages; anything unknown falls back to `answer`. */
+export function normalizeVerbosity(value: unknown): Verbosity {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (["thinking", "think", "thoughts", "reasoning", "medium", "思考", "中等", "过程"].includes(raw)) {
+    return "thinking";
+  }
+  if (["full", "strong", "everything", "verbose", "all", "high", "强", "完全", "详细", "全部"].includes(raw)) {
+    return "full";
+  }
+  return "answer";
+}
+
+/**
  * The extra operating procedure appended in `guided` mode. Small models follow a
  * numbered list of one-line rules far better than one long paragraph, and the
  * "one tool per step" rule is what stops them from inventing results.
@@ -150,6 +178,8 @@ export interface Settings {
   autoApprove: boolean;
   /** normal = plain prompt, guided = step-by-step supervision for small models. */
   agentMode: AgentMode;
+  /** How much of the process the chat view shows (see Verbosity). */
+  verbosity: Verbosity;
   /** Write every change to data/audit.jsonl and keep a stack of undoable ones. */
   auditLog: boolean;
   /** Persist the conversation to disk so it survives restarts (记忆化). */
@@ -244,6 +274,9 @@ export const DEFAULTS: Settings = {
   // The project exists to drive Windows with *small* local models, so the
   // supervised mode is the default. One switch flips it to the plain prompt.
   agentMode: "guided",
+  // A small model chatters: dozens of tool calls before it answers. The quiet view
+  // is the default, and two steps up turn the machine room back on.
+  verbosity: "answer",
   auditLog: true,
   remember: true,
   stream: true,
@@ -434,6 +467,7 @@ export function coerceSetting(key: string, value: unknown): unknown {
   if (BOOLEAN_KEYS.includes(typed)) return asBoolean(value);
   if (typed === "language") return normalizeLanguage(value);
   if (typed === "agentMode") return normalizeAgentMode(value);
+  if (typed === "verbosity") return normalizeVerbosity(value);
   if (typed === "modelContext") return asModelContext(value);
   if (typed === "profiles") return asProfiles(value);
   if (typed === "enabledTools") {
@@ -491,6 +525,7 @@ function fromEnv(): Record<string, unknown> {
   if (env.AGENT_POWERSHELL) patch.powershell = env.AGENT_POWERSHELL;
   if (env.AGENT_PS_ENGLISH_ERRORS) patch.psEnglishErrors = env.AGENT_PS_ENGLISH_ERRORS;
   if (env.AGENT_MODE) patch.agentMode = env.AGENT_MODE;
+  if (env.AGENT_VERBOSITY) patch.verbosity = env.AGENT_VERBOSITY;
   if (env.AGENT_AUDIT_LOG) patch.auditLog = env.AGENT_AUDIT_LOG;
   if (env.AGENT_WEB_PORT) patch.webPort = env.AGENT_WEB_PORT;
   if (env.AGENT_STREAM) patch.stream = env.AGENT_STREAM;

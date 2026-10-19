@@ -47,6 +47,10 @@ function freePort() {
 /* -------------------------------------------------------------------------- */
 
 const requests = [];
+/** The reasoning the "reasoning model" mock thinks out loud (see REASONING_TEST). */
+const REASONING =
+  "Let me look: I need the free space of C:, so the system tool with action disk is right. " +
+  "Then I report the number and stop.";
 const mock = http.createServer((req, res) => {
   let raw = "";
   req.on("data", (chunk) => (raw += chunk));
@@ -56,6 +60,29 @@ const mock = http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "application/json" });
     if ((req.url ?? "").includes("/models")) {
       res.end(JSON.stringify({ object: "list", data: [{ id: "mock-1" }, { id: "mock-2" }] }));
+      return;
+    }
+    // A reasoning model: it thinks out loud before it answers. Used by the verbosity
+    // checks at the end of this suite - the reasoning has to reach the client, be kept
+    // in the conversation, and never travel back to the endpoint.
+    if (JSON.stringify(body.messages ?? []).includes("REASONING_TEST")) {
+      res.end(
+        JSON.stringify({
+          model: "mock-1",
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: "C: has 41.2 GB free.",
+                reasoning_content: REASONING,
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 20, completion_tokens: 9, total_tokens: 29, reasoning_tokens: 7 },
+        }),
+      );
       return;
     }
     // A model that answers with nothing at all (all of it went to "thinking"):
@@ -154,6 +181,59 @@ async function api(pathname, method = "GET", body) {
     data = text;
   }
   return { status: res.status, headers: res.headers, data };
+}
+
+/**
+ * Open an SSE connection and keep every event that arrives. `until(type)` reads on
+ * until an event of that type shows up, so a test can wait for a turn's `done` and
+ * then look at the `thinking` / `tool_call` / ... events that came before it.
+ *
+ * The server registers the client and flushes ": connected" in the same breath, so
+ * once `fetch` has resolved, a turn started afterwards cannot be missed.
+ */
+async function watchEvents(timeoutMs = 60_000) {
+  const controller = new AbortController();
+  const res = await fetch(`${base}/api/events`, {
+    headers: { accept: "text/event-stream" },
+    signal: controller.signal,
+  });
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const events = [];
+  let buffer = "";
+  const deadline = Date.now() + timeoutMs;
+  async function until(type) {
+    while (Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      for (;;) {
+        const cut = buffer.indexOf("\n\n");
+        if (cut < 0) break;
+        const chunk = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+        const event = JSON.parse(line.slice(6));
+        events.push(event);
+        if (event.type === type) return events;
+      }
+    }
+    return events;
+  }
+  return { events, until, stop: () => controller.abort() };
+}
+
+/** Poll /api/state until the turn is over (the `done` event beats the bookkeeping). */
+async function settle(timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let state = null;
+  while (Date.now() < deadline) {
+    state = (await api("/api/state")).data;
+    if (!state.running && (state.history?.length ?? 0) >= 2) return state;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return state;
 }
 
 /** Poll until the server answers, with a burst of concurrent requests on every round,
@@ -583,6 +663,104 @@ try {
     check(
       "the same text is what a reload shows",
       (await api("/api/state")).data.history.at(-1).content === last.content,
+    );
+  }
+  /* ---------------------------------------------------------------------- */
+
+  section("the output-detail setting");
+  {
+    const initial = (await api("/api/state")).data;
+    check(
+      "the quiet level is the default",
+      initial.settings.verbosity === "answer",
+      String(initial.settings.verbosity),
+    );
+
+    const aliased = await api("/api/settings", "POST", { verbosity: "verbose" });
+    check(
+      "a level alias is accepted",
+      aliased.status === 200 && aliased.data?.settings?.verbosity === "full",
+      JSON.stringify(aliased.data),
+    );
+    const bilingual = await api("/api/settings", "POST", { verbosity: "思考" });
+    check(
+      "the levels understand both languages",
+      bilingual.data?.settings?.verbosity === "thinking",
+      JSON.stringify(bilingual.data?.settings),
+    );
+    check(
+      "the change is reported like any other setting",
+      bilingual.data?.changed?.includes("verbosity"),
+      JSON.stringify(bilingual.data?.changed),
+    );
+    check(
+      "and the state carries it",
+      (await api("/api/state")).data.settings.verbosity === "thinking",
+    );
+  }
+
+  /* ---------------------------------------------------------------------- */
+
+  section("a reasoning model that thinks out loud");
+  {
+    await api("/api/reset", "POST", {});
+    requests.length = 0;
+
+    // The reasoning has to reach the client as it arrives - it is what the
+    // `thinking` level of the chat log is made of.
+    const watch = await watchEvents();
+    try {
+      const sent = await api("/api/chat", "POST", { message: "REASONING_TEST How much space is left on C:?" });
+      check("the turn is accepted", sent.status === 202, JSON.stringify(sent.data));
+      const seen = await watch.until("done");
+      const thinking = seen.filter((e) => e.type === "thinking");
+      check(
+        "the reasoning text reaches the client",
+        thinking.length > 0 && thinking.map((e) => e.text ?? "").join("") === REASONING,
+        JSON.stringify(thinking),
+      );
+      check(
+        "... with the character count the summary line shows",
+        thinking.at(-1)?.chars === REASONING.length,
+        `${thinking.at(-1)?.chars} vs ${REASONING.length}`,
+      );
+    } finally {
+      watch.stop();
+    }
+
+    const after = await settle();
+    const last = after?.history?.at(-1);
+    check("the reasoning is kept with the message", last?.reasoning === REASONING, JSON.stringify(last));
+    check("the answer itself is untouched", last?.content === "C: has 41.2 GB free.", JSON.stringify(last?.content));
+    check(
+      "so a reload can show it at the thinking level",
+      (await api("/api/state")).data.history.at(-1).reasoning === REASONING,
+    );
+    check(
+      "and it is written to the data folder",
+      fs.readFileSync(path.join(dataDir, "history.json"), "utf8").includes("action disk is right"),
+    );
+
+    // A second turn puts that first answer - reasoning and all - into the request.
+    requests.length = 0;
+    await api("/api/chat", "POST", { message: "and D:?" });
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const answered = requests.some((r) => r.path.includes("/chat/completions"));
+      if (answered && !(await api("/api/state")).data.running) break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    const calls = requests.filter((r) => r.path.includes("/chat/completions"));
+    const sentMessages = calls.at(-1)?.body?.messages ?? [];
+    check(
+      "the reasoning is never sent back to the endpoint",
+      sentMessages.length > 0 && !JSON.stringify(sentMessages).includes("action disk is right"),
+      JSON.stringify(sentMessages).slice(-300),
+    );
+    check(
+      "no message carries a reasoning field",
+      sentMessages.length > 0 && sentMessages.every((m) => !("reasoning" in m)),
+      JSON.stringify(sentMessages.map((m) => Object.keys(m))),
     );
   }
 } catch (error) {

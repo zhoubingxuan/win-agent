@@ -104,6 +104,11 @@
               <span data-i18n="chat.model">model</span>
               <select id="chat-model"></select>
             </label>
+            <label class="chatbar-field">
+              <span data-i18n="chat.detail">detail</span>
+              <input type="range" id="chat-verbosity" min="0" max="2" step="1" value="0" />
+            </label>
+            <span class="chatbar-level" id="chat-verbosityState">…</span>
             <button type="button" id="chat-refresh" class="ghost small" data-i18n="chat.refresh">
               Refresh models
             </button>
@@ -238,6 +243,24 @@
               <span data-i18n="settings.modeGuided">guided</span>
             </div>
             <p class="muted" id="s-modeState">…</p>
+
+            <h4 data-i18n="settings.verbosity">Output detail — how much of the process the chat shows</h4>
+            <p class="muted" data-i18n="settings.verbosityHint">
+              A view setting, nothing else: the agent does exactly the same work, and the whole record
+              is written to the data folder either way. Answer only shows your message and the model's
+              reply; + thinking adds the model's reasoning in a block you can fold; + tools &amp; usage
+              is the machine room — every tool call with its arguments and result, step markers and
+              token counts.
+            </p>
+            <div class="levels">
+              <input type="range" id="s-verbosity" min="0" max="2" step="1" value="0" />
+              <div class="levels-labels">
+                <span data-i18n="settings.verbosityAnswer">answer only</span>
+                <span data-i18n="settings.verbosityThinking">+ thinking</span>
+                <span data-i18n="settings.verbosityFull">+ tools &amp; usage</span>
+              </div>
+            </div>
+            <p class="muted" id="s-verbosityState">…</p>
 
             <h4 data-i18n="settings.windows">Windows</h4>
             <p class="muted" data-i18n="settings.windowsHint">

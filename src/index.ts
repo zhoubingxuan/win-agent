@@ -138,21 +138,27 @@ async function main(): Promise<void> {
     webSearchUrl: settings.webSearchUrl,
   });
 
+  // The chat's detail level, in the terminal's terms: the process lines below are
+  // only printed on "full", and "answer" keeps the terminal down to the answers.
+  const showsProcess = settings.verbosity === "full";
   const agent = new Agent(toConfig(settings), tools, {
     onStep: (step, max) => {
-      if (step > 1) console.log(`  ... step ${step}/${max}`);
+      if (showsProcess && step > 1) console.log(`  ... step ${step}/${max}`);
     },
     onAssistantText: (text) => console.log(`\n${text}\n`),
     onContext: (stats) => {
+      if (!showsProcess) return;
       console.log(
         `  ... context trimmed (${stats.droppedMessages} exchange(s) dropped, ${stats.truncatedToolResults} result(s) shortened) to fit ${stats.limit} tokens`,
       );
     },
     onToolCall: (name, args) => {
+      if (!showsProcess) return;
       const preview = args.length > 160 ? `${args.slice(0, 160)}...` : args;
       console.log(`  -> ${name} ${preview}`);
     },
     onToolResult: (name, result) => {
+      if (!showsProcess) return;
       const oneLine = result.replace(/\s+/g, " ").trim();
       const preview = oneLine.length > 160 ? `${oneLine.slice(0, 160)}...` : oneLine;
       console.log(`  <- [${name}] ${preview}`);
@@ -177,6 +183,7 @@ async function main(): Promise<void> {
   console.log(`  api   : ${settings.baseUrl}`);
   console.log(`  tools : ${tools.names().join(", ")}`);
   console.log(`  mode  : ${settings.agentMode}${settings.agentMode === "guided" ? " (one tool per step, explicit procedure)" : ""}`);
+  console.log(`  detail: ${settings.verbosity}${settings.verbosity === "full" ? "" : " (set verbosity=full to watch the tool calls)"}`);
   const info = await powerShellInfo();
   console.log(
     `  shell : ${info.exe}${info.version ? ` ${info.version}` : ""}` +
