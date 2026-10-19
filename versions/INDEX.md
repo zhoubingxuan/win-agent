@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 1.6.0 | 2026-10-19 14:37 | 75 | Two halves of the same promise: the sandbox stops taking tools away and starts *reading* them, and the changes that do get through can be rolled back long after |
 | 1.5.1 | 2026-10-19 13:59 | 75 | The agent is fenced into one folder. A file path that points outside the working directory is refused *before* anything is touched, and the two tools that… |
 | 1.5.0 | 2026-10-19 13:10 | 71 | How much of the agent's *process* the chat shows is now a slider with three stops, and the model's reasoning becomes something you can read instead of a… |
 | 1.4.2 | 2026-10-18 10:20 | 69 |  |

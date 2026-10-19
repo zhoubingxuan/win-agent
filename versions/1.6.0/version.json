@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.6.0",
+  "createdAt": "2026-10-19T14:37:12.703Z",
+  "node": ">=20.3",
+  "files": 75,
+  "bytes": 986087,
+  "note": "Two halves of the same promise: the sandbox stops taking tools away and starts *reading* them, and the changes that do get through can be rolled back long after"
+}
