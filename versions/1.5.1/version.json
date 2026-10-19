@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.5.1",
+  "createdAt": "2026-10-19T13:59:22.712Z",
+  "node": ">=20.3",
+  "files": 75,
+  "bytes": 955816,
+  "note": "The agent is fenced into one folder. A file path that points outside the working directory is refused *before* anything is touched, and the two tools that…"
+}
