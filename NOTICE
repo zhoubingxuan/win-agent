@@ -7,3 +7,6 @@ ATTRIBUTION REQUIREMENT:
 If you build derivative plugins, forks, or projects based on this work,
 you are required to explicitly credit the original author (zhoubingxuan)
 in your project's README, documentation, or user interface.
+
+The same terms are restated in the standalone file `.AGREEMENT`, which is
+carried into every released copy (`versions/<version>/`).

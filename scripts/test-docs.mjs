@@ -11,6 +11,8 @@
 //   - every relative link and every `#anchor` resolves
 //   - every AGENT_* environment variable that is documented exists in the source
 //   - every file in examples/ is listed in examples/README.md
+//   - the `.AGREEMENT` file is in the root, in every versions/<version>/ folder, and
+//     in the snapshot list, so no released copy can quietly drop it
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -228,6 +230,38 @@ section("examples");
   // The CHANGELOG must have a section for the current version.
   const version = JSON.parse(read("package.json")).version;
   check(`CHANGELOG.md documents ${version}`, read("CHANGELOG.md").includes(`## [${version}]`), version);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Attribution                                                                */
+/* -------------------------------------------------------------------------- */
+
+section("attribution");
+{
+  const file = path.join(root, ".AGREEMENT");
+  const agreement = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
+  check("the agreement file exists", agreement.length > 0, ".AGREEMENT");
+  check(
+    "the agreement names the author and the license",
+    agreement.includes("zhoubingxuan") && agreement.includes("Apache License, Version 2.0"),
+  );
+  check("NOTICE points at the agreement", read("NOTICE").includes(".AGREEMENT"));
+
+  const folders = fs
+    .readdirSync(path.join(root, "versions"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  const copies = folders.map((name) => path.join(root, "versions", name, ".AGREEMENT"));
+  const missing = folders.filter((_, i) => !fs.existsSync(copies[i]));
+  check(`all ${folders.length} version folders carry the agreement`, missing.length === 0, missing.join(", "));
+  const stale = folders.filter((_, i) => fs.existsSync(copies[i]) && fs.readFileSync(copies[i], "utf8") !== agreement);
+  check("every version folder has the same agreement as the root", stale.length === 0, stale.join(", "));
+
+  // A new snapshot has to pick it up: it must be in the list `--snapshot` copies.
+  const versionSource = read("scripts/version.mjs");
+  const listStart = versionSource.indexOf("const SNAPSHOT_ITEMS");
+  const list = versionSource.slice(listStart, versionSource.indexOf("]", listStart));
+  check("the snapshot list carries .AGREEMENT into new versions", list.includes(".AGREEMENT"));
 }
 
 console.log(`\n${passed} passed, ${failures} failed`);

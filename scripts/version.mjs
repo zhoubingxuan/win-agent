@@ -41,6 +41,7 @@ const SNAPSHOT_ITEMS = [
   "CHANGELOG.md",
   "LICENSE",
   "NOTICE",
+  ".AGREEMENT",
   ".env.example",
   ".gitignore",
 ];

@@ -13,6 +13,16 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+### Added
+
+- **An `.AGREEMENT` file**, in the repository root and inside every
+  `versions/<version>/` folder. It is a standalone copy of the terms that already live
+  in `LICENSE` (Apache 2.0), `NOTICE` and the ecosystem notice at the top of the
+  README: anything built on win-agent has to credit the original author
+  (`zhoubingxuan`). `SNAPSHOT_ITEMS` in `scripts/version.mjs` carries it into new
+  snapshots, and `npm run test:docs` checks that the root copy and all the version
+  folders exist and agree.
+
 ## [1.5.0] — 2026-10-19
 
 How much of the agent's *process* the chat shows is now a slider with three stops, and
