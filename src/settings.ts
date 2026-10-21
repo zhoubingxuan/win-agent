@@ -115,6 +115,8 @@ export interface Config {
   model: string;
   maxSteps: number;
   temperature: number;
+  /** Refuse a third identical call that has already returned the same answer twice. */
+  loopGuard: boolean;
   language: Language;
   systemPrompt: string;
   workdir: string;
@@ -176,6 +178,12 @@ export interface Settings {
   // Behaviour
   dryRun: boolean;
   autoApprove: boolean;
+  /**
+   * Stop a model that keeps issuing the same call and getting the same answer
+   * (on by default). The third identical call in a row is answered with a note
+   * instead of being run again. See src/agent.ts.
+   */
+  loopGuard: boolean;
   /**
    * Confine every file path the tools are handed to the working directory (on by
    * default). While it is on, the raw shell and custom commands are withheld too.
@@ -274,6 +282,8 @@ export const DEFAULTS: Settings = {
   activeProfile: "local",
   maxSteps: 12,
   temperature: 0,
+  // A model that repeats itself is the most common way a small model burns a turn.
+  loopGuard: true,
   language: "zh",
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   workdir: process.cwd(),
@@ -332,6 +342,7 @@ const NUMBER_KEYS: Array<keyof Settings> = [
 const BOOLEAN_KEYS: Array<keyof Settings> = [
   "dryRun",
   "autoApprove",
+  "loopGuard",
   "sandbox",
   "autoOpenBrowser",
   "remember",
@@ -539,6 +550,7 @@ function fromEnv(): Record<string, unknown> {
   if (env.OPENAI_BASE_URL ?? env.AGENT_BASE_URL) patch.baseUrl = env.OPENAI_BASE_URL ?? env.AGENT_BASE_URL;
   if (env.OPENAI_API_KEY ?? env.AGENT_API_KEY) patch.apiKey = env.OPENAI_API_KEY ?? env.AGENT_API_KEY;
   if (env.AGENT_MAX_STEPS) patch.maxSteps = env.AGENT_MAX_STEPS;
+  if (env.AGENT_LOOP_GUARD) patch.loopGuard = env.AGENT_LOOP_GUARD;
   if (env.AGENT_LANGUAGE) patch.language = env.AGENT_LANGUAGE;
   if (env.AGENT_SYSTEM_PROMPT) patch.systemPrompt = env.AGENT_SYSTEM_PROMPT;
   if (env.AGENT_WORKDIR) patch.workdir = env.AGENT_WORKDIR;
@@ -758,6 +770,7 @@ export function toConfig(settings: Settings = current): Config {
     model: settings.model,
     maxSteps: settings.maxSteps,
     temperature: settings.temperature,
+    loopGuard: settings.loopGuard !== false,
     language: settings.language,
     systemPrompt: settings.systemPrompt,
     workdir: settings.workdir,

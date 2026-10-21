@@ -20,7 +20,7 @@ import {
   toConfig,
   updateSettings,
 } from "./settings.js";
-import { configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
+import { configureErrorHints, configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
 import { auditLog, configureAudit } from "./audit.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { VERSION } from "./version.js";
@@ -207,6 +207,9 @@ function applySettings(): string[] {
   const notices: string[] = [];
   configurePowerShell(s.powershell);
   configurePowerShellDiagnostics(s.psEnglishErrors);
+  // The hint after a failed command follows the interface language; the PowerShell
+  // text itself stays English (psEnglishErrors).
+  configureErrorHints(s.language);
   // The audit log is a setting like any other: switching it off mid-run stops both
   // the log file and the undo stack.
   configureAudit(s.auditLog);

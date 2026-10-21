@@ -48,6 +48,7 @@ jobs:
       # models     - LM Studio / Ollama discovery + merging against mock servers
       # mode       - agent modes, JSON repair, text encodings, CLIXML
       # sandbox    - the folder fence and the command fence (paths, junctions, scripts)
+      # agent      - the agent loop: loop guard, step limit, result trimming
       # i18n       - both dictionaries, the HTML attributes and the help text
       # api        - the real server on a temp data folder + a mock model
       # audit      - the audit log and undo, against a temp folder (live registry on Windows)
@@ -78,7 +79,7 @@ jobs:
         run: npm run typecheck
 
       - name: suites that must pass anywhere
-        run: npm test && npm run test:providers && npm run test:mcp && npm run test:models && npm run test:mode && npm run test:i18n && npm run test:audit
+        run: npm test && npm run test:providers && npm run test:mcp && npm run test:models && npm run test:mode && npm run test:agent && npm run test:i18n && npm run test:audit
 
       - name: the Windows checks skip cleanly off Windows
         run: npm run test:windows

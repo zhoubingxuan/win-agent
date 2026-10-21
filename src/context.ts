@@ -61,12 +61,21 @@ export interface ContextResult {
   stats: ContextStats;
 }
 
-function squeeze(text: string, cap: number): string {
+/**
+ * Keep the head and the tail of a long text and say how much is missing from the
+ * middle. Used both when budgeting a request and when a tool result is stored, so
+ * one huge output cannot fill the window (or the conversation file) on its own.
+ */
+export function capText(text: string, cap: number, note = "characters trimmed to save context"): string {
   if (text.length <= cap) return text;
   const head = Math.floor(cap * 0.7);
   const tail = Math.max(0, cap - head);
   const removed = text.length - cap;
-  return `${text.slice(0, head)}\n... (${removed} characters trimmed to save context) ...\n${text.slice(-tail)}`;
+  return `${text.slice(0, head)}\n... (${removed} ${note}) ...\n${text.slice(-tail)}`;
+}
+
+function squeeze(text: string, cap: number): string {
+  return capText(text, cap);
 }
 
 /** Index of the next user message after `from`, or -1. */

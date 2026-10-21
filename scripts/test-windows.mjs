@@ -11,7 +11,15 @@ import path from "node:path";
 import { buildTaskScript } from "../src/tools/automation.js";
 import { updateSettings } from "../src/settings.js";
 import { createWindowsTools } from "../src/tools/index.js";
-import { detectElevation, isElevated, powerShellInfo, resolvePowerShell, runPowerShell } from "../src/util/ps.js";
+import {
+  configureErrorHints,
+  detectElevation,
+  explainPowerShellError,
+  isElevated,
+  powerShellInfo,
+  resolvePowerShell,
+  runPowerShell,
+} from "../src/util/ps.js";
 
 let failures = 0;
 let passed = 0;
@@ -117,6 +125,33 @@ try {
         // read-only is the point of the test
       }
     }
+  }
+
+  section("error hints and huge output");
+  {
+    // The hint is the part a small model can act on: "access is denied" on its own
+    // sends it back to the same call. Each failure class gets its own sentence.
+    const cases = [
+      ["a syntax error", "ParserError: At line:1 char:5 + ParserError: Unexpected token '}' in expression or statement.", /syntax error/],
+      ["an unknown command", "Get-Thing : The term 'Get-Thing' is not recognized as the name of a cmdlet, function, script file, or operable program.", /does not exist on this machine/],
+      ["a locked file", "Copy-Item : The process cannot access the file 'x' because it is being used by another process.", /open in another program/],
+      ["an unresolvable host", "Test-Connection : The remote name could not be resolved: 'nope.invalid'", /could not be resolved/],
+      ["a missing parameter", "Copy-Item : Cannot bind argument to parameter 'Path' because it is null.", /parameter name or type is wrong/],
+      ["a full disk", "Write-Output : There is not enough space on the disk.", /disk is full/],
+    ];
+    for (const [label, text, pattern] of cases) {
+      const hint = explainPowerShellError(text);
+      check(`${label} gets its own hint`, pattern.test(hint), hint);
+    }
+    configureErrorHints("zh");
+    check("the hint follows the interface language", /语法错误/.test(explainPowerShellError("ParserError: Unexpected token")));
+    configureErrorHints("en");
+
+    // 1.2 million characters: this used to be accumulated into one JS string, so a
+    // `Get-Content` of a big log could take the whole agent process with it.
+    const big = await runPowerShell("'x' * 1200000", { timeoutMs: 60_000 });
+    check("huge output is capped", /characters dropped/.test(big.stdout), String(big.stdout.length));
+    check("and the cap is about a megabyte", big.stdout.length < 1_100_000, String(big.stdout.length));
   }
 
   section("timeouts");

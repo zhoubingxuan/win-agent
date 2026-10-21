@@ -237,6 +237,14 @@
               approved. Turn it off to work outside the folder.
             </p>
 
+            <label class="switch"><input type="checkbox" id="s-loopGuard" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.loopGuard">Stop repeated calls</span></label>
+            <p class="muted" data-i18n="settings.loopGuardHint">
+              On by default. When the model asks for exactly the same call and gets exactly the same
+              answer twice, the third one is answered with a note instead of being run again - the
+              commonest way a small model burns a turn. A poll whose answer keeps changing is never
+              stopped, and switching this off returns to plain step-by-step execution.
+            </p>
+
             <h4 data-i18n="settings.mode">Agent mode — how closely the model is supervised</h4>
             <p class="muted" data-i18n="settings.modeHint">
               Guided mode is for small local models: the agent adds a numbered operating procedure to

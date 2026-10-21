@@ -1,7 +1,7 @@
 import type { AgentMode, Config, Language } from "./settings.js";
 import { GUIDED_INSTRUCTIONS, LANGUAGE_INSTRUCTIONS } from "./settings.js";
 import { chat, type ChatMessage, type ToolCall, type Usage } from "./llm.js";
-import { planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
+import { capText, planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import type { ToolRegistry } from "./tools/index.js";
 
 export interface AgentEvents {
@@ -136,6 +136,73 @@ export function blankReply(language: Language | undefined, thinking: number, raw
     : `(no answer: the model returned an empty reply${spent}. Send it again, or pick another model.)`;
 }
 
+/**
+ * A call already made in this turn, and the answer it got. The loop guard uses
+ * the pair: the same call twice is a pattern, the same call *and* the same answer
+ * twice is a dead end.
+ */
+interface CallMemory {
+  signature: string;
+  result: string;
+}
+
+/** How many recent calls the loop guard remembers (it only ever looks at two). */
+const CALL_MEMORY = 6;
+
+/** Sort object keys so `{"a":1,"b":2}` and `{"b":2,"a":1}` are one signature. */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, inner]) => [key, canonical(inner)]),
+    );
+  }
+  return value;
+}
+
+/** `name:{sorted json}` - what "the same call" means for the loop guard. */
+export function callSignature(call: ToolCall): string {
+  let args = call.function.arguments ?? "";
+  try {
+    args = JSON.stringify(canonical(JSON.parse(args)));
+  } catch {
+    args = args.trim();
+  }
+  return `${call.function.name}:${args}`;
+}
+
+/** True when the last two remembered calls are this one and returned the same thing. */
+function stuckInALoop(memory: CallMemory[], signature: string): boolean {
+  const last = memory.slice(-2);
+  return (
+    last.length === 2 &&
+    last.every((entry) => entry.signature === signature && entry.result === last[0].result)
+  );
+}
+
+/**
+ * The answer a repeated call gets instead of being run a third time. It is a tool
+ * result, not an error: the model is being told what it cannot learn by trying
+ * again, and what to do instead.
+ */
+export function repeatedCall(language: Language | undefined, name: string, args: string): string {
+  const zh = language === "zh";
+  const shown = args.length > 120 ? `${args.slice(0, 120)}…` : args;
+  return zh
+    ? `已拦截：同一个调用（${name} ${shown}）已经连续两次返回完全相同的结果，再跑一次也不会变。换一种做法：改参数、换工具，或者把目前的结果直接告诉用户。`
+    : `Blocked: this exact call (${name} ${shown}) has already returned the same result twice, so running it again cannot change anything. Change the argument, use another tool, or tell the user what you have found.`;
+}
+
+/** What the user sees when the step limit stopped the turn. */
+export function stepLimit(language: Language | undefined, steps: number): string {
+  const zh = language === "zh";
+  return zh
+    ? `（已连续执行 ${steps} 步仍未完成：达到“最大步数”上限。发送“继续”会接着做；也可以在 Settings 里把最大步数调大，或者把任务拆小一点。）`
+    : `(stopped after ${steps} steps without finishing: the "Max steps" limit was reached. Send "continue" and I will carry on; you can also raise "Max steps" in Settings, or split the task into smaller pieces.)`;
+}
+
 /** An agent that drives the model and the Windows tools until a task is done. */
 export class Agent {
   private readonly history: ChatMessage[];
@@ -213,6 +280,9 @@ export class Agent {
     // Characters of "thinking" this turn produced. When the model answers with
     // nothing, this number is the only clue about where the answer went.
     let thinking = 0;
+
+    // The loop guard's memory: what was called and what came back, this turn only.
+    const memory: CallMemory[] = [];
 
     for (let step = 1; step <= this.config.maxSteps; step++) {
       signal?.throwIfAborted();
@@ -297,7 +367,19 @@ export class Agent {
       for (const call of go) {
         signal?.throwIfAborted();
         this.events.onToolCall?.(call.function.name, call.function.arguments);
-        const result = await this.tools.execute(call.function.name, call.function.arguments);
+        const signature = callSignature(call);
+        let result: string;
+        if (this.config.loopGuard !== false && stuckInALoop(memory, signature)) {
+          // Nothing new can come of it: answer instead of running it a third time.
+          result = repeatedCall(this.config.language, call.function.name, call.function.arguments);
+        } else {
+          result = await this.tools.execute(call.function.name, call.function.arguments);
+          // One result cannot be allowed to fill the window (or the conversation
+          // file) on its own; the note says how much of the middle is missing.
+          result = capText(result, this.toolCap(), "characters trimmed; use a narrower call if you need the middle");
+          memory.push({ signature, result });
+          if (memory.length > CALL_MEMORY) memory.shift();
+        }
         this.events.onToolResult?.(call.function.name, result);
         this.history.push({
           role: "tool",
@@ -319,7 +401,7 @@ export class Agent {
       }
     }
 
-    const fallback = `(stopped after ${this.config.maxSteps} steps without finishing the task)`;
+    const fallback = stepLimit(this.config.language, this.config.maxSteps);
     this.history.push({ role: "assistant", content: fallback });
     this.events.onAssistantText?.(fallback);
     return fallback;

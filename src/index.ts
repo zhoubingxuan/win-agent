@@ -4,7 +4,7 @@ import { stdin, stdout } from "node:process";
 import fs from "node:fs";
 import { Agent } from "./agent.js";
 import { getSettings, loadSettings, settingsFile, toConfig } from "./settings.js";
-import { configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
+import { configureErrorHints, configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { mcp } from "./mcp.js";
 import { VERSION } from "./version.js";
@@ -83,6 +83,7 @@ async function main(): Promise<void> {
   const settings = getSettings();
   configurePowerShell(settings.powershell);
   configurePowerShellDiagnostics(settings.psEnglishErrors);
+  configureErrorHints(settings.language);
   if (fs.existsSync(settings.workdir)) {
     try {
       process.chdir(settings.workdir);

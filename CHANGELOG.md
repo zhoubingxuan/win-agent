@@ -13,6 +13,55 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-10-21
+
+A small model does not usually fail by being unable to do the task. It fails by
+repeating itself, by drowning in one huge tool result, and by reading an error as
+"try again". This version handles all three, and each one is visible in the chat log
+instead of being a mystery.
+
+### Added
+
+- **The loop guard** (`loopGuard`, on by default): when the model asks for *the same
+  call* and gets *the same answer* twice, the third one is answered instead of run —
+  `Blocked: this exact call (files {"action":"read","path":"…"}) has already returned
+  the same result twice, so running it again cannot change anything. Change the
+  argument, use another tool, or tell the user what you have found.` Only a genuine
+  dead end is caught: a poll whose answer keeps changing, a call with a different
+  argument (compared by canonical JSON, so key order does not matter), or the same call
+  after something else in between are all unaffected. Switchable in Settings, via
+  `/set loopGuard off`, or `AGENT_LOOP_GUARD=false`.
+- **The step limit says what it is.** Hitting `maxSteps` used to end the turn with
+  `(stopped after 12 steps without finishing the task)`. It now names the limit, the
+  number, and the way on — send "continue", raise the setting, or split the task — in
+  the interface language.
+- **One tool result cannot eat the window.** A result is trimmed to its head and tail
+  (`... (N characters trimmed; use a narrower call if you need the middle) ...`) before
+  it is stored, so the conversation file and the next request both stay bounded.
+- **PowerShell output is capped while it is read** (~1 MB: 600 KB head + 400 KB tail,
+  with a note saying how much was dropped). Accumulating a `Get-Content` of a 2 GB log
+  into one JS string used to be a way to take the whole agent process down.
+- **Error classification, in the interface language.** After a failed command the
+  model now gets a sentence it can act on: syntax error, unknown cmdlet, locked file,
+  parameter binding, path, DNS, disk full, timeout — alongside the existing permission
+  (which says whether win-agent is elevated) and service hints. The PowerShell text
+  above the hint stays English; the hint follows `language`, and is switchable in the
+  same way every other behaviour is.
+- **`npm run test:agent`** (22 checks): the agent loop against a mock endpoint and a
+  fake tool — the guard blocking (and not blocking), the step limit in both languages,
+  a 200 000-character result being trimmed, and the signature canonicalisation. It runs
+  anywhere, with no model and no Windows.
+
+### Changed
+
+- `test:windows` grew to 66 checks: one per error class, the hint following the
+  interface language, and a real 1.2-million-character stream being capped.
+- Docs: a new [Staying on the rails](README.md#staying-on-the-rails) section with the
+  switches, `examples/stability.md` (a blocked call, a run that hits the limit, a
+  trimmed result, the prefix glossary: `Error:` / `Refused:` / `Blocked:` /
+  `Cancelled by user.` / `DRY RUN:`), and the settings, environment and test tables.
+
+
 ## [1.6.0] — 2026-10-19
 
 Two halves of the same promise: the sandbox stops taking tools away and starts

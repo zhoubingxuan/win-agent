@@ -29,6 +29,8 @@ import { resolveCommand } from "./exec.js";
 let POWERSHELL = "powershell.exe";
 /** When true (the default) PowerShell error messages are forced to English. */
 let ENGLISH_ERRORS = true;
+/** Language of the one-line hint appended to a failure (`en` or `zh`). */
+let HINT_LANGUAGE: "en" | "zh" = "en";
 /** Cached PATH lookup for `POWERSHELL`, so every tool call does not rescan PATH. */
 let resolvedPowerShell: { exe: string; found: boolean; tried: string[] } | null = null;
 
@@ -56,6 +58,14 @@ export function configurePowerShellDiagnostics(englishErrors: boolean): void {
   ENGLISH_ERRORS = englishErrors !== false;
   // The panel in the UI shows this flag; keep the cached answer honest.
   if (cachedInfo) cachedInfo = { ...cachedInfo, englishErrors: ENGLISH_ERRORS };
+}
+
+/**
+ * Language of the hint appended to a failure (`language` setting). The PowerShell
+ * text itself stays English; the one line that says what to do follows the UI.
+ */
+export function configureErrorHints(language: string | undefined): void {
+  HINT_LANGUAGE = language === "zh" ? "zh" : "en";
 }
 
 export function currentPowerShell(): string {
@@ -209,6 +219,39 @@ function killTree(pid: number | undefined, fallback: () => void): void {
   }
 }
 
+/**
+ * How much of each stream is kept. A `Get-Content` of a 2 GB log used to be
+ * accumulated into one JS string, which is how a tool call could take the whole
+ * process down with it. Past this the middle is dropped and the text says so.
+ */
+const STREAM_HEAD = 600_000;
+const STREAM_TAIL = 400_000;
+const MAX_STREAM_CHARS = STREAM_HEAD + STREAM_TAIL;
+
+/** Collect a stream, keeping the head and the tail and counting what was dropped. */
+function collector(): { push: (chunk: string) => void; text: () => string } {
+  let head = "";
+  let tail = "";
+  let dropped = 0;
+  return {
+    push(chunk: string) {
+      head += chunk;
+      if (head.length > STREAM_HEAD) {
+        tail += head.slice(STREAM_HEAD);
+        head = head.slice(0, STREAM_HEAD);
+        if (tail.length > STREAM_TAIL) {
+          dropped += tail.length - STREAM_TAIL;
+          tail = tail.slice(-STREAM_TAIL);
+        }
+      }
+    },
+    text() {
+      if (dropped === 0) return head + tail;
+      return `${head}\n... (${dropped} characters dropped: the output was larger than ${MAX_STREAM_CHARS}) ...\n${tail}`;
+    },
+  };
+}
+
 /** Run a PowerShell script and resolve with the raw result (never throws on non-zero exit). */
 export function runPowerShell(script: string, options: PsOptions = {}): Promise<PsResult> {
   const full = `${prologue()}; ${script}`;
@@ -229,8 +272,8 @@ export function runPowerShell(script: string, options: PsOptions = {}): Promise<
   return new Promise((resolve, reject) => {
     let settled = false;
     const child = spawn(exe, argv, { windowsHide: true, cwd: options.cwd });
-    let stdout = "";
-    let stderr = "";
+    const out = collector();
+    const err = collector();
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -240,17 +283,17 @@ export function runPowerShell(script: string, options: PsOptions = {}): Promise<
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
+      out.push(chunk);
     });
     child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
+      err.push(chunk);
     });
     child.on("error", (error) => {
       clearTimeout(timer);
       if (settled) return;
       settled = true;
-      const err = error as NodeJS.ErrnoException;
-      if (err.code === "ENOENT" && !found) {
+      const failure = error as NodeJS.ErrnoException;
+      if (failure.code === "ENOENT" && !found) {
         reject(
           new Error(
             `PowerShell was not found. The setting "PowerShell binary" is ${JSON.stringify(POWERSHELL)} ` +
@@ -259,14 +302,15 @@ export function runPowerShell(script: string, options: PsOptions = {}): Promise<
         );
         return;
       }
-      reject(err);
+      reject(failure);
     });
     child.on("close", (code) => {
       clearTimeout(timer);
       if (settled) return;
       settled = true;
+      const stdout = out.text();
       // Windows PowerShell reports errors as CLIXML when stderr is redirected.
-      const clean = stripClixml(stderr);
+      const clean = stripClixml(err.text());
       if (timedOut) {
         resolve({
           code: code ?? -1,
@@ -379,14 +423,76 @@ async function detectPowerShellInfo(): Promise<PowerShellInfo> {
   return cachedInfo;
 }
 
+/** One classification rule: what it matches, and what to tell the model to do. */
+interface ErrorHint {
+  test: RegExp;
+  en: string;
+  zh: string;
+}
+
+/**
+ * The failures a small model actually meets, in the order they have to be tested:
+ * the more specific pattern first, because PowerShell's text for a missing command
+ * also contains "does not exist".
+ */
+const ERROR_HINTS: ErrorHint[] = [
+  {
+    test: /did not finish within \d+ ms and was killed/i,
+    en: "the command was killed because it ran too long - do less per call (one file, one folder) or split it into steps",
+    zh: "命令跑太久被终止了——每次少做一点（一个文件、一个目录），或者拆成几步",
+  },
+  {
+    test: /cannot find any service|does not exist as an installed service/i,
+    en: 'use the short service name, e.g. Spooler - "services list" shows the names',
+    zh: '用短服务名，例如 Spooler——"services list" 会列出名字',
+  },
+  {
+    test: /being used by another process|cannot access the file .* because it is being used|\b0x80070020\b/i,
+    en: "the file is open in another program - close it (or ask the user to) and try again",
+    zh: "这个文件正被别的程序占用——先关掉它（或请用户关掉），再重试",
+  },
+  {
+    test: /parsererror|unexpected token|missing closing|missing the terminator|unexpected end of|unexpected '}'/i,
+    en: "the script itself has a syntax error - fix the quotes/brackets before running it again",
+    zh: "脚本本身有语法错误——先修好引号/括号，再重新运行",
+  },
+  {
+    test: /cannot bind argument|a parameter cannot be found that matches parameter name|missing an argument for parameter/i,
+    en: "a parameter name or type is wrong - check the cmdlet's parameters (Get-Help <cmdlet> -Parameter *)",
+    zh: "参数名或参数类型不对——用 Get-Help <cmdlet> -Parameter * 看正确的参数",
+  },
+  {
+    test: /is not recognized as the name of a cmdlet|the term .* is not recognized|commandnotfoundexception/i,
+    en: "that command does not exist on this machine - check the spelling, or use the structured tool instead",
+    zh: "这台机器上没有这个命令——检查拼写，或者改用结构化工具",
+  },
+  {
+    test: /cannot find path|cannot find the file|the system cannot find the file specified|does not exist|no such file/i,
+    en: "the path does not exist - pass a full path, and check the spelling of every folder",
+    zh: "路径不存在——传完整路径，并逐个检查目录名是否拼对",
+  },
+  {
+    test: /no such host|remote name could not be resolved|name or service not known|network path was not found|could not resolve/i,
+    en: "the name or the network path could not be resolved - check the spelling and whether the machine is reachable",
+    zh: "解析不到这个主机名或网络路径——检查拼写以及目标机器是否可达",
+  },
+  {
+    test: /not enough space|disk is full|\b0x80070070\b/i,
+    en: "the disk is full - free some space or write somewhere else",
+    zh: "磁盘满了——清理一些空间，或者写到别的位置",
+  },
+];
+
 /**
  * Permission and "not found" failures are the two Windows errors a model cannot
  * fix by itself. Turn them into one sentence with the next step, so the model
- * stops retrying the same call.
+ * stops retrying the same call. The sentence follows the interface language; the
+ * PowerShell text above it stays English (see ENGLISH_ERRORS).
  */
 export function explainPowerShellError(text: string): string {
   const body = text.trim();
   if (!body) return body;
+  const zh = HINT_LANGUAGE === "zh";
 
   const permission =
     /access is denied|access to the path .* is denied|requires elevation|requested operation requires elevation|denied by policy|\b0x80070005\b|requested registry access is not allowed|cannot open.*for writing/i.test(
@@ -394,24 +500,26 @@ export function explainPowerShellError(text: string): string {
     );
   if (permission) {
     if (elevated === false) {
-      return `${body}\n(this needs administrator rights and win-agent is NOT elevated - restart win-agent from an elevated PowerShell, or ask the user to do it)`;
+      return `${body}\n(${
+        zh
+          ? "这需要管理员权限，而 win-agent 不是以管理员身份运行的——请从管理员 PowerShell 重新启动 win-agent，或请用户自己来做"
+          : "this needs administrator rights and win-agent is NOT elevated - restart win-agent from an elevated PowerShell, or ask the user to do it"
+      })`;
     }
     if (elevated === null) {
-      return `${body}\n(this usually means administrator rights are required)`;
+      return `${body}\n(${
+        zh ? "这通常意味着需要管理员权限" : "this usually means administrator rights are required"
+      })`;
     }
-    return `${body}\n(already elevated, so the file or object itself is protected - check its permissions or whether it is in use)`;
+    return `${body}\n(${
+      zh
+        ? "已经是管理员了，所以是这个文件或对象本身受保护——检查它的权限，或者它是否正被占用"
+        : "already elevated, so the file or object itself is protected - check its permissions or whether it is in use"
+    })`;
   }
 
-  const notFound =
-    /is not recognized as the name of a cmdlet|the term .* is not recognized|cannot find the path|does not exist|no such file/i.test(
-      body,
-    );
-  if (notFound) {
-    return `${body}\n(check the spelling and pass a full path, e.g. C:\\Users\\Name\\file.txt)`;
-  }
-
-  if (/cannot find any service|does not exist as an installed service/i.test(body)) {
-    return `${body}\n(use the short service name, e.g. Spooler - "services list" shows the names)`;
+  for (const rule of ERROR_HINTS) {
+    if (rule.test.test(body)) return `${body}\n(${zh ? rule.zh : rule.en})`;
   }
 
   return body;

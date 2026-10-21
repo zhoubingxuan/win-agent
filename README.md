@@ -110,7 +110,8 @@ No other runtime dependency: the web UI is plain HTML/CSS/JS served by `node:htt
 [Windows compatibility notes](examples/windows.md),
 [custom commands](examples/custom-commands.md),
 [MCP servers](examples/mcp.md),
-[HTTP API scripts](examples/api.md) and
+[HTTP API scripts](examples/api.md),
+[staying on the rails](examples/stability.md) and
 [ready-made `settings.json` files](examples/settings.md).
 Every one of them is written against the code in this repository.
 
@@ -307,6 +308,31 @@ run with your rights and are not confined.
 
 `examples/sandbox.md` shows a refused path, a refused script, the same task with the
 sandbox off, and what the model is told instead.
+
+---
+
+## Staying on the rails
+
+A small model's two failure modes are not "it cannot do the task" — they are **it
+burns the whole turn repeating itself** and **one tool result eats the window**. Both
+are handled, and both are switchable.
+
+| What happens | What the agent does |
+| --- | --- |
+| The model asks for the *same call* and gets the *same answer* twice | the third one is answered, not run: `Blocked: this exact call (files read {"path":"C:\\a.txt"}) has already returned the same result twice…`. A call whose answer changed (a poll) and a call with a different argument are never blocked — only a genuine dead end is. |
+| The step limit is reached | the turn ends with `(stopped after 12 steps without finishing: the "Max steps" limit was reached. Send "continue" and I will carry on; …)` — the limit, the number, and the way on, in the interface language. |
+| A tool returns more than the window allows | the result is trimmed to the head and the tail with `... (N characters trimmed; use a narrower call if you need the middle) ...`, and *that* is what is stored in the conversation — not the 200 KB. |
+| PowerShell output is enormous | the stream itself is capped at ~1 MB (600 KB head + 400 KB tail) while it is being read, so `Get-Content` on a 2 GB log cannot take the process down. |
+| A command fails | one hint after the error, in the interface language: a syntax error is `the script itself has a syntax error`, an unknown cmdlet is `that command does not exist on this machine`, a locked file is `the file is open in another program`, plus permission (which says whether win-agent is elevated), service, path, parameter, DNS and disk-full cases. The PowerShell text above the hint stays English. |
+
+| Switch | Default | What it does |
+| --- | --- | --- |
+| `loopGuard` | `true` | the repeated-call block above; switch it off for plain step-by-step execution |
+| `maxSteps` | `12` | how many tool rounds one turn may take (1–100) |
+| `psEnglishErrors` | `true` | force PowerShell error text to English (the hint still follows the interface) |
+
+`examples/stability.md` shows a blocked call, a run that hits the step limit, and a
+trimmed result.
 
 ---
 
@@ -934,6 +960,7 @@ with a message and nothing changes.
 | `activeProfile` | string | `local` | which endpoint is in use |
 | `maxSteps` | number | `12` | tool-calling rounds per user turn (1–100) |
 | `temperature` | number | `0` | 0–2 |
+| `loopGuard` | boolean | `true` | refuse a third identical call that already returned the same answer twice (see [Staying on the rails](#staying-on-the-rails)) |
 | `agentMode` | `"guided"` \| `"normal"` | `guided` | supervision for small local models (see [Agent modes](#agent-modes--guided-vs-normal)) |
 | `verbosity` | `"answer"` \| `"thinking"` \| `"full"` | `answer` | how much of the process the chat log shows (see [Output detail](#output-detail)) |
 | `auditLog` | boolean | `true` | append every change to `data/audit.jsonl` and keep the undo stack (see [Audit log and undo](#audit-log-and-undo)) |
@@ -979,6 +1006,7 @@ on. Every variable is the upper-case setting name with an `AGENT_` prefix:
 | `AGENT_BASE_URL` | `baseUrl` | `OPENAI_BASE_URL` is accepted too |
 | `AGENT_API_KEY` | `apiKey` | `OPENAI_API_KEY` is accepted too |
 | `AGENT_MAX_STEPS` | `maxSteps` | |
+| `AGENT_LOOP_GUARD` | `loopGuard` | `true` / `false` |
 | `AGENT_LANGUAGE` | `language` | `en` / `zh` |
 | `AGENT_SYSTEM_PROMPT` | `systemPrompt` | |
 | `AGENT_WORKDIR` | `workdir` | |
@@ -1267,6 +1295,7 @@ scripts/
   test-isolation.mjs  two copies never share data or a version number
   test-mode.mjs       agent modes + JSON repair + encodings (model-free, any platform)
   test-sandbox.mjs    the folder fence and the command fence (model-free, Windows paths)
+  test-agent.mjs      the agent loop: loop guard, step limit, result trimming (mock model)
   test-i18n.mjs       the en/zh dictionaries, the HTML attributes and the help text
   test-docs.mjs       the docs against the code: routes, settings, commands, links
   test-api.mjs        the real HTTP server + a mock model, on a temp data folder
@@ -1313,6 +1342,7 @@ npm run test:models         # local model sync: LM Studio / Ollama discovery + m
 npm run test:isolation      # two copies never share data or a version number
 npm run test:mode           # agent modes, JSON repair, encodings (no model needed)
 npm run test:sandbox        # the folder fence and the command fence (no model needed)
+npm run test:agent          # the agent loop: guard, step limit, trimming (mock model)
 npm run test:i18n           # both dictionaries, the HTML keys and the help text
 npm run test:docs           # the docs against the code: routes, settings, links
 npm run test:api            # the whole HTTP API, against a mock model
@@ -1371,6 +1401,11 @@ Four suites exist specifically to keep this repository honest as it grows:
   the reference table is a real setting **with the documented default**, every
   `/command` in the tables is implemented, every `AGENT_*` variable exists, every
   relative link and every `#anchor` resolves, and every example file is indexed.
+- **`test:agent`** drives the real agent loop against a mock model and a fake tool:
+  the same call answered with the same result twice is not run a third time, a poll
+  whose answer changes never is, the step limit ends the turn with a message that
+  names the limit and the way on (in both languages), and a 200 000-character tool
+  result is trimmed with a note before it is stored.
 - **`test:audit`** records real changes in a temp folder and then reverses them for
   real: a file is written, appended to, edited, moved, copied and deleted (a folder
   tree included), registry values are set and removed, an environment variable is

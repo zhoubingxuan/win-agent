@@ -158,6 +158,9 @@ const I18N = {
     "settings.sandboxHint":
       "Sandbox (on by default): every file path has to point inside the working directory, and a PowerShell script is read before it runs - a path that leaves the folder, a $env: that resolves outside it, or a disk-destroying command is refused instead of approved. Turn it off to work outside the folder.",
     "settings.toolsWithheld": "not offered right now: {0}",
+    "settings.loopGuard": "Stop repeated calls",
+    "settings.loopGuardHint":
+      "On by default. When the model asks for exactly the same call and gets exactly the same answer twice, the third one is answered with a note instead of being run again - the commonest way a small model burns a turn. A poll whose answer keeps changing is never stopped, and switching this off returns to plain step-by-step execution.",
     "settings.savedFile": "saved to {0}",
     "settings.saved": "saved: {0}",
     "settings.noChanges": "no changes",
@@ -397,6 +400,9 @@ const I18N = {
     "settings.sandboxHint":
       "沙箱（默认开启）：文件路径必须落在工作目录内部；PowerShell 脚本在执行前会先被读一遍——路径离开目录、$env: 解析到外面、或涉及毁盘的命令，都会被拒绝而不是送进审批。需要在目录之外操作时把它关掉。",
     "settings.toolsWithheld": "当前不提供：{0}",
+    "settings.loopGuard": "拦截原地打转的调用",
+    "settings.loopGuardHint":
+      "默认开启。同一个调用连续两次返回完全相同的结果时，第三次不再执行，而是回一条说明——这是小模型最常白烧步数的方式。结果一直在变化的轮询不会被拦；关掉它就回到普通的逐步执行。",
     "settings.savedFile": "已保存到 {0}",
     "settings.saved": "已保存：{0}",
     "settings.noChanges": "没有变化",
@@ -1789,6 +1795,7 @@ function fillSettingsForm(s) {
   el("s-psEnglishErrors").checked = s.psEnglishErrors !== false;
   el("s-auditLog").checked = s.auditLog !== false;
   el("s-undoRetentionDays").value = s.undoRetentionDays ?? 7;
+  el("s-loopGuard").checked = s.loopGuard !== false;
   setVerbosityControls(s.verbosity);
   renderModeState();
   customTools = (s.customTools ?? []).map((c) => ({ ...c }));
@@ -1915,6 +1922,7 @@ async function saveSettings() {
     maxRetries: Number(el("s-maxRetries").value) || 0,
     dryRun: el("s-dryRun").checked,
     autoApprove: el("s-autoApprove").checked,
+    loopGuard: el("s-loopGuard").checked,
     sandbox: el("s-sandbox").checked,
     autoOpenBrowser: el("s-autoOpenBrowser").checked,
     stream: el("s-stream").checked,
