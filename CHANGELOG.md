@@ -13,6 +13,62 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.0.2] — 2026-10-22
+
+Rollback becomes something you can see and pick, instead of a stack you have to
+reason about.
+
+### Added
+
+- **The files a turn changed, under the answer.** In detail mode (`verbosity: full`)
+  every answer is followed by a card listing what that turn touched — one row per
+  file, with the tool and the action (`files write`, `files edit`, `files delete`).
+  The turn's changes are grouped by a turn id stamped on each audit entry, so the
+  card is built from the change log and never from a guess. Several changes to the
+  same file in one turn show once, pointing at the last change (the one a rollback
+  should start from).
+- **Right-click a row: two verbs.**
+  - **Undo this change** — back to how the file was *before* change `#N` (the old
+    undo stack, now addressable per file).
+  - **Restore this version** — make the file exactly what change `#N` produced,
+    even if later turns overwrote it. Every change that leaves one file behind now
+    saves a copy of the result in `data/versions/` (kept for `undoRetentionDays`),
+    and the restore is itself a recorded, undoable change: a wrong click costs one
+    more click.
+  A row whose change deleted the file (or touched several) has no single "version",
+  so that item is disabled instead of guessing.
+- **`GET /api/turns`** — the last 30 turns of the conversation with their files and
+  live `undoable` / `restorable` / `atVersion` flags.
+- **`POST /api/versions/restore`** with `{ seq }` — the "Restore this version" item
+  as an API call; 400 with the reason when there is no saved copy.
+- **SSE `turn`** — sent when a turn ends, so the card appears without a reload.
+
+### Changed
+
+- **Turn cards survive a reload.** They are saved with the conversation (`turns` in
+  `history.json`, 30 turns) together with the history position they belong to, so
+  reopening the conversation puts them back under the right answer.
+- A row whose file already *is* that version says **file is at this version now**
+  (green) instead of looking like it was undone.
+
+### Fixed
+
+- `history.json` lost `turns` on load (`parseRecord` rebuilt the record from a
+  whitelist) — the cards disappeared after a restart even though they were saved.
+
+### Tests
+
+- `test:audit` 90 checks: the turn grouping, the saved version, restoring it over a
+  newer edit, and undoing that restore.
+- `test:api` 181 checks: a real turn with a mock that calls `files write`, then the
+  card's two verbs through the API (undo → file gone, restore → file back).
+- `test:docs` knows the two new routes; `test:i18n` the new strings.
+- Demoed live in `D:\try` with `qwen/qwen3.8-27b`: create a file → card appears →
+  right-click → undo (file gone) → right-click → restore (file back, marked
+  "当前就是这个版本"); second turn deletes a file → its row offers undo but not
+  "restore this version".
+
+
 ## [2.0.1] — 2026-10-21
 
 A bug the 2.0 demo found, fixed before it could eat anyone's undo stack.

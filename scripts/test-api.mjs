@@ -97,6 +97,41 @@ const mock = http.createServer((req, res) => {
       );
       return;
     }
+    // A turn that really uses a tool: the chat has to list the file it changed, so
+    // the mock asks for `files write` once and then answers.
+    if (JSON.stringify(body.messages ?? []).includes("WRITE_FILE_TEST")) {
+      const finished = (body.messages ?? []).some((entry) => entry.role === "tool");
+      const toolCall = {
+        id: "call-write-1",
+        type: "function",
+        function: {
+          name: "files",
+          arguments: JSON.stringify({ action: "write", path: "turn-demo.txt", content: "from a tool call\n" }),
+        },
+      };
+      res.end(
+        JSON.stringify(
+          finished
+            ? {
+                model: "mock-1",
+                choices: [{ index: 0, message: { role: "assistant", content: "wrote it" }, finish_reason: "stop" }],
+                usage: { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23 },
+              }
+            : {
+                model: "mock-1",
+                choices: [
+                  {
+                    index: 0,
+                    message: { role: "assistant", content: null, tool_calls: [toolCall] },
+                    finish_reason: "tool_calls",
+                  },
+                ],
+                usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 },
+              },
+        ),
+      );
+      return;
+    }
     // A slow turn: the queue checks send a second message while this one is still
     // running, and need it to still be running when they do.
     if (JSON.stringify(body.messages ?? []).includes("SLOW_TURN")) {
@@ -779,6 +814,57 @@ try {
       JSON.stringify(state.history).includes("the queued job"),
       JSON.stringify(state.history).slice(0, 200),
     );
+
+    const wiped = await api("/api/reset", "POST", {});
+    check("the conversation can be reset again", wiped.status === 200);
+  }
+
+  /* ---------------------------------------------------------------------- */
+
+  section("what a turn changed");
+  {
+    // One turn, one tool call: afterwards the chat must know which file it touched,
+    // and both rollback verbs must work on that row through the API.
+    const started = await api("/api/chat", "POST", { message: "WRITE_FILE_TEST please" });
+    check("the turn starts", started.status === 202 && started.data.queued !== true, JSON.stringify(started.data));
+
+    let state = null;
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      state = (await api("/api/state")).data;
+      if (state.running === false && (state.turns ?? []).length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    const turn = (state?.turns ?? []).at(-1);
+    const file = turn?.files?.[0];
+    check("the turn is kept with the file it changed", Boolean(turn && file), JSON.stringify(turn));
+    check("the row names the file the tool wrote", file?.path?.endsWith("turn-demo.txt") === true, file?.path);
+    check("the row can be undone", file?.undoable === true, JSON.stringify(file));
+    check("the version the change produced is saved", file?.restorable === true, JSON.stringify(file));
+    const written = fs.readFileSync(path.join(scratch, "turn-demo.txt"), "utf8");
+    check("the tool really wrote it", written.includes("from a tool call"), written);
+
+    const undo = await api("/api/undo", "POST", { seq: file.seq });
+    check(
+      "undo puts the file back (it did not exist before the change)",
+      undo.data.ok === true && !fs.existsSync(path.join(scratch, "turn-demo.txt")),
+      JSON.stringify(undo.data),
+    );
+    const afterUndo = (await api("/api/turns")).data.turns.at(-1).files[0];
+    check("the row no longer offers that undo", afterUndo.undoable === false, JSON.stringify(afterUndo));
+
+    const restore = await api("/api/versions/restore", "POST", { seq: file.seq });
+    check(
+      "restoring the version writes that content back",
+      restore.status === 200 &&
+        fs.readFileSync(path.join(scratch, "turn-demo.txt"), "utf8").includes("from a tool call"),
+      JSON.stringify(restore.data),
+    );
+    const unknown = await api("/api/versions/restore", "POST", { seq: 99_999 });
+    check("restoring an unknown change is refused", unknown.status === 400, JSON.stringify(unknown.data));
+    const nonsense = await api("/api/versions/restore", "POST", { seq: 0 });
+    check("a bad seq is a 400", nonsense.status === 400);
 
     const wiped = await api("/api/reset", "POST", {});
     check("the conversation can be reset again", wiped.status === 200);

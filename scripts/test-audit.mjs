@@ -14,7 +14,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { AuditLog, auditLog, configureAudit } from "../src/audit.js";
+import { AuditLog, auditLog, configureAudit, setAuditTurn } from "../src/audit.js";
 import { updateSettings } from "../src/settings.js";
 import { createWindowsTools, GUIDED_NO_SHELL } from "../src/tools/index.js";
 import { runPowerShell } from "../src/util/ps.js";
@@ -366,6 +366,53 @@ try {
     check("undoing the newer change restores its own copy", fs.readFileSync(target, "utf8") === "two", fs.readFileSync(target, "utf8"));
     await reopened.undoEntry(entryA.seq);
     check("and the older one still gets its own content back", fs.readFileSync(target, "utf8") === "one", fs.readFileSync(target, "utf8"));
+  }
+
+  /* ---------------------------------------------------------------------- */
+
+  section("one turn groups its changes, and a change can be replayed as a version");
+  {
+    // The chat card lists the files of the turn that is running, and offers two
+    // verbs per file: back to before the change, or forward to what it produced.
+    setAuditTurn("turn-demo");
+    const target = at("versioned.txt");
+    fs.writeFileSync(target, "v1", "utf8");
+    await call("files", { action: "edit", path: target, find: "v1", replace: "v2" });
+    setAuditTurn(null);
+
+    const entries = auditLog().entriesForTurn("turn-demo");
+    check("the change is grouped under that turn", entries.length === 1, String(entries.length));
+    const entry = entries[0];
+    check(
+      "the version the change produced is saved",
+      Boolean(entry?.version) && fs.readFileSync(entry.version.copy, "utf8") === "v2",
+      JSON.stringify(entry?.version),
+    );
+    check(
+      "that saved version is a copy of the result, not the undo copy",
+      entry?.version?.copy !== (entry?.steps?.[0]?.kind === "restore" ? entry.steps[0].backup : null),
+    );
+
+    // Something else changes the file afterwards - the saved version must win.
+    fs.writeFileSync(target, "v3", "utf8");
+    const restored = await auditLog().restoreVersion(entry.seq);
+    check(
+      "restoring the version puts that content back",
+      restored.ok && fs.readFileSync(target, "utf8") === "v2",
+      `${restored.message} / ${fs.readFileSync(target, "utf8")}`,
+    );
+
+    const newest = auditLog().pending()[0];
+    check("the restore is recorded as a change of its own", newest?.action === "restore", JSON.stringify(newest?.action));
+    const undone = await auditLog().undoEntry(newest.seq);
+    check(
+      "so a wrong restore can be undone",
+      undone.ok && fs.readFileSync(target, "utf8") === "v3",
+      `${undone.message} / ${fs.readFileSync(target, "utf8")}`,
+    );
+
+    const unknown = await auditLog().restoreVersion(424242);
+    check("an unknown change is refused, with a reason", !unknown.ok && /no change/.test(unknown.message), unknown.message);
   }
 
   /* ---------------------------------------------------------------------- */

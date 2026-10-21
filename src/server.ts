@@ -21,7 +21,7 @@ import {
   updateSettings,
 } from "./settings.js";
 import { configureErrorHints, configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
-import { auditLog, configureAudit } from "./audit.js";
+import { auditLog, configureAudit, setAuditTurn } from "./audit.js";
 import { deleteSkill, ensureSkillsFolder, findSkill, listSkills, loadSkill, saveSkill, skillsDir } from "./skills.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { VERSION } from "./version.js";
@@ -48,6 +48,8 @@ import {
   installDir,
   type ConversationRecord,
   type CumulativeUsage,
+  type TurnFile,
+  type TurnRecord,
   type UsageEntry,
   type UsageTotals,
 } from "./store.js";
@@ -87,6 +89,70 @@ function history(): ChatMessage[] {
 
 function persistHistory(record: ConversationRecord = conversation): void {
   if (getSettings().remember) saveConversation(record);
+}
+
+/** The last few turns with their file lists are kept per conversation. */
+const MAX_TURN_RECORDS = 30;
+
+/**
+ * The files one turn changed, newest change first, one row per file. A turn that
+ * touched the same file three times shows it once, pointing at the last change -
+ * that is the one a rollback should start from.
+ */
+function turnFiles(turnId: string): TurnFile[] {
+  const files: TurnFile[] = [];
+  const seen = new Set<string>();
+  for (const entry of auditLog().entriesForTurn(turnId).reverse()) {
+    if (entry.action === "undo") continue;
+    for (const target of entry.paths) {
+      const key = target.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      files.push({
+        path: target,
+        seq: entry.seq,
+        action: entry.action,
+        tool: entry.tool,
+        summary: entry.summary,
+        time: entry.time,
+      });
+    }
+  }
+  return files;
+}
+
+/** A turn as the chat shows it: what is still undoable, what still has a version. */
+function turnView(turn: TurnRecord): TurnRecord & {
+  files: Array<TurnFile & { undoable: boolean; restorable: boolean }>;
+} {
+  const pending = new Set(auditLog().pending().map((entry) => entry.seq));
+  const bySeq = new Map(auditLog().list(500).map((entry) => [entry.seq, entry]));
+  return {
+    ...turn,
+    files: turn.files.map((file) => {
+      const entry = bySeq.get(file.seq);
+      return {
+        ...file,
+        undoable: pending.has(file.seq),
+        restorable: Boolean(entry?.version && fs.existsSync(entry.version.copy)),
+        atVersion: entryAtVersion(entry),
+      };
+    }),
+  };
+}
+
+/** True when the file on disk right now is byte-for-byte the saved version. */
+function entryAtVersion(entry: { version?: { path: string; copy: string } | null } | undefined): boolean {
+  const version = entry?.version;
+  if (!version) return false;
+  try {
+    const live = fs.statSync(version.path);
+    const saved = fs.statSync(version.copy);
+    if (!live.isFile() || live.size !== saved.size || live.size > 4 * 1024 * 1024) return false;
+    return fs.readFileSync(version.path).equals(fs.readFileSync(version.copy));
+  } catch {
+    return false;
+  }
 }
 
 /** Usage of the current conversation plus the all-time totals. */
@@ -451,6 +517,9 @@ async function runAgent(message: string): Promise<void> {
   running = true;
   const controller = new AbortController();
   taskAbort = controller;
+  // Everything the tools change while this run is going belongs to this turn, so
+  // the answer can list the files it touched.
+  const turnId = randomUUID();
   broadcast({ type: "user", text: message });
   broadcast({ type: "status", running: true });
 
@@ -501,6 +570,7 @@ async function runAgent(message: string): Promise<void> {
   );
 
   try {
+    setAuditTurn(turnId);
     await agent.run(message, controller.signal);
     // The assistant's text was already streamed as "assistant" events by the
     // agent, so "done" only signals that the turn is over (avoids duplicates).
@@ -515,8 +585,22 @@ async function runAgent(message: string): Promise<void> {
     else broadcast({ type: "error", message: err.message });
   } finally {
     clearInterval(thinkingTimer);
+    setAuditTurn(null);
     // Keep whatever the model managed to do, even when it failed or was stopped.
     convo.messages = agent.getHistory();
+    // The files this turn changed, for the card under the answer. Cheap enough to
+    // rebuild from the log every time, and honest after a stop or an error.
+    const files = turnFiles(turnId);
+    if (files.length > 0) {
+      const turn: TurnRecord = {
+        id: turnId,
+        time: new Date().toISOString(),
+        at: convo.messages.filter((m) => m.role !== "system").length,
+        files,
+      };
+      convo.turns = [...(convo.turns ?? []), turn].slice(-MAX_TURN_RECORDS);
+      broadcast({ type: "turn", turn: turnView(turn) });
+    }
     persistHistory(convo);
     announceCapabilities();
     broadcast({ type: "context", ...contextSnapshot() });
@@ -759,6 +843,7 @@ const server = http.createServer(async (req, res) => {
           catalog: tools.describe({ verbose: s.agentMode === "guided" }),
           settings: publicSettings(),
           history: conversation.messages.filter((m) => m.role !== "system"),
+          turns: (conversation.turns ?? []).map(turnView),
           context: contextSnapshot(),
           capabilities: capabilityReport(),
           memory: {
@@ -1117,6 +1202,7 @@ const server = http.createServer(async (req, res) => {
           enabled: auditLog().isEnabled(),
           file: auditLog().file(),
           undoDir: auditLog().backupDir(),
+          versionsDir: auditLog().versionDir(),
           retentionDays: auditLog().retentionDays(),
           problem: auditLog().error(),
           entries: auditLog().list(limit),
@@ -1126,6 +1212,23 @@ const server = http.createServer(async (req, res) => {
 
       case "GET /api/undo":
         return json(res, 200, { pending: auditLog().pending(), enabled: auditLog().isEnabled() });
+
+      case "GET /api/turns":
+        return json(res, 200, { turns: (conversation.turns ?? []).map(turnView) });
+
+      case "POST /api/versions/restore": {
+        // "Put this file back to the version that change produced" - the other half
+        // of the per-file menu in the chat. It is recorded and undoable itself.
+        const body = await readJsonBody(req);
+        const seq = Number(body.seq);
+        if (!Number.isInteger(seq) || seq < 1) {
+          return json(res, 400, { error: "seq must be a positive integer" });
+        }
+        if (running) return json(res, 409, { error: BUSY });
+        const result = await auditLog().restoreVersion(seq);
+        if (result.ok) broadcast({ type: "audit", undone: 0, ok: true, restored: result.path });
+        return json(res, result.ok ? 200 : 400, result);
+      }
 
       case "POST /api/undo": {
         const body = await readJsonBody(req);

@@ -807,6 +807,7 @@ data/
     2026-10-18_10-15-33.json     one file per filed-away conversation
   audit.jsonl          the change log (also the undo stack)
   undo/                the copies made before a change, kept for undoRetentionDays
+  versions/            a copy of what each change produced, so a file can be put back to that version
   skills/
     <name>/SKILL.md    a procedure the model can load (see [Skills](#skills))
   queue.json           messages waiting for the running turn (survives a restart)
@@ -898,10 +899,24 @@ today, and a restart loses nothing:
 | Where | What it does |
 | --- | --- |
 | Settings → **Change log and undo** | the log file, how many changes can be undone, **Undo the last change**, and a **Roll back** button on every row that can still be reversed |
+| Chat, detail mode | under each answer: the files that turn changed. Right-click one for **Undo this change** (back to before it) or **Restore this version** (exactly what it produced) |
 | Terminal | `/audit [n]`, `/undo`, `/undo <n>`, `/undo list` |
-| API | `GET /api/audit`, `GET /api/undo`, `POST /api/undo` with `{ count }` or `{ seq }` |
+| API | `GET /api/audit`, `GET /api/undo`, `POST /api/undo` with `{ count }` or `{ seq }`, `GET /api/turns`, `POST /api/versions/restore` with `{ seq }` |
 | Settings | `auditLog` (default `true`) — switch it off and nothing new is recorded and nothing can be undone |
-| Setting | `undoRetentionDays` (default `7`, 1–365) — how long the copies in `data/undo/` are kept |
+| Setting | `undoRetentionDays` (default `7`, 1–365) — how long the copies in `data/undo/` and `data/versions/` are kept |
+
+**Two verbs per file, not one.** *Undo this change* is the stack above: the file goes
+back to how it was *before* that change. *Restore this version* is the other
+direction: every change that leaves one file behind also saves a copy of the result
+in `data/versions/`, so a file that was later overwritten can be put back to exactly
+what that change produced. The restore is itself a recorded change, so a wrong click
+costs one more click. A row that deleted the file (or touched several) has no single
+"version", and the menu says so instead of guessing.
+
+The card is drawn in detail mode (`verbosity: full`) right after the answer, and it
+is saved with the conversation: it comes back after a reload, in the same place.
+Changes the agent makes are grouped by turn, so "what did that step actually touch?"
+has an answer that does not depend on reading the whole log.
 
 What `/undo` puts back, and how:
 
@@ -1371,6 +1386,8 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `POST` | `/api/chat` | `{ message }` — start a task (results arrive on the event stream); while a turn is running the message is **queued** and answered with `{ ok, queued: true, position, id }` |
 | `GET` | `/api/queue` | `{ items, running, limit }` — messages waiting for the running turn |
 | `POST` | `/api/queue` | `{ action: "remove", id }` or `{ action: "clear" }` — drop one or all queued messages |
+| `GET` | `/api/turns` | the last few turns with the files each changed (`{ turns: [{ id, time, at, files: [{ path, seq, action, tool, summary, undoable, restorable }] }] }`) |
+| `POST` | `/api/versions/restore` | `{ seq }` — put that file back to what change `#seq` produced (the "Restore this version" item); 400 with the reason when there is no saved version |
 | `POST` | `/api/abort` | stop the task that is running |
 | `POST` | `/api/terminal` | `{ input }` — run a shell line or an internal `/command` |
 | `POST` | `/api/approve` | `{ id, approved }` — answer an approval prompt |
@@ -1381,12 +1398,14 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 Event types on `/api/events`: `user`, `assistant`, `delta`, `thinking`, `step`,
 `tool_call`, `tool_result`, `usage`, `context`, `approval`, `approval_result`, `done`,
 `stopping`, `stopped`, `error`, `status`, `settings`, `terminal`, `reset`,
-`reload_history`, `archived`, `server_restart`, `notice`.
+`reload_history`, `archived`, `server_restart`, `notice`, `queue`, `turn`.
 
 `delta` carries one live piece of the answer (`{ text }`), `thinking` reports how much
 a reasoning model has thought so far (`{ chars }`), `stopped` means the user cancelled
-the turn, and `context` reports the budget of a request that had to be trimmed
-(`{ estimatedTokens, limit, budget, droppedMessages, truncatedToolResults }`).
+the turn, `context` reports the budget of a request that had to be trimmed
+(`{ estimatedTokens, limit, budget, droppedMessages, truncatedToolResults }`), and
+`turn` is sent when a turn ends with `{ turn }` — the files it changed, ready for the
+card under the answer.
 
 Example:
 

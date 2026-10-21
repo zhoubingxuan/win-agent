@@ -39,6 +39,26 @@ export interface UsageEntry extends Usage {
 }
 
 /** A conversation = the messages plus what they cost. */
+/** One file a turn changed, as shown under that turn's answer. */
+export interface TurnFile {
+  path: string;
+  /** The audit entry (`#N`) that changed it - what undo and "restore this version" act on. */
+  seq: number;
+  action: string;
+  tool: string;
+  summary: string;
+  time: string;
+}
+
+/** What one turn (one agent run) touched, grouped for the chat view. */
+export interface TurnRecord {
+  id: string;
+  time: string;
+  /** History length when the turn ended: the card is drawn after that position. */
+  at: number;
+  files: TurnFile[];
+}
+
 export interface ConversationRecord {
   id: string;
   startedAt: string;
@@ -47,6 +67,8 @@ export interface ConversationRecord {
   /** Calls in order; entry N belongs to assistant message N. */
   calls: UsageEntry[];
   messages: ChatMessage[];
+  /** The last few turns with their changed files (bounded; see the server). */
+  turns?: TurnRecord[];
 }
 
 export function emptyTotals(): UsageTotals {
@@ -219,6 +241,7 @@ function parseRecord(raw: string): ConversationRecord | null {
       usage: { ...emptyTotals(), ...(parsed.usage ?? {}) },
       calls: Array.isArray(parsed.calls) ? (parsed.calls as UsageEntry[]) : [],
       messages: Array.isArray(parsed.messages) ? (parsed.messages as ChatMessage[]) : [],
+      turns: Array.isArray(parsed.turns) ? (parsed.turns as TurnRecord[]) : [],
     };
   } catch {
     return null;

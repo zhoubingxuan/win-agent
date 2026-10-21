@@ -207,6 +207,17 @@ const I18N = {
     "notice.queued": "queued - position {0}",
     "notice.stopping": "stopping…",
     "notice.stopped": "task stopped",
+    "turn.files": "{0} file(s) changed this turn",
+    "turn.hint": "right-click a file to roll it back",
+    "turn.undo": "Undo this change",
+    "turn.undoHint": "put the file back to how it was before change #{0}",
+    "turn.restore": "Restore this version",
+    "turn.restoreHint": "make the file exactly what change #{0} produced",
+    "turn.undone": "rolled back {0}",
+    "turn.restored": "restored {0} to that version",
+    "turn.gone": "already undone, or no copy left",
+    "turn.noVersion": "no saved version for this change",
+    "turn.atVersion": "file is at this version now",
     "settings.context": "Context window and robustness",
     "settings.contextHint":
       "Small local models have a small window. The agent measures every request and quietly drops the oldest exchanges (and squeezes huge tool results) when it would not fit — the stored conversation is never shortened. Leave 0 to use the length the endpoint reports.",
@@ -482,6 +493,17 @@ const I18N = {
     "notice.queued": "已排队——第 {0} 个",
     "notice.stopping": "正在停止…",
     "notice.stopped": "任务已停止",
+    "turn.files": "本轮改动 {0} 个文件",
+    "turn.hint": "右键文件可回滚",
+    "turn.undo": "撤销这次改动",
+    "turn.undoHint": "把文件恢复到第 {0} 次改动之前的样子",
+    "turn.restore": "恢复到这个版本",
+    "turn.restoreHint": "让文件变成第 {0} 次改动之后的内容",
+    "turn.undone": "已撤销：{0}",
+    "turn.restored": "已把 {0} 恢复到那个版本",
+    "turn.gone": "已经撤销过，或副本已过期",
+    "turn.noVersion": "这次改动没有保存版本",
+    "turn.atVersion": "当前就是这个版本",
     "settings.context": "上下文窗口与健壮性",
     "settings.contextHint":
       "本地小模型的上下文窗口很小。每次请求前 agent 都会先量一遍，装不下就悄悄丢掉最早的几段对话（并把过大的工具结果压缩）——磁盘上的对话不会被删短。填 0 表示使用接口报告的窗口长度。",
@@ -1231,6 +1253,10 @@ function handle(ev) {
       break;
     case "approval":
       addApproval(ev);
+      break;
+    case "turn":
+      // The turn is over: list what it changed, with the rollback verbs on it.
+      addTurnCard(ev.turn);
       break;
     case "done":
       flushUsage();
@@ -2235,7 +2261,7 @@ function clearLog() {
 async function reloadHistory() {
   const data = await api("/api/state");
   clearLog();
-  renderHistory(data.history ?? [], data.usage?.calls ?? []);
+  renderHistory(data.history ?? [], data.usage?.calls ?? [], data.turns ?? []);
   renderUsage(data.usage);
   state.conversation = data.conversation ?? null;
   if (el("view-settings").classList.contains("active")) loadData();
@@ -2255,10 +2281,18 @@ async function reopenConversation(id) {
 }
 
 /** 记忆化: replay the stored conversation so a reload does not lose it. */
-function renderHistory(entries, calls = []) {
+function renderHistory(entries, calls = [], turns = []) {
   if (!entries || entries.length === 0) return;
+  // Turn cards belong after the message the turn ended on (`at` = history length
+  // at that moment), so a reload puts them back where they were.
+  const cardsAt = new Map();
+  for (const turn of turns ?? []) {
+    const list = cardsAt.get(turn.at) ?? [];
+    list.push(turn);
+    cardsAt.set(turn.at, list);
+  }
   let callIndex = 0;
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     if (entry.role === "user") {
       flushUsage();
       if (entry.content) addBubble("user", entry.content);
@@ -2276,12 +2310,154 @@ function renderHistory(entries, calls = []) {
     } else if (entry.role === "tool") {
       addToolResult(entry.name ?? "?", entry.content ?? "");
     }
+    for (const turn of cardsAt.get(index + 1) ?? []) addTurnCard(turn);
   }
   flushUsage();
   // A reload replays the whole conversation: start at the newest message, not at
   // whatever position the layout happened to leave behind.
   scrollToBottom(log);
 }
+
+/* ------------------------------------------------------- what a turn changed */
+
+/**
+ * One file a turn changed. Left click does nothing; right click offers the two
+ * honest verbs: undo this change (back to before it) or restore this version
+ * (exactly what the change produced).
+ */
+function turnRow(file) {
+  const row = document.createElement("div");
+  row.className = "turn-file";
+  row.dataset.seq = String(file.seq);
+  row.dataset.path = file.path;
+  if (!file.undoable) row.classList.add("undone");
+  const path = document.createElement("span");
+  path.className = "turn-path";
+  path.textContent = file.path;
+  path.title = file.summary;
+  const badge = document.createElement("span");
+  badge.className = "turn-action";
+  badge.textContent = `${file.tool} ${file.action}`;
+  row.append(path, badge);
+  if (file.atVersion) {
+    // The file on disk is exactly this version (usually after "Restore this
+    // version"): it is not "undone", so do not strike it through.
+    row.classList.remove("undone");
+    row.classList.add("at-version");
+    const now = document.createElement("span");
+    now.className = "turn-gone";
+    now.textContent = t("turn.atVersion");
+    row.appendChild(now);
+  } else if (!file.undoable) {
+    const gone = document.createElement("span");
+    gone.className = "turn-gone";
+    gone.textContent = t("turn.gone");
+    row.appendChild(gone);
+  }
+  row.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    openFileMenu(event.clientX, event.clientY, file);
+  });
+  return row;
+}
+
+/** The card under an answer: every file that turn touched, and how to roll it back. */
+function addTurnCard(turn) {
+  if (!showsProcess()) return null;
+  if (!turn?.files?.length) return null;
+  const card = document.createElement("div");
+  card.className = "turn-files";
+  card.dataset.turn = turn.id;
+  const head = document.createElement("div");
+  head.className = "turn-head";
+  const count = document.createElement("b");
+  count.textContent = t("turn.files", turn.files.length);
+  const hint = document.createElement("span");
+  hint.className = "muted";
+  hint.textContent = ` · ${t("turn.hint")}`;
+  head.append(count, hint);
+  const list = document.createElement("div");
+  list.className = "turn-list";
+  for (const file of turn.files) list.appendChild(turnRow(file));
+  card.append(head, list);
+  log.appendChild(card);
+  scrollToBottom(log);
+  return card;
+}
+
+let fileMenu = null;
+
+function closeFileMenu() {
+  if (fileMenu) fileMenu.remove();
+  fileMenu = null;
+}
+
+function openFileMenu(x, y, file) {
+  closeFileMenu();
+  const menu = document.createElement("div");
+  menu.className = "ctx-menu";
+  menu.setAttribute("role", "menu");
+  const add = (label, hint, enabled, run) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "ctx-item";
+    item.disabled = !enabled;
+    const strong = document.createElement("span");
+    strong.textContent = label;
+    const sub = document.createElement("small");
+    sub.textContent = hint;
+    item.append(strong, sub);
+    if (enabled) {
+      item.addEventListener("click", () => {
+        closeFileMenu();
+        void run();
+      });
+    }
+    menu.appendChild(item);
+  };
+  add(t("turn.undo"), t("turn.undoHint", file.seq), file.undoable, () => rollbackFile("undo", file));
+  add(t("turn.restore"), t("turn.restoreHint", file.seq), file.restorable, () => rollbackFile("restore", file));
+  document.body.appendChild(menu);
+  // Keep the menu inside the window.
+  const box = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(x, window.innerWidth - box.width - 8))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, window.innerHeight - box.height - 8))}px`;
+  fileMenu = menu;
+}
+
+/** Run one of the two verbs, then redraw every card from the server. */
+async function rollbackFile(kind, file) {
+  const endpoint = kind === "undo" ? "/api/undo" : "/api/versions/restore";
+  const result = await api(endpoint, "POST", { seq: file.seq });
+  if (result.error || result.ok === false) {
+    showNotice(`${t("error.prefix")}${result.error ?? result.message ?? ""}`, 7000);
+    return;
+  }
+  showNotice(kind === "undo" ? t("turn.undone", file.path) : t("turn.restored", file.path));
+  await refreshTurns();
+  await refreshAudit();
+}
+
+/** Re-read the turn cards: what is still undoable changes with every rollback. */
+async function refreshTurns() {
+  const data = await api("/api/turns");
+  if (data.error) return;
+  const byId = new Map((data.turns ?? []).map((turn) => [turn.id, turn]));
+  for (const card of log.querySelectorAll(".turn-files")) {
+    const fresh = byId.get(card.dataset.turn);
+    if (!fresh) continue;
+    const list = card.querySelector(".turn-list");
+    list.innerHTML = "";
+    for (const file of fresh.files) list.appendChild(turnRow(file));
+  }
+}
+
+document.addEventListener("click", closeFileMenu);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeFileMenu();
+});
+window.addEventListener("resize", closeFileMenu);
+log.addEventListener("scroll", closeFileMenu);
 
 function switchTab(name) {
   for (const tab of document.querySelectorAll(".tab")) {
@@ -2751,7 +2927,7 @@ document.querySelectorAll(".example").forEach((button) => {
   if (settingsFilePath) setText(el("settingsFile"), t("settings.savedFile", settingsFilePath));
   fillSettingsForm(info.settings ?? state.settings);
 
-  renderHistory(data.history, data.usage?.calls ?? []);
+  renderHistory(data.history, data.usage?.calls ?? [], data.turns ?? []);
   await loadData();
   termLine(t("terminal.welcome"), "term-sys");
   connect();
