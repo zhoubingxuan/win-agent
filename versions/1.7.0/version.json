@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.7.0",
+  "createdAt": "2026-10-21T13:13:06.815Z",
+  "node": ">=20.3",
+  "files": 77,
+  "bytes": 1022800,
+  "note": "A small model does not usually fail by being unable to do the task. It fails by repeating itself, by drowning in one huge tool result, and by reading an error…"
+}
