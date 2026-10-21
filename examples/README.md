@@ -16,6 +16,7 @@ emit, and the terminal lines are exactly what the agent accepts (verified with
 | [verbosity.md](verbosity.md) | the output-detail slider (`answer` / `thinking` / `full`): one turn drawn at all three levels |
 | [sandbox.md](sandbox.md) | the folder fence (`sandbox`, on by default): a refused path, what is confined, how to switch it off |
 | [stability.md](stability.md) | staying on the rails: a blocked repeat, the step limit, a trimmed result, and the error hints |
+| [skills.md](skills.md) | three complete skills (temp cleanup, a restart checklist, a weekly report) and the one prompt line each adds |
 | [windows.md](windows.md) | Windows compatibility: PowerShell 5.1/7, elevation, encodings, timeouts |
 | [custom-commands.md](custom-commands.md) | turn your own PowerShell one-liners into tools the model can call |
 | [mcp.md](mcp.md) | add MCP servers (stdio + HTTP) and use their tools from the chat |

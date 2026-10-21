@@ -13,6 +13,62 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-10-21
+
+Two changes that make the agent *carry more without carrying it in the prompt*.
+
+### Added
+
+- **Skills** — a procedure the model loads only when a task matches it. A skill is a
+  folder with a `SKILL.md` under `data/skills/`, with a small header:
+
+  ```markdown
+  ---
+  name: clean-temp
+  description: Find old files in %TEMP% and remove them safely
+  when: The user asks to free up disk space or clean temporary files
+  ---
+  # Clean the temp folder
+  1. ...
+  ```
+
+  The system prompt carries **one line per skill** (name, description, when) and the
+  instruction to load the one that fits; the body is fetched with the new `skills` tool
+  (`list` / `load` / `read`). Ten skills cost ten lines of context instead of ten
+  thousand characters, and the chat log shows which procedure the model chose —
+  `skills load clean-temp` is a tool call like any other. Verified end to end on a
+  local `qwen/qwen3.8-27b`: asked for a quick health check, it found the skill by its
+  `when`, loaded it, and followed its steps.
+- **The same folder in the web UI** — Settings → Skills lists every skill, with an
+  editor (name, one line, *when*, steps) and delete. Writing `SKILL.md` by hand with any
+  editor is equally valid: the folder is the record, there is no database to sync.
+- **`/skills`**, `/skills show <name>`, `/skills path` in the terminal.
+- **`GET /api/skills`** (`?name=` returns the body), **`POST /api/skills`**,
+  **`POST /api/skills/delete`**.
+- **`data/skills/README.md`** is written on first start, so the format is explained
+  where the files are.
+- **`npm run test:skills`** (55 checks): the header block (quotes, a BOM, CRLF,
+  `when_to_use`, no header at all), the one-line index that never carries a body, a
+  broken `SKILL.md` reported instead of hidden, the tool's three actions, `../` and
+  absolute paths out of a skill folder refused, and delete really removing the folder.
+
+### Changed
+
+- **No step limit by default.** `maxSteps` is now `0` = *no limit* (1–1000 still sets
+  a cap, and `/maxsteps 0` does the same). A long task may take as many rounds as it
+  needs; the brakes are the work that cannot progress: a third identical call with the
+  same answer is refused, and **five refused calls in a row end the turn** with
+  `(stopped after 5 blocked repeats: …)` — the only limit left, and exactly the one
+  that matters. The settings panel, the chat's step counter (`step 7` when there is no
+  ceiling) and `/status` all say "no limit" instead of printing a misleading zero.
+- Docs: a [Skills](README.md#skills) section, [examples/skills.md](examples/skills.md)
+  with three complete skills (temp cleanup, a service restart checklist, a weekly
+  report), the tool/command/API tables, and the data-folder layout.
+- `test:agent` grew to 27 checks (a run with no step limit, and the blocked-repeat
+  fuse), `test:api` to 150 (the three skill routes), and the docs suite now accepts the
+  `/skill` alias.
+
+
 ## [1.7.0] — 2026-10-21
 
 A small model does not usually fail by being unable to do the task. It fails by

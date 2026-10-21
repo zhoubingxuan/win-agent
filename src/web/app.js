@@ -64,6 +64,8 @@ const I18N = {
     "settings.apiKeyStored": "(stored — type to replace)",
     "settings.apiKeyNone": "(none)",
     "settings.maxSteps": "Max steps",
+    "settings.maxStepsHint":
+      "Max steps: 0 means no step limit - a long task may take as many rounds as it needs. What still stops a turn is repeated work: the same call returning the same answer twice is refused on the third try, and the Stop button is always there.",
     "settings.temperature": "Temperature",
     "settings.language": "Language",
     "settings.workdir": "Working directory",
@@ -103,6 +105,26 @@ const I18N = {
     "settings.adminUnknown": "unknown",
     "settings.enabledTools": "Enabled tools",
     "settings.enabledToolsHint": "Turn a tool off with its switch to hide it from the model. All on = all enabled.",
+    "settings.skills": "Skills",
+    "settings.skillsHint":
+      "A skill is a procedure the model loads only when a task matches it - steps, examples, things that went wrong last time. The prompt carries one line per skill; the body is fetched when it is needed, so ten procedures do not fill a small context window. Each skill is a folder under <code>data/skills/</code>, so a file you write there by hand shows up in this list too.",
+    "settings.skillsDir": "folder",
+    "settings.skillName": "name (clean-temp)",
+    "settings.skillDesc": "one line: what it does",
+    "settings.skillWhen": "when to use it: the user asks to …",
+    "settings.skillBody":
+      "The steps, written for a careful colleague: what to check first, which tool, what not to touch.",
+    "settings.skillSave": "Save skill",
+    "settings.skillNew": "New",
+    "settings.skillEdit": "Edit",
+    "settings.skillDelete": "Delete",
+    "settings.skillEmpty":
+      "(no skills yet - write one below, or drop a folder with a SKILL.md into the folder above)",
+    "settings.skillSaved": "saved {0}",
+    "settings.skillDeleted": "deleted {0}",
+    "settings.skillLoaded": "editing {0}",
+    "settings.skillNeedName": "a skill needs a name and a body",
+    "settings.skillDeleteAsk": "Delete the skill \"{0}\" and its folder?",
     "settings.customCommands": "Custom commands",
     "settings.customHint":
       "Add your own commands. Each becomes an action of the <code>custom</code> tool and runs as PowerShell; the model's <code>arg</code> value is available as <code>$arg</code>.",
@@ -178,6 +200,7 @@ const I18N = {
     "notice.customInvalid": "custom command needs a valid name and a script",
     "error.prefix": "Error: ",
     "step.label": "step {0}/{1}",
+    "step.labelNoLimit": "step {0}",
     "notice.stopping": "stopping…",
     "notice.stopped": "task stopped",
     "settings.context": "Context window and robustness",
@@ -311,6 +334,8 @@ const I18N = {
     "settings.apiKeyStored": "（已保存，输入以替换）",
     "settings.apiKeyNone": "（未设置）",
     "settings.maxSteps": "最大步数",
+    "settings.maxStepsHint":
+      "最大步数填 0 = 不设上限：长任务可以走多少步就走多少步。真正会拦住它的是重复工作——同一个调用连续两次返回相同结果，第三次会被拒绝；另外“停止”按钮一直都在。",
     "settings.temperature": "温度",
     "settings.language": "语言",
     "settings.workdir": "工作目录",
@@ -346,6 +371,24 @@ const I18N = {
     "settings.adminUnknown": "未知",
     "settings.enabledTools": "启用的工具",
     "settings.enabledToolsHint": "关掉开关即可对模型隐藏该工具。全部打开 = 全部启用。",
+    "settings.skills": "技能包",
+    "settings.skillsHint":
+      "技能包是模型在任务匹配时才加载的做法说明——步骤、例子、上次踩过的坑。提示词里每个技能只占一行，正文按需读取，所以十个技能也不会塞满小模型的上下文。每个技能是 <code>data/skills/</code> 下的一个文件夹，你手动写进去的文件这里同样能看到。",
+    "settings.skillsDir": "文件夹",
+    "settings.skillName": "名字（clean-temp）",
+    "settings.skillDesc": "一句话：它做什么",
+    "settings.skillWhen": "什么时候用：当用户要求……",
+    "settings.skillBody": "步骤，写给一位细心的同事看：先检查什么、用哪个工具、哪些东西不要碰。",
+    "settings.skillSave": "保存技能",
+    "settings.skillNew": "新建",
+    "settings.skillEdit": "编辑",
+    "settings.skillDelete": "删除",
+    "settings.skillEmpty": "（还没有技能包——在下面写一个，或者把带 SKILL.md 的文件夹放进上面的目录）",
+    "settings.skillSaved": "已保存 {0}",
+    "settings.skillDeleted": "已删除 {0}",
+    "settings.skillLoaded": "正在编辑 {0}",
+    "settings.skillNeedName": "技能需要名字和正文",
+    "settings.skillDeleteAsk": "删除技能「{0}」以及它的文件夹？",
     "settings.customCommands": "自定义命令",
     "settings.customHint":
       "添加你自己的命令。每条会成为 <code>custom</code> 工具的一个 action，以 PowerShell 执行；模型传入的 <code>arg</code> 在脚本里是 <code>$arg</code>。",
@@ -420,6 +463,7 @@ const I18N = {
     "notice.customInvalid": "自定义命令需要合法的名称和脚本",
     "error.prefix": "错误：",
     "step.label": "第 {0}/{1} 步",
+    "step.labelNoLimit": "第 {0} 步",
     "notice.stopping": "正在停止…",
     "notice.stopped": "任务已停止",
     "settings.context": "上下文窗口与健壮性",
@@ -792,7 +836,8 @@ function addStep(step, max) {
   clearEmpty();
   const div = document.createElement("div");
   div.className = "step";
-  setText(div, t("step.label", step, max));
+  // max 0 = no step limit: show the counter only.
+  setText(div, max > 0 ? t("step.label", step, max) : t("step.labelNoLimit", step));
   log.appendChild(div);
   followBottom(log);
 }
@@ -1064,7 +1109,7 @@ async function loadData() {
   if (info.error) return;
   renderData(info);
   if (info.usage) renderUsage(info.usage);
-  await refreshAudit();
+  await Promise.all([refreshAudit(), refreshSkills()]);
 }
 
 /* ------------------------------------------------------- audit log & undo */
@@ -1773,7 +1818,7 @@ function fillSettingsForm(s) {
   el("s-baseUrl").value = s.baseUrl ?? "";
   el("s-apiKey").value = "";
   el("s-apiKey").placeholder = s.apiKeySet ? t("settings.apiKeyStored") : t("settings.apiKeyNone");
-  el("s-maxSteps").value = s.maxSteps ?? 12;
+  el("s-maxSteps").value = s.maxSteps ?? 0;
   el("s-temperature").value = s.temperature ?? 0;
   el("s-language").value = s.language ?? "en";
   el("s-workdir").value = s.workdir ?? "";
@@ -1899,6 +1944,134 @@ function renderCustomTools() {
     row.append(name, script, remove);
     box.appendChild(row);
   });
+}
+
+/* -------------------------------------------------------------------- skills */
+
+/** The skills the server can see, refreshed whenever the panel opens. */
+let skills = [];
+
+async function refreshSkills() {
+  const report = await api("/api/skills");
+  if (report.error) return;
+  skills = report.skills ?? [];
+  setText(el("k-dir"), report.dir ?? "…");
+  renderSkills();
+}
+
+function renderSkills() {
+  const box = el("s-skills");
+  if (!box) return;
+  box.innerHTML = "";
+  if (skills.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = t("settings.skillEmpty");
+    box.appendChild(empty);
+    return;
+  }
+  for (const skill of skills) {
+    const row = document.createElement("div");
+    row.className = "skill-item";
+
+    const head = document.createElement("div");
+    head.className = "skill-head";
+    const name = document.createElement("code");
+    setText(name, skill.name);
+    const when = document.createElement("span");
+    when.className = "muted";
+    when.textContent = skill.when ? `· ${skill.when}` : "";
+    head.append(name, when);
+
+    const description = document.createElement("div");
+    description.className = "muted";
+    setText(description, skill.description ?? "");
+
+    const files = document.createElement("div");
+    files.className = "muted small";
+    setText(files, (skill.files ?? []).join("  ·  "));
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "ghost";
+    edit.textContent = t("settings.skillEdit");
+    edit.addEventListener("click", () => editSkill(skill.name));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost";
+    remove.textContent = t("settings.skillDelete");
+    remove.addEventListener("click", () => deleteSkillUi(skill.name));
+    actions.append(edit, remove);
+
+    row.append(head, description, files);
+    if (skill.problem) {
+      const problem = document.createElement("div");
+      problem.className = "error";
+      setText(problem, skill.problem);
+      row.appendChild(problem);
+    }
+    row.appendChild(actions);
+    box.appendChild(row);
+  }
+}
+
+/** Put one skill into the editor (its body comes from the server, not the list). */
+async function editSkill(name) {
+  const report = await api(`/api/skills?name=${encodeURIComponent(name)}`);
+  if (report.error) {
+    setText(el("k-msg"), `${t("error.prefix")}${report.error}`);
+    return;
+  }
+  const skill = report.skill ?? {};
+  el("k-name").value = skill.name ?? name;
+  el("k-desc").value = skill.description ?? "";
+  el("k-when").value = skill.when ?? "";
+  el("k-body").value = report.body ?? "";
+  setText(el("k-msg"), t("settings.skillLoaded", name));
+  el("k-body").focus();
+}
+
+async function saveSkillUi() {
+  const name = el("k-name").value.trim();
+  const body = el("k-body").value.trim();
+  if (!name || !body) {
+    setText(el("k-msg"), t("settings.skillNeedName"));
+    return;
+  }
+  const result = await api("/api/skills", "POST", {
+    name,
+    description: el("k-desc").value.trim(),
+    when: el("k-when").value.trim(),
+    body,
+  });
+  if (result.error) {
+    setText(el("k-msg"), `${t("error.prefix")}${result.error}`);
+    return;
+  }
+  skills = result.skills ?? skills;
+  renderSkills();
+  setText(el("k-msg"), t("settings.skillSaved", name));
+  showNotice(t("settings.skillSaved", name));
+}
+
+async function deleteSkillUi(name) {
+  if (!window.confirm(t("settings.skillDeleteAsk", name))) return;
+  const result = await api("/api/skills/delete", "POST", { name });
+  if (result.error) {
+    setText(el("k-msg"), `${t("error.prefix")}${result.error}`);
+    return;
+  }
+  skills = result.skills ?? [];
+  renderSkills();
+  setText(el("k-msg"), t("settings.skillDeleted", name));
+}
+
+function clearSkillForm() {
+  for (const id of ["k-name", "k-desc", "k-when", "k-body"]) el(id).value = "";
+  setText(el("k-msg"), "");
+  el("k-name").focus();
 }
 
 async function saveSettings() {
@@ -2393,6 +2566,9 @@ el("c-add").addEventListener("click", () => {
   el("c-script").value = "";
   renderCustomTools();
 });
+
+el("k-save").addEventListener("click", saveSkillUi);
+el("k-new").addEventListener("click", clearSkillForm);
 
 el("s-save").addEventListener("click", saveSettings);
 el("s-reload").addEventListener("click", async () => {

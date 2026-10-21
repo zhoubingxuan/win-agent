@@ -144,7 +144,7 @@ async function main(): Promise<void> {
   const showsProcess = settings.verbosity === "full";
   const agent = new Agent(toConfig(settings), tools, {
     onStep: (step, max) => {
-      if (showsProcess && step > 1) console.log(`  ... step ${step}/${max}`);
+      if (showsProcess && step > 1) console.log(max > 0 ? `  ... step ${step}/${max}` : `  ... step ${step}`);
     },
     onAssistantText: (text) => console.log(`\n${text}\n`),
     onContext: (stats) => {

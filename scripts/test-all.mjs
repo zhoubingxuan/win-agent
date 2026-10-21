@@ -17,6 +17,7 @@ const SUITES = [
   ["mode", "scripts/test-mode.mjs", true],
   ["sandbox", "scripts/test-sandbox.mjs", true],
   ["agent", "scripts/test-agent.mjs", true],
+  ["skills", "scripts/test-skills.mjs", true],
   ["i18n", "scripts/test-i18n.mjs", true],
   ["docs", "scripts/test-docs.mjs", true],
   ["api", "scripts/test-api.mjs", true],

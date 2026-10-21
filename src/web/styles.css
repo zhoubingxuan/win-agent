@@ -1376,6 +1376,89 @@ button.ghost.small {
   white-space: nowrap;
 }
 
+.skill-list {
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skill-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+
+.skill-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.skill-head code {
+  font-family: var(--mono);
+  color: var(--accent);
+  font-size: 12.5px;
+}
+
+.skill-item .small {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.skill-item .actions {
+  margin: 2px 0 0;
+}
+
+.skill-item .actions button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 7px;
+  padding: 4px 10px;
+}
+
+.skill-item .actions button:last-child {
+  color: var(--red);
+}
+
+.skill-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.skill-add .row {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 8px;
+}
+
+.skill-add input,
+.skill-add textarea {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 12px;
+  outline: none;
+  width: 100%;
+}
+
+.skill-add textarea {
+  font-family: var(--mono);
+  line-height: 1.5;
+  resize: vertical;
+}
+
 .custom-list {
   margin: 10px 0;
   display: flex;

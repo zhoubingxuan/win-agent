@@ -280,7 +280,7 @@ export const DEFAULTS: Settings = {
   apiKey: DEFAULT_PROFILES[0].apiKey,
   profiles: DEFAULT_PROFILES,
   activeProfile: "local",
-  maxSteps: 12,
+  maxSteps: 0,
   temperature: 0,
   // A model that repeats itself is the most common way a small model burns a turn.
   loopGuard: true,
@@ -353,7 +353,8 @@ const BOOLEAN_KEYS: Array<keyof Settings> = [
   "auditLog",
 ];
 const NUMERIC_RANGE: Record<string, [number, number]> = {
-  maxSteps: [1, 100],
+  // 0 = no step limit: the loop guard stops a dead end, the user stops a long run.
+  maxSteps: [0, 1000],
   temperature: [0, 2],
   webPort: [1, 65535],
   contextLimit: [0, 2_000_000],

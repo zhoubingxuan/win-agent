@@ -39,6 +39,8 @@ const scripts = {
   POLL: () => call({ x: 1 }),
   VARY: (step) => call({ x: step }),
   BIG: () => call({ x: 1 }),
+  // Five calls, then a plain answer: the "no step limit" run.
+  FINISH: (step) => (step <= 5 ? call({ x: step }) : null),
 };
 
 let requests = 0;
@@ -53,7 +55,8 @@ const server = http.createServer((req, res) => {
     const text = String(user?.content ?? "");
     const marker = Object.keys(scripts).find((name) => text.startsWith(name));
     const step = messages.filter((message) => message.role === "assistant").length + 1;
-    const message = marker
+    const args = marker ? scripts[marker](step) : null;
+    const message = args
       ? {
           role: "assistant",
           content: null,
@@ -61,7 +64,7 @@ const server = http.createServer((req, res) => {
             {
               id: `call_${step}`,
               type: "function",
-              function: { name: "ping", arguments: JSON.stringify(scripts[marker](step)) },
+              function: { name: "ping", arguments: JSON.stringify(args) },
             },
           ],
         }
@@ -70,7 +73,7 @@ const server = http.createServer((req, res) => {
     res.end(
       JSON.stringify({
         model: "mock-1",
-        choices: [{ index: 0, message, finish_reason: marker ? "tool_calls" : "stop" }],
+        choices: [{ index: 0, message, finish_reason: args ? "tool_calls" : "stop" }],
         usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
       }),
     );
@@ -200,6 +203,23 @@ try {
     const chinese = agentFor("POLL", zh, { maxSteps: 2, language: "zh" });
     const zhFinal = await chinese.agent.run("POLL 一直做");
     check("the Chinese message is Chinese", /最大步数/.test(zhFinal) && /继续/.test(zhFinal), zhFinal);
+  }
+
+  section("no step limit (the new default)");
+  {
+    const tools = registry((_name, _args, n) => `answer ${n}`);
+    const { agent } = agentFor("FINISH", tools, { maxSteps: 0 });
+    const final = await agent.run("FINISH take as long as you need");
+    check("maxSteps 0 runs past the old limit of 12", tools.calls.length === 5, `ran ${tools.calls.length}`);
+    check("the model's own answer ends the turn, not a fuse", /done after 5 steps/.test(final), final);
+
+    // With the step limit gone, repeats are the only brake left.
+    const stuck = registry(() => "the same answer every time");
+    const second = agentFor("LOOP", stuck, { maxSteps: 0 });
+    const stopped = await second.agent.run("LOOP with no step limit");
+    check("the repeated call still runs twice", stuck.calls.length === 2, `ran ${stuck.calls.length}`);
+    check("five refused repeats end the turn", /blocked repeats/.test(stopped), stopped);
+    check("and the turn is bounded, not endless", second.events.results.length === 7, `${second.events.results.length} results`);
   }
 
   /* ---------------------------------------------------------------------- */

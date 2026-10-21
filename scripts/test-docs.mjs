@@ -116,7 +116,7 @@ section("settings reference");
 section("internal commands");
 {
   const dispatched = new Set([...commandsSource.matchAll(/case "([a-z0-9-]+)":/g)].map((m) => m[1]));
-  const aliases = new Set(["?", "about", "ctx", "capabilities", "doctor", "lang", "temp", "shell", "dryrun", "autoapprove", "profiles", "tokens", "convos", "convo", "exec"]);
+  const aliases = new Set(["?", "about", "ctx", "capabilities", "doctor", "lang", "temp", "shell", "dryrun", "autoapprove", "profiles", "tokens", "convos", "convo", "exec", "skill"]);
   // "/status", "/set", and "/enable <name...>" inside a row - but "/api/state"
   // (a route, excluded by the lookahead) or the word "/command" in prose are not
   // commands.

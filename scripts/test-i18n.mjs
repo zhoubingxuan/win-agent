@@ -217,7 +217,7 @@ section("help text");
   check("both help texts document the same commands", onlyEn.length === 0 && onlyZh.length === 0, `${onlyEn.join(", ")} | ${onlyZh.join(", ")}`);
 
   // A command that is implemented but hidden from the help is dead weight.
-  const aliases = new Set(["?", "about", "ctx", "capabilities", "doctor", "lang", "temp", "shell", "dryrun", "autoapprove", "profiles", "tokens", "convos", "convo"]);
+  const aliases = new Set(["?", "about", "ctx", "capabilities", "doctor", "lang", "temp", "shell", "dryrun", "autoapprove", "profiles", "tokens", "convos", "convo", "skill"]);
   const undocumented = [...dispatched].filter((name) => !advertisedSet.has(name) && !aliases.has(name));
   check("every implemented command is documented (aliases excepted)", undocumented.length === 0, undocumented.join(", "));
 }

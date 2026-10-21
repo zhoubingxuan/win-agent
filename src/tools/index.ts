@@ -11,6 +11,7 @@ import { uiTool } from "./ui.js";
 import { powershellTool } from "./powershell.js";
 import { createWebTool } from "./web.js";
 import { createCustomTool } from "./custom.js";
+import { skillsTool } from "./skills.js";
 import { mcp } from "../mcp.js";
 
 export { ToolRegistry } from "./registry.js";
@@ -51,6 +52,7 @@ export function createWindowsTools(approval: Approval, options: ToolOptions = {}
     .register(scheduledTasksTool)
     .register(registryTool)
     .register(uiTool)
+    .register(skillsTool)
     .register(powershellTool);
 
   // Guided mode is for small models: they fail at inventing PowerShell, and every

@@ -22,6 +22,7 @@ import {
 } from "./settings.js";
 import { configureErrorHints, configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
 import { auditLog, configureAudit } from "./audit.js";
+import { deleteSkill, ensureSkillsFolder, findSkill, listSkills, loadSkill, saveSkill, skillsDir } from "./skills.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { VERSION } from "./version.js";
 import { capabilityReport, capabilities as endpointCapabilities, discoverLocalModels, listModelsAt, localEndpointsFor, probeContextLimits } from "./providers.js";
@@ -1083,6 +1084,45 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      case "GET /api/skills": {
+        ensureSkillsFolder();
+        // ?name=… returns the body too, which is what the editor needs.
+        const wanted = url.searchParams.get("name");
+        if (wanted) {
+          const skill = findSkill(wanted);
+          if (!skill) return json(res, 404, { error: `no skill "${wanted}"` });
+          const loaded = loadSkill(skill.name);
+          return json(res, 200, {
+            dir: skillsDir(),
+            skill,
+            body: typeof loaded === "string" ? "" : loaded.body,
+          });
+        }
+        return json(res, 200, { dir: skillsDir(), skills: listSkills() });
+      }
+
+      case "POST /api/skills": {
+        const body = await readJsonBody(req);
+        try {
+          const skill = saveSkill({
+            name: typeof body.name === "string" ? body.name : "",
+            description: typeof body.description === "string" ? body.description : "",
+            when: typeof body.when === "string" ? body.when : "",
+            body: typeof body.body === "string" ? body.body : "",
+          });
+          return json(res, 200, { ok: true, skill, skills: listSkills() });
+        } catch (error) {
+          return json(res, 400, { error: (error as Error).message });
+        }
+      }
+
+      case "POST /api/skills/delete": {
+        const body = await readJsonBody(req);
+        const name = typeof body.name === "string" ? body.name : "";
+        if (!deleteSkill(name)) return json(res, 404, { error: `no skill "${name}"` });
+        return json(res, 200, { ok: true, skills: listSkills() });
+      }
+
       case "POST /api/chat": {
         const body = await readJsonBody(req);
         const message = typeof body.message === "string" ? body.message.trim() : "";
@@ -1183,6 +1223,14 @@ server.listen(boundPort, "127.0.0.1", () => {
   // is what makes an old change undoable, so the window has to be honoured even on
   // a server that is only read from.
   void auditLog().sweep();
+  // Make `data/skills/` visible on first run, with a README that explains the format.
+  try {
+    ensureSkillsFolder();
+    const count = listSkills().length;
+    if (count > 0) console.log(`  skills     : ${count} installed (${skillsDir()})`);
+  } catch {
+    /* a read-only data folder is not a reason to fail */
+  }
   if (getSettings().mcpEnabled) console.log("  mcp        : connecting to the configured servers…");
   for (const notice of bootNotices) console.log(`  ${notice}`);
 

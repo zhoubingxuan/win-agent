@@ -199,7 +199,7 @@
               <label><span data-i18n="settings.model">Model</span><input id="s-model" type="text" /></label>
               <label><span data-i18n="settings.baseUrl">API base URL</span><input id="s-baseUrl" type="text" /></label>
               <label><span data-i18n="settings.apiKey">API key</span><input id="s-apiKey" type="password" /></label>
-              <label><span data-i18n="settings.maxSteps">Max steps</span><input id="s-maxSteps" type="number" min="1" max="100" /></label>
+              <label><span data-i18n="settings.maxSteps">Max steps</span><input id="s-maxSteps" type="number" min="0" max="1000" /></label>
               <label><span data-i18n="settings.temperature">Temperature</span><input id="s-temperature" type="number" min="0" max="2" step="0.1" /></label>
               <label>
                 <span data-i18n="settings.language">Language</span>
@@ -216,6 +216,13 @@
                 <input id="s-webSearchUrl" type="text" placeholder="https://www.bing.com/search?q={q}" />
               </label>
             </div>
+
+            <p class="muted" data-i18n="settings.maxStepsHint">
+              Max steps: 0 means no step limit - a long task may take as many rounds as it
+              needs. What still stops a turn is repeated work: the same call returning the
+              same answer twice is refused on the third try, and the Stop button is always
+              there.
+            </p>
 
             <label class="block">
               <span data-i18n="settings.systemPrompt">System prompt</span>
@@ -415,6 +422,34 @@
             <div class="actions">
               <button type="button" id="a-undo" class="ghost" data-i18n="settings.auditUndo">Undo the last change</button>
               <span id="a-msg" class="muted"></span>
+            </div>
+
+            <h4 data-i18n="settings.skills">Skills</h4>
+            <p class="muted" data-i18n-html="settings.skillsHint">
+              A skill is a procedure the model loads only when a task matches it - steps, examples,
+              things that went wrong last time. The prompt carries one line per skill; the body is
+              fetched when it is needed, so ten procedures do not fill a small context window.
+              Each skill is a folder under <code>data/skills/</code>, so a file you write there by
+              hand shows up in this list too.
+            </p>
+            <div class="kv wide"><span data-i18n="settings.skillsDir">folder</span><code id="k-dir">…</code></div>
+            <div id="s-skills" class="skill-list"></div>
+            <div class="skill-add">
+              <div class="row">
+                <input id="k-name" type="text" data-i18n-placeholder="settings.skillName"
+                  placeholder="name (clean-temp)" />
+                <input id="k-desc" type="text" data-i18n-placeholder="settings.skillDesc"
+                  placeholder="one line: what it does" />
+              </div>
+              <input id="k-when" type="text" data-i18n-placeholder="settings.skillWhen"
+                placeholder="when to use it: the user asks to …" />
+              <textarea id="k-body" rows="8" data-i18n-placeholder="settings.skillBody"
+                placeholder="The steps, written for a careful colleague: what to check first, which tool, what not to touch."></textarea>
+              <div class="actions">
+                <button type="button" id="k-save" class="ghost" data-i18n="settings.skillSave">Save skill</button>
+                <button type="button" id="k-new" class="ghost" data-i18n="settings.skillNew">New</button>
+                <span id="k-msg" class="muted"></span>
+              </div>
             </div>
 
             <h4 data-i18n="settings.customCommands">Custom commands</h4>

@@ -550,6 +550,40 @@ try {
 
   /* ---------------------------------------------------------------------- */
 
+  section("skills");
+  {
+    const empty = await api("/api/skills");
+    check("the skills folder lives in the data folder", empty.data.dir === `${dataDir}\\skills` || empty.data.dir === `${dataDir}/skills`, empty.data.dir);
+    check("and starts empty in a fresh data folder", empty.data.skills.length === 0, JSON.stringify(empty.data.skills));
+
+    const saved = await api("/api/skills", "POST", {
+      name: "Disk Cleanup",
+      description: "Free space without deleting anything in use",
+      when: "the user asks to clean up the disk",
+      body: "# Steps\n1. report sizes, 2. ask, 3. delete",
+    });
+    check("a skill is created", saved.status === 200 && saved.data.skill.name === "Disk-Cleanup", JSON.stringify(saved.data));
+    check("the list shows it at once", saved.data.skills.length === 1 && saved.data.skills[0].description.length > 0);
+
+    const withBody = await api("/api/skills?name=disk-cleanup");
+    check("the editor can read the body back", /# Steps/.test(withBody.data.body ?? ""), JSON.stringify(withBody.data));
+
+    const missing = await api("/api/skills?name=nope");
+    check("an unknown skill is a 404, not an empty page", missing.status === 404, JSON.stringify(missing.data));
+
+    const invalid = await api("/api/skills", "POST", { name: "x", body: "   " });
+    check("a skill without a body is refused", invalid.status === 400 && /body/.test(invalid.data.error ?? ""), JSON.stringify(invalid.data));
+
+    const state = await api("/api/state");
+    check("the model is offered the skills tool", state.data.tools.includes("skills"), JSON.stringify(state.data.tools));
+
+    const missingDelete = await api("/api/skills/delete", "POST", { name: "nope" });
+    check("deleting an unknown skill is a 404", missingDelete.status === 404);
+    const removed = await api("/api/skills/delete", "POST", { name: "Disk-Cleanup" });
+    check("deleting a skill works", removed.status === 200 && removed.data.skills.length === 0);
+    check("and its folder is gone", !fs.existsSync(path.join(dataDir, "skills", "Disk-Cleanup")));
+  }
+
   section("conversations, usage and data");
   {
     const reset = await api("/api/reset", "POST", {});

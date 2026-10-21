@@ -111,7 +111,8 @@ No other runtime dependency: the web UI is plain HTML/CSS/JS served by `node:htt
 [custom commands](examples/custom-commands.md),
 [MCP servers](examples/mcp.md),
 [HTTP API scripts](examples/api.md),
-[staying on the rails](examples/stability.md) and
+[staying on the rails](examples/stability.md),
+[skills](examples/skills.md) and
 [ready-made `settings.json` files](examples/settings.md).
 Every one of them is written against the code in this repository.
 
@@ -186,6 +187,8 @@ A form for **every** setting, plus:
 - **Web search page** — the search engine the `web` tool queries.
 - **Enabled tools** switches — flip a tool off to hide it from the model.
 - **Custom commands** editor — add your own PowerShell one-liners as new tools.
+- **Skills** — the list of installed procedures, with an editor (name, one line, when,
+  steps) and a delete button (see [Skills](#skills)).
 - **Change log and undo** — the audit log file, how many changes can be undone, and one
   button (see [Audit log and undo](#audit-log-and-undo)).
 - **Web port** — changing it moves the server to the new port immediately.
@@ -317,10 +320,16 @@ A small model's two failure modes are not "it cannot do the task" — they are *
 burns the whole turn repeating itself** and **one tool result eats the window**. Both
 are handled, and both are switchable.
 
+By default there is **no step limit** (`maxSteps: 0`): a long task is allowed to take
+as many rounds as it needs. What still ends a turn is repeated work — the same call
+returning the same answer twice is refused on the third try, and five refused calls in
+a row end the turn with `(stopped after 5 blocked repeats: …)`, because another round
+cannot help. A finite `maxSteps` (1–1000) puts the old cap back.
+
 | What happens | What the agent does |
 | --- | --- |
 | The model asks for the *same call* and gets the *same answer* twice | the third one is answered, not run: `Blocked: this exact call (files read {"path":"C:\\a.txt"}) has already returned the same result twice…`. A call whose answer changed (a poll) and a call with a different argument are never blocked — only a genuine dead end is. |
-| The step limit is reached | the turn ends with `(stopped after 12 steps without finishing: the "Max steps" limit was reached. Send "continue" and I will carry on; …)` — the limit, the number, and the way on, in the interface language. |
+| The step limit is reached | with `maxSteps` set above 0, the turn ends with `(stopped after 12 steps without finishing: the "Max steps" limit was reached. Send "continue" and I will carry on; …)` — the limit, the number, and the way on, in the interface language. At the default `0` there is no step limit. |
 | A tool returns more than the window allows | the result is trimmed to the head and the tail with `... (N characters trimmed; use a narrower call if you need the middle) ...`, and *that* is what is stored in the conversation — not the 200 KB. |
 | PowerShell output is enormous | the stream itself is capped at ~1 MB (600 KB head + 400 KB tail) while it is being read, so `Get-Content` on a 2 GB log cannot take the process down. |
 | A command fails | one hint after the error, in the interface language: a syntax error is `the script itself has a syntax error`, an unknown cmdlet is `that command does not exist on this machine`, a locked file is `the file is open in another program`, plus permission (which says whether win-agent is elevated), service, path, parameter, DNS and disk-full cases. The PowerShell text above the hint stays English. |
@@ -328,11 +337,71 @@ are handled, and both are switchable.
 | Switch | Default | What it does |
 | --- | --- | --- |
 | `loopGuard` | `true` | the repeated-call block above; switch it off for plain step-by-step execution |
-| `maxSteps` | `12` | how many tool rounds one turn may take (1–100) |
+| `maxSteps` | `0` | how many tool rounds one turn may take (0 = no limit, 1–1000) |
 | `psEnglishErrors` | `true` | force PowerShell error text to English (the hint still follows the interface) |
 
 `examples/stability.md` shows a blocked call, a run that hits the step limit, and a
 trimmed result.
+
+---
+
+## Skills
+
+A small model is good at following a procedure and bad at remembering one. So the
+procedure lives outside the prompt: a **skill** is a folder with a `SKILL.md` in it,
+and the model loads it *only when a task matches*.
+
+```text
+data/skills/
+  clean-temp/
+    SKILL.md          the procedure (header + steps)
+    examples.txt      optional: anything the steps point at
+  firewall-rule/
+    SKILL.md
+```
+
+```markdown
+---
+name: clean-temp
+description: Find old files in %TEMP% and remove them safely
+when: The user asks to free up disk space or clean temporary files
+---
+# Clean the temp folder
+
+1. `files list` in `%TEMP%` sorted by size — never delete anything first.
+2. Report the ten largest items and their total size.
+3. Ask the user which ones to remove (approval is required anyway).
+4. Remove only files older than 7 days, one folder at a time, and check the free
+   space afterwards.
+```
+
+**What the model sees.** The system prompt carries one line per skill — the name, the
+description and the `when` — and the instruction to load the one that fits. The body is
+fetched with the `skills` tool when the model decides it needs it:
+
+| Action | Returns |
+| --- | --- |
+| `list` | every skill, with its files and any problem (`the body is empty`) |
+| `load` | the steps of one skill, plus the names of the files next to it |
+| `read` | one of those files, confined to the skill's own folder |
+
+Ten skills therefore cost ten lines of context, not ten thousand characters, and the
+chat log shows exactly which procedure the model chose to follow — `skills load
+clean-temp` is a tool call like any other.
+
+**Editing them.** The same folder is in Settings → **Skills**: a list, an editor
+(name, one line, *when*, steps) and a delete button. Writing the file by hand with any
+editor is equally valid — there is no database to sync, the folder *is* the record. In
+the terminal, `/skills` lists them and `/skills show <name>` prints one exactly as the
+model receives it.
+
+**What a skill cannot do.** A skill is text, not code. It cannot grant itself tools,
+paths or approvals; every action it leads to still goes through the same sandbox,
+approval prompt and audit log as if you had asked for it yourself. Treat a skill from
+someone else like a note from someone else: read it before you use it.
+
+`examples/skills.md` has three complete skills (temp cleanup, a service restart
+checklist, a weekly report) and shows the prompt line each one adds.
 
 ---
 
@@ -679,6 +748,10 @@ data/
   usage.json           token totals summed over every conversation
   conversations/
     2026-10-18_10-15-33.json     one file per filed-away conversation
+  audit.jsonl          the change log (also the undo stack)
+  undo/                the copies made before a change, kept for undoRetentionDays
+  skills/
+    <name>/SKILL.md    a procedure the model can load (see [Skills](#skills))
 ```
 
 The folder always belongs to the **installation**, not to the folder you happen to start
@@ -852,7 +925,7 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/baseurl <url>` | API endpoint | next turn |
 | `/apikey <key>` | API key | next turn |
 | `/language <en\|zh>` | interface text **and** reply language | immediately |
-| `/maxsteps <n>` | rounds of tool calls per turn | next turn |
+| `/maxsteps <n>` | rounds of tool calls per turn (`0` = no limit) | next turn |
 | `/temperature <n>` | sampling temperature (0–2) | next turn |
 | `/prompt <text>` | the system prompt | next turn |
 | `/workdir <path>` | working directory (`chdir` + terminal cwd) | immediately |
@@ -899,6 +972,9 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/audit [n]` | the last `n` changes (default 15), newest first, with what can still be undone |
 | `/undo list` | what `/undo` would reverse, newest first |
 | `/custom list` | your custom commands |
+| `/skills` | every skill in `data/skills/`, with its description and when to use it |
+| `/skills show <name>` | one skill, exactly as the model receives it |
+| `/skills path` | the skills folder |
 | `/profile` | every endpoint, with `*` on the active one |
 | `/models [id]` | the models an endpoint reports (default: the active one); with `syncLocalModels` on, every local server is listed too |
 | `/mcp` | the MCP master switch and every server, with its connection state and tool count |
@@ -958,7 +1034,7 @@ with a message and nothing changes.
 | `apiKey` | string | *(active endpoint)* | never returned by the API (only `apiKeySet: true`) |
 | `profiles` | object[] | 3 built-ins | switchable endpoints: `id`, `name`, `kind` (`local`\|`api`), `baseUrl`, `apiKey`, `model`, `models` |
 | `activeProfile` | string | `local` | which endpoint is in use |
-| `maxSteps` | number | `12` | tool-calling rounds per user turn (1–100) |
+| `maxSteps` | number | `0` | tool-calling rounds per user turn; `0` = no limit, otherwise 1–1000 |
 | `temperature` | number | `0` | 0–2 |
 | `loopGuard` | boolean | `true` | refuse a third identical call that already returned the same answer twice (see [Staying on the rails](#staying-on-the-rails)) |
 | `agentMode` | `"guided"` \| `"normal"` | `guided` | supervision for small local models (see [Agent modes](#agent-modes--guided-vs-normal)) |
@@ -1083,6 +1159,7 @@ Custom commands run arbitrary PowerShell, so they always require approval
 | `scheduled_tasks` | list, info, create, delete, run |
 | `registry` | get, list, set, delete |
 | `ui` | clipboard_get, clipboard_set, screenshot, open, notify |
+| `skills` | list, load, read — procedures from `data/skills/`, loaded only when a task matches (see [Skills](#skills)) |
 | `powershell` | raw script escape hatch (always confirmed; with the sandbox on the script is read first and refused if a path leaves the folder) |
 | `custom` | your own commands (only present when you add some; not confined — they are code you wrote and approved) |
 
@@ -1223,6 +1300,9 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `GET` | `/api/models` | `?profile=<id>` — ask that endpoint which models it serves (remembers the list **and** the context lengths it reports). With `syncLocalModels` on, the answer also carries `endpoints` (every local server, with its route and error), `merged` (all models, each with its `endpointId`) and `context` |
 | `GET` | `/api/mcp` | the MCP master switch and every server, with connection state, self-reported name and live tool list |
 | `POST` | `/api/mcp` | `{ action: "refresh" }` · `{ action: "add", id, server }` · `{ action: "update", id, server }` · `{ action: "remove", id }` · `{ action: "toggle", id, enabled }` |
+| `GET` | `/api/skills` | `{ dir, skills }` — every skill in the folder (name, description, when, files, problem); `?name=<id>` returns that one with its `body` |
+| `POST` | `/api/skills` | `{ name, description, when, body }` — create or replace a skill; 400 with the reason when the name or the body is missing |
+| `POST` | `/api/skills/delete` | `{ name }` — remove the skill folder (404 when it does not exist) |
 | `GET` | `/api/fs/list` | `?path=<dir>` — sub-folders (and `parent`) for the chat folder picker; an empty `path` lists the drives. Directories only, no files |
 | `POST` | `/api/diagnose` | probe the endpoint and return `{ checks, context, verdict, text }` |
 | `POST` | `/api/profiles` | `{ action: "use"\|"save"\|"create"\|"remove", id, ... }` — manage endpoints |
@@ -1263,6 +1343,7 @@ src/
   store.ts        the data folder: open conversation, archives, token totals
   audit.ts        the change log (data/audit.jsonl) — which is also the undo stack — plus the copies kept in data/undo/
   sandbox.ts      the folder fence and the command fence: the working-directory root, jailPath(), scanScript(), refusals
+  skills.ts       data/skills/<name>/SKILL.md: the header block, the one-line prompt index, and reading a skill's files
   version.ts      reads the version from package.json (one source of truth)
   context.ts      token estimation + context budgeting (what to send, what to trim)
   providers.ts    endpoint compatibility memory + context-length discovery
@@ -1276,7 +1357,7 @@ src/
   tools/
     registry.ts   Tool/ToolContext types, argument validation, catalog
     files.ts system.ts processes.ts services.ts network.ts web.ts
-    automation.ts ui.ts powershell.ts custom.ts
+    automation.ts ui.ts powershell.ts custom.ts skills.ts
     index.ts      assembles the tool set from settings
   util/ps.ts      PowerShell runner (-EncodedCommand) + JSON helpers, culture pin,
                   CLIXML decoding, elevation probe, process-tree timeouts
@@ -1296,6 +1377,7 @@ scripts/
   test-mode.mjs       agent modes + JSON repair + encodings (model-free, any platform)
   test-sandbox.mjs    the folder fence and the command fence (model-free, Windows paths)
   test-agent.mjs      the agent loop: loop guard, step limit, result trimming (mock model)
+  test-skills.mjs     the skills folder: header block, prompt index, the tool, containment
   test-i18n.mjs       the en/zh dictionaries, the HTML attributes and the help text
   test-docs.mjs       the docs against the code: routes, settings, commands, links
   test-api.mjs        the real HTTP server + a mock model, on a temp data folder
@@ -1343,6 +1425,7 @@ npm run test:isolation      # two copies never share data or a version number
 npm run test:mode           # agent modes, JSON repair, encodings (no model needed)
 npm run test:sandbox        # the folder fence and the command fence (no model needed)
 npm run test:agent          # the agent loop: guard, step limit, trimming (mock model)
+npm run test:skills         # the skills folder, the header block and the skills tool
 npm run test:i18n           # both dictionaries, the HTML keys and the help text
 npm run test:docs           # the docs against the code: routes, settings, links
 npm run test:api            # the whole HTTP API, against a mock model
@@ -1406,6 +1489,11 @@ Four suites exist specifically to keep this repository honest as it grows:
   whose answer changes never is, the step limit ends the turn with a message that
   names the limit and the way on (in both languages), and a 200 000-character tool
   result is trimmed with a note before it is stored.
+- **`test:skills`** writes real skills into a temp data folder: the header block is
+  parsed (quotes, a BOM, CRLF, `when_to_use`, and a file with no header at all), the
+  prompt index carries one line per skill and never the body, a broken `SKILL.md` is
+  reported instead of hidden, the `skills` tool lists/loads/reads, `../` and absolute
+  paths out of a skill folder are refused, and a delete really removes the folder.
 - **`test:audit`** records real changes in a temp folder and then reverses them for
   real: a file is written, appended to, edited, moved, copied and deleted (a folder
   tree included), registry values are set and removed, an environment variable is

@@ -18,6 +18,7 @@ import {
   type Settings,
 } from "./settings.js";
 import { powerShellInfo, psQuote } from "./util/ps.js";
+import { listSkills, loadSkill, skillsDir } from "./skills.js";
 import type { AuditEntry } from "./audit.js";
 import { VERSION } from "./version.js";
 import { MCP_SERVER_ID, mcp, safeName, upsertServer, type McpServer } from "./mcp.js";
@@ -116,6 +117,7 @@ interface Messages {
   unknownTool: string;
   unknownCommand: string;
   unknownSub: string;
+  unknownSubFor: string;
   missingArg: string;
   usageEnable: string;
   usageCustomRemove: string;
@@ -123,6 +125,8 @@ interface Messages {
   languageInvalid: string;
   invalidPort: string;
   noCustom: string;
+  noSkills: string;
+  usageSkillShow: string;
   opened: string;
   chatCleared: string;
   reloaded: string;
@@ -236,7 +240,7 @@ Change (saved to disk and applied immediately):
   /baseurl <url>             API endpoint
   /apikey <key>              API key
   /language <en|zh>          interface + reply language
-  /maxsteps <n>              tool-calling rounds per turn
+  /maxsteps <n>              tool-calling rounds per turn (0 = no limit)
   /temperature <n>           sampling temperature (0-2)
   /prompt <text>             system prompt
   /workdir <path>            working directory
@@ -247,6 +251,8 @@ Change (saved to disk and applied immediately):
   /disable <name...>         disable tools
   /custom add <name> <ps>    add a custom command (one-line PowerShell)
   /custom remove <name>      remove a custom command
+  /skills                    list installed skills (procedures the model can load)
+  /skills show <name>        print one skill, exactly as the model receives it
   /dry-run <on|off>          describe actions instead of doing them
   /auto-approve <on|off>     skip approval prompts
   /sandbox <on|off>          keep file paths inside the working directory (on by default)
@@ -294,6 +300,7 @@ current directory.`,
     unknownTool: 'unknown tool "{0}"',
     unknownCommand: 'unknown command "/{0}". Try /help',
     unknownSub: 'unknown /custom subcommand "{0}"',
+  unknownSubFor: 'unknown /{0} subcommand "{1}"',
     missingArg: "missing argument. Example: {0}",
     usageEnable: "usage: /{0} <tool> [tool...]",
     usageCustomRemove: "usage: /custom remove <name>",
@@ -301,6 +308,8 @@ current directory.`,
     languageInvalid: 'language must be "en" or "zh"',
     invalidPort: "invalid port",
     noCustom: "(no custom commands)",
+  noSkills: "(no skills installed - add one in the web UI under Settings -> Skills)",
+  usageSkillShow: "usage: /skills show <name>",
     opened: "opened {0}",
     chatCleared: "conversation archived — started a new one",
     reloaded: "settings reloaded from disk",
@@ -423,7 +432,7 @@ current directory.`,
   /baseurl <url>             接口地址
   /apikey <key>              API 密钥
   /language <en|zh>          界面与回复语言
-  /maxsteps <n>              每轮最多工具调用步数
+  /maxsteps <n>              每轮最多工具调用步数（0 = 不设上限）
   /temperature <n>           采样温度（0-2）
   /prompt <text>             系统提示词
   /workdir <path>            工作目录
@@ -434,6 +443,8 @@ current directory.`,
   /disable <name...>         停用工具
   /custom add <name> <ps>    添加自定义命令（单行 PowerShell）
   /custom remove <name>      删除自定义命令
+  /skills                    列出已安装的技能包（模型可按需加载的做法）
+  /skills show <名称>        打印一个技能包，内容与模型拿到的完全一致
   /dry-run <on|off>          只报告不真正执行
   /auto-approve <on|off>     跳过审批提示
   /sandbox <on|off>          文件路径限制在工作目录内（默认开启）
@@ -480,6 +491,7 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
     unknownTool: '未知工具 "{0}"',
     unknownCommand: '未知指令 "/{0}"，试试 /help',
     unknownSub: '未知的 /custom 子命令 "{0}"',
+    unknownSubFor: '未知的 /{0} 子命令 "{1}"',
     missingArg: "缺少参数。示例：{0}",
     usageEnable: "用法：/{0} <工具> [工具...]",
     usageCustomRemove: "用法：/custom remove <名称>",
@@ -487,6 +499,8 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
     languageInvalid: 'language 只能是 "en" 或 "zh"',
     invalidPort: "端口不合法",
     noCustom: "（没有自定义命令）",
+    noSkills: "（还没有技能包——可在网页 Settings → 技能包里添加）",
+    usageSkillShow: "用法：/skills show <名称>",
     opened: "已打开 {0}",
     chatCleared: "对话已归档，并开始了新对话",
     reloaded: "已从磁盘重新加载设置",
@@ -688,7 +702,8 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         `profile    : ${s.activeProfile}  (${s.profiles.length} configured)`,
         `endpoint   : ${s.baseUrl}`,
         `apiKey     : ${s.apiKey ? m().statusSet : m().statusEmpty}`,
-        `maxSteps   : ${s.maxSteps}`,
+        `maxSteps   : ${s.maxSteps > 0 ? s.maxSteps : "no limit"}`,
+        `loopGuard  : ${s.loopGuard !== false ? "on" : "off"}`,
         `temperature: ${s.temperature}`,
         `language   : ${s.language}`,
         `workdir    : ${s.workdir}`,
@@ -899,6 +914,28 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         });
       }
       throw new Error(format(m().unknownSub, sub));
+    }
+
+    case "skills":
+    case "skill": {
+      const [sub, ...parts] = rest.trim().split(/\s+/).filter(Boolean);
+      if (!sub || sub === "list" || sub === "ls") {
+        const list = listSkills();
+        if (list.length === 0) return m().noSkills;
+        return list
+          .map((skill) => `- ${skill.name}: ${skill.description}${skill.when ? ` — ${skill.when}` : ""}`)
+          .join("\n");
+      }
+      if (sub === "show" || sub === "load") {
+        const name = parts[0];
+        if (!name) throw new Error(m().usageSkillShow);
+        const loaded = loadSkill(name);
+        return typeof loaded === "string"
+          ? loaded
+          : `${loaded.skill.name}: ${loaded.skill.description}\n\n${loaded.body}`;
+      }
+      if (sub === "path" || sub === "dir") return skillsDir();
+      throw new Error(format(m().unknownSubFor, "skills", sub));
     }
 
     case "dry-run":

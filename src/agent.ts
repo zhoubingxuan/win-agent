@@ -3,6 +3,7 @@ import { GUIDED_INSTRUCTIONS, LANGUAGE_INSTRUCTIONS } from "./settings.js";
 import { chat, type ChatMessage, type ToolCall, type Usage } from "./llm.js";
 import { capText, planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import type { ToolRegistry } from "./tools/index.js";
+import { skillIndex } from "./skills.js";
 
 export interface AgentEvents {
   onAssistantText?: (text: string) => void;
@@ -195,6 +196,21 @@ export function repeatedCall(language: Language | undefined, name: string, args:
     : `Blocked: this exact call (${name} ${shown}) has already returned the same result twice, so running it again cannot change anything. Change the argument, use another tool, or tell the user what you have found.`;
 }
 
+/** How many blocked repeats in a row end the turn (the only limit when maxSteps is 0). */
+const REPEAT_FUSE = 5;
+
+/**
+ * What the user sees when one repeated call kept the turn from moving: with no step
+ * limit, this is the brake. It says what happened and what to change, and it is
+ * counted in *blocked* calls, not in steps.
+ */
+export function repeatFuse(language: Language | undefined, blocked: number): string {
+  const zh = language === "zh";
+  return zh
+    ? `（已连续 ${blocked} 次被同一个重复调用挡住：任务没法再往前走了。换个说法、把任务拆小一点，或者先告诉用户现在的结果。）`
+    : `(stopped after ${blocked} blocked repeats: the same call could not move the task forward. Rephrase the request, split it into smaller pieces, or report what you have found so far.)`;
+}
+
 /** What the user sees when the step limit stopped the turn. */
 export function stepLimit(language: Language | undefined, steps: number): string {
   const zh = language === "zh";
@@ -240,6 +256,10 @@ export class Agent {
       this.config.systemPrompt,
       instruction,
       guidanceFor(mode, language),
+      // One line per installed skill, never the bodies: a procedure is loaded by the
+      // model when (and only when) its `when` fits the task, so ten skills cost ten
+      // lines of prompt instead of ten thousand characters.
+      skillIndex(),
       this.tools.describe({ verbose: mode === "guided" }),
     ]
       .filter((part) => part && part.trim())
@@ -283,8 +303,16 @@ export class Agent {
 
     // The loop guard's memory: what was called and what came back, this turn only.
     const memory: CallMemory[] = [];
+    // Blocked repeats in a row. With no step limit this is what ends a turn that
+    // cannot move: five identical calls that were each refused.
+    let blocked = 0;
 
-    for (let step = 1; step <= this.config.maxSteps; step++) {
+    // `maxSteps` 0 means "no step limit": a long task is allowed to take as many
+    // rounds as it needs. The brakes are the loop guard (a repeat that cannot change
+    // anything is refused), the approvals, and the Stop button.
+    const limit = this.config.maxSteps > 0 ? this.config.maxSteps : Infinity;
+
+    for (let step = 1; step <= limit; step++) {
       signal?.throwIfAborted();
       this.events.onStep?.(step, this.config.maxSteps);
 
@@ -372,6 +400,7 @@ export class Agent {
         if (this.config.loopGuard !== false && stuckInALoop(memory, signature)) {
           // Nothing new can come of it: answer instead of running it a third time.
           result = repeatedCall(this.config.language, call.function.name, call.function.arguments);
+          blocked += 1;
         } else {
           result = await this.tools.execute(call.function.name, call.function.arguments);
           // One result cannot be allowed to fill the window (or the conversation
@@ -379,6 +408,7 @@ export class Agent {
           result = capText(result, this.toolCap(), "characters trimmed; use a narrower call if you need the middle");
           memory.push({ signature, result });
           if (memory.length > CALL_MEMORY) memory.shift();
+          blocked = 0;
         }
         this.events.onToolResult?.(call.function.name, result);
         this.history.push({
@@ -398,6 +428,15 @@ export class Agent {
           name: call.function.name,
           content: SKIPPED_TOOL_CALL,
         });
+      }
+
+      if (blocked >= REPEAT_FUSE) {
+        // The step limit may be gone, but this turn is going nowhere: a run that is
+        // refused five times in a row cannot be saved by another round.
+        const stopped = repeatFuse(this.config.language, blocked);
+        this.history.push({ role: "assistant", content: stopped });
+        this.events.onAssistantText?.(stopped);
+        return stopped;
       }
     }
 
