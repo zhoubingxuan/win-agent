@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.9.0",
+  "createdAt": "2026-10-21T14:48:30.049Z",
+  "node": ">=20.3",
+  "files": 81,
+  "bytes": 1096174,
+  "note": "One thing changes here: **a turn is no longer a lock on the whole agent**."
+}

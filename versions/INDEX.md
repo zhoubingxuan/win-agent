@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 1.9.0 | 2026-10-21 14:48 | 81 | One thing changes here: **a turn is no longer a lock on the whole agent**. |
 | 1.8.0 | 2026-10-21 14:36 | 81 | Two changes that make the agent *carry more without carrying it in the prompt*. |
 | 1.7.0 | 2026-10-21 13:13 | 77 | A small model does not usually fail by being unable to do the task. It fails by repeating itself, by drowning in one huge tool result, and by reading an error… |
 | 1.6.0 | 2026-10-19 14:37 | 75 | Two halves of the same promise: the sandbox stops taking tools away and starts *reading* them, and the changes that do get through can be rolled back long after |
