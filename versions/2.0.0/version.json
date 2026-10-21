@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.0.0",
+  "createdAt": "2026-10-21T15:01:49.050Z",
+  "node": ">=20.3",
+  "files": 84,
+  "bytes": 1130148,
+  "note": "win-agent is no longer only a client: **it can be the toolset another agent uses**, and the whole capability surface can be read from one panel. 1.8 made it…"
+}

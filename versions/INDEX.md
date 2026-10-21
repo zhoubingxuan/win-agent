@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 2.0.0 | 2026-10-21 15:01 | 84 | win-agent is no longer only a client: **it can be the toolset another agent uses**, and the whole capability surface can be read from one panel. 1.8 made it… |
 | 1.9.0 | 2026-10-21 14:48 | 81 | One thing changes here: **a turn is no longer a lock on the whole agent**. |
 | 1.8.0 | 2026-10-21 14:36 | 81 | Two changes that make the agent *carry more without carrying it in the prompt*. |
 | 1.7.0 | 2026-10-21 13:13 | 77 | A small model does not usually fail by being unable to do the task. It fails by repeating itself, by drowning in one huge tool result, and by reading an error… |
