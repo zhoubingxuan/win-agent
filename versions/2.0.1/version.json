@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.0.1",
+  "createdAt": "2026-10-21T15:32:26.774Z",
+  "node": ">=20.3",
+  "files": 84,
+  "bytes": 1134717,
+  "note": "A bug the 2.0 demo found, fixed before it could eat anyone's undo stack."
+}
