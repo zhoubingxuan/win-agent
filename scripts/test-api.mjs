@@ -97,6 +97,22 @@ const mock = http.createServer((req, res) => {
       );
       return;
     }
+    // A slow turn: the queue checks send a second message while this one is still
+    // running, and need it to still be running when they do.
+    if (JSON.stringify(body.messages ?? []).includes("SLOW_TURN")) {
+      setTimeout(() => {
+        res.end(
+          JSON.stringify({
+            model: "mock-1",
+            choices: [
+              { index: 0, message: { role: "assistant", content: "mock answer (slow)" }, finish_reason: "stop" },
+            ],
+            usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 },
+          }),
+        );
+      }, 1_500);
+      return;
+    }
     res.end(
       JSON.stringify({
         model: "mock-1",
@@ -677,6 +693,72 @@ try {
     check("the conversation can be reset again", cleared.status === 200 && cleared.data.ok === true);
     const empty2 = await api("/api/state");
     check("the history is empty after the reset", empty2.data.history.length === 0);
+  }
+
+  /* ---------------------------------------------------------------------- */
+
+  section("the queue");
+  {
+    // A message sent while a turn is running waits instead of being refused, and
+    // starts by itself when the turn ends - send three jobs, walk away.
+    const first = await api("/api/chat", "POST", { message: "SLOW_TURN please take your time" });
+    check("the slow turn starts", first.status === 202 && first.data.queued !== true, JSON.stringify(first.data));
+
+    const second = await api("/api/chat", "POST", { message: "and then this one" });
+    check(
+      "a message sent during a turn is queued, not refused",
+      second.status === 202 && second.data.queued === true && second.data.position === 1,
+      JSON.stringify(second.data),
+    );
+
+    const listed = await api("/api/queue");
+    check(
+      "the queue lists it with its text",
+      listed.data.items.length === 1 && /and then this one/.test(listed.data.items[0].message),
+      JSON.stringify(listed.data.items),
+    );
+
+    const onDisk = JSON.parse(fs.readFileSync(path.join(dataDir, "queue.json"), "utf8"));
+    check(
+      "the queue is written to the data folder, so a restart keeps it",
+      JSON.stringify(onDisk).includes("and then this one"),
+      JSON.stringify(onDisk).slice(0, 120),
+    );
+
+    const removed = await api("/api/queue", "POST", { action: "remove", id: listed.data.items[0].id });
+    check("one queued message can be dropped", removed.status === 200 && removed.data.items.length === 0);
+    const afterRemove = JSON.parse(fs.readFileSync(path.join(dataDir, "queue.json"), "utf8"));
+    check("a dropped message leaves the file too", afterRemove.items.length === 0, JSON.stringify(afterRemove));
+    const missing = await api("/api/queue", "POST", { action: "remove", id: "nope" });
+    check("removing an unknown id is a 404", missing.status === 404);
+    const nonsense = await api("/api/queue", "POST", { action: "nonsense" });
+    check("an unknown action is a 400", nonsense.status === 400);
+
+    const third = await api("/api/chat", "POST", { message: "the queued job" });
+    check("it can be queued again", third.data.queued === true, JSON.stringify(third.data));
+
+    let drained = false;
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const now = await api("/api/queue");
+      const state = await api("/api/state");
+      if (now.data.items.length === 0 && state.data.running === false) {
+        drained = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    check("the queue drains by itself when the turn ends", drained);
+
+    const state = (await api("/api/state")).data;
+    check(
+      "the queued message ran in the same conversation",
+      JSON.stringify(state.history).includes("the queued job"),
+      JSON.stringify(state.history).slice(0, 200),
+    );
+
+    const wiped = await api("/api/reset", "POST", {});
+    check("the conversation can be reset again", wiped.status === 200);
   }
 
   /* ---------------------------------------------------------------------- */

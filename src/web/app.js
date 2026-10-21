@@ -201,6 +201,10 @@ const I18N = {
     "error.prefix": "Error: ",
     "step.label": "step {0}/{1}",
     "step.labelNoLimit": "step {0}",
+    "chat.queued": "Queued",
+    "chat.queueClear": "Clear",
+    "chat.queueRemove": "Remove from the queue",
+    "notice.queued": "queued - position {0}",
     "notice.stopping": "stopping…",
     "notice.stopped": "task stopped",
     "settings.context": "Context window and robustness",
@@ -464,6 +468,10 @@ const I18N = {
     "error.prefix": "错误：",
     "step.label": "第 {0}/{1} 步",
     "step.labelNoLimit": "第 {0} 步",
+    "chat.queued": "排队中",
+    "chat.queueClear": "清空",
+    "chat.queueRemove": "从队列中移除",
+    "notice.queued": "已排队——第 {0} 个",
     "notice.stopping": "正在停止…",
     "notice.stopped": "任务已停止",
     "settings.context": "上下文窗口与健壮性",
@@ -942,7 +950,8 @@ function setConn(value) {
 
 function setRunning(value) {
   running = value;
-  sendBtn.disabled = value;
+  // Sending stays possible while a turn runs: the message is queued, not refused.
+  sendBtn.disabled = false;
   el("stop").hidden = !value;
   title.textContent = value ? t("title.working") : t("title.ready");
   setConn(value ? "busy" : "online");
@@ -1109,7 +1118,7 @@ async function loadData() {
   if (info.error) return;
   renderData(info);
   if (info.usage) renderUsage(info.usage);
-  await Promise.all([refreshAudit(), refreshSkills()]);
+  await Promise.all([refreshAudit(), refreshSkills(), refreshQueue()]);
 }
 
 /* ------------------------------------------------------- audit log & undo */
@@ -1262,6 +1271,10 @@ function handle(ev) {
       break;
     case "notice":
       showNotice(ev.text, 8000);
+      break;
+    case "queue":
+      // The queue changed (a message was added, started or dropped).
+      renderQueue(ev.items ?? []);
       break;
     case "audit":
       // A change (or an undo) finished; keep the change log panel honest.
@@ -2266,16 +2279,69 @@ function switchTab(name) {
   if (name === "terminal") el("termInput").focus();
 }
 
+/* -------------------------------------------------------------------- queue */
+
+/** Messages waiting for the running turn to finish. */
+let queued = [];
+
+async function refreshQueue() {
+  const report = await api("/api/queue");
+  if (report.error) return;
+  renderQueue(report.items ?? []);
+}
+
+/** Draw the waiting messages: one line each, with a way to drop it. */
+function renderQueue(items) {
+  queued = items;
+  const strip = el("queue-strip");
+  if (!strip) return;
+  strip.hidden = items.length === 0;
+  const box = el("queue-items");
+  box.innerHTML = "";
+  items.forEach((item, index) => {
+    const row = document.createElement("span");
+    row.className = "queue-item";
+    const label = document.createElement("span");
+    const value = String(item.message ?? "");
+    label.textContent = `${index + 1}. ${value.length > 70 ? `${value.slice(0, 70)}…` : value}`;
+    label.title = value;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost small";
+    remove.textContent = "×";
+    remove.title = t("chat.queueRemove");
+    remove.addEventListener("click", async () => {
+      const result = await api("/api/queue", "POST", { action: "remove", id: item.id });
+      if (result.items) renderQueue(result.items);
+    });
+    row.append(label, remove);
+    box.appendChild(row);
+  });
+}
+
 /* -------------------------------------------------------------------- wire */
 
 el("composer").addEventListener("submit", (event) => {
   event.preventDefault();
   const text = input.value.trim();
-  if (!text || running) return;
+  if (!text) return;
   input.value = "";
   input.style.height = "auto";
-  api("/api/chat", "POST", { message: text });
+  void sendMessage(text);
 });
+
+/** Send a message: starts a turn, or queues it when one is already running. */
+async function sendMessage(text) {
+  const result = await api("/api/chat", "POST", { message: text });
+  if (result.error) {
+    showNotice(`${t("error.prefix")}${result.error}`);
+    return;
+  }
+  if (result.queued) {
+    showNotice(t("notice.queued", result.position));
+    refreshQueue();
+  }
+}
 
 input.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
@@ -2568,6 +2634,10 @@ el("c-add").addEventListener("click", () => {
 });
 
 el("k-save").addEventListener("click", saveSkillUi);
+el("queue-clear").addEventListener("click", async () => {
+  const result = await api("/api/queue", "POST", { action: "clear" });
+  if (result.items) renderQueue(result.items);
+});
 el("k-new").addEventListener("click", clearSkillForm);
 
 el("s-save").addEventListener("click", saveSettings);

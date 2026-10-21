@@ -114,6 +114,11 @@
               Refresh models
             </button>
           </div>
+          <div id="queue-strip" class="queue-strip" hidden>
+            <span class="queue-label" data-i18n="chat.queued">Queued</span>
+            <div id="queue-items" class="queue-items"></div>
+            <button type="button" id="queue-clear" class="ghost small" data-i18n="chat.queueClear">Clear</button>
+          </div>
           <form id="composer" class="composer">
             <textarea id="input" rows="1" data-i18n-placeholder="chat.placeholder"
               placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"></textarea>

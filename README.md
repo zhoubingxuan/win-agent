@@ -137,6 +137,13 @@ Three tabs, all talking to the same local server over SSE.
   are at the bottom, so scrolling up to read history is not interrupted. A reload, and
   sending your own message, always jump to the newest output.
 - **Stop** (or `Esc`, or `/stop` in the terminal) aborts the task that is running.
+- **Line up the next jobs while one runs.** Sending a message during a turn does not
+  fail with "busy": it goes into a **queue** shown above the composer (up to 20
+  messages, each with × to drop it, plus **Clear**), and the next one starts by itself
+  the moment the current turn ends. Three jobs in a row, then walk away. The queue
+  survives a restart (`data/queue.json`): a job that was still waiting is waiting
+  again, and the first one starts as the server comes up. `GET /api/queue` and
+  `POST /api/queue` expose the same thing to scripts.
 - A **detail** slider in the toolbar (the same one sits in Settings) decides how much
   of the process the log shows — see [Output detail](#output-detail). It is a view
   setting: the agent does exactly the same work at every level.
@@ -752,6 +759,7 @@ data/
   undo/                the copies made before a change, kept for undoRetentionDays
   skills/
     <name>/SKILL.md    a procedure the model can load (see [Skills](#skills))
+  queue.json           messages waiting for the running turn (survives a restart)
 ```
 
 The folder always belongs to the **installation**, not to the folder you happen to start
@@ -1306,7 +1314,9 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `GET` | `/api/fs/list` | `?path=<dir>` — sub-folders (and `parent`) for the chat folder picker; an empty `path` lists the drives. Directories only, no files |
 | `POST` | `/api/diagnose` | probe the endpoint and return `{ checks, context, verdict, text }` |
 | `POST` | `/api/profiles` | `{ action: "use"\|"save"\|"create"\|"remove", id, ... }` — manage endpoints |
-| `POST` | `/api/chat` | `{ message }` — start a task (results arrive on the event stream) |
+| `POST` | `/api/chat` | `{ message }` — start a task (results arrive on the event stream); while a turn is running the message is **queued** and answered with `{ ok, queued: true, position, id }` |
+| `GET` | `/api/queue` | `{ items, running, limit }` — messages waiting for the running turn |
+| `POST` | `/api/queue` | `{ action: "remove", id }` or `{ action: "clear" }` — drop one or all queued messages |
 | `POST` | `/api/abort` | stop the task that is running |
 | `POST` | `/api/terminal` | `{ input }` — run a shell line or an internal `/command` |
 | `POST` | `/api/approve` | `{ id, approved }` — answer an approval prompt |

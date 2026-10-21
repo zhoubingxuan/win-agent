@@ -13,6 +13,43 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-10-21
+
+One thing changes here: **a turn is no longer a lock on the whole agent**.
+
+### Added
+
+- **The queue.** Sending a message while a turn is running no longer answers
+  "busy" — the message waits, and the next one starts by itself the moment the
+  current turn ends. In the UI that is a strip above the composer (up to 20
+  messages, × to drop one, **Clear** for all of them); over HTTP it is
+  `POST /api/chat` answering `{ queued: true, position }`, `GET /api/queue` and
+  `POST /api/queue`. Together with 1.8's "no step limit" this is the point of the
+  version: hand over three jobs and leave the machine to it.
+- **The queue survives a restart.** Every change is written to `data/queue.json`;
+  on the next start the messages that were waiting are waiting again and the first
+  one starts as the server comes up. A `data/` folder that cannot be written to is
+  not an error — the queue still works, in memory.
+- **A queue event on the stream** (`{ type: "queue", items }`) so the page, and
+  anything else listening, sees the waiting list change: added, started, dropped,
+  cleared.
+- **`test:api` covers it** (162 checks): a message sent during a slow turn is
+  queued rather than refused, the list carries its text, dropping one works and a
+  dropped message leaves the file, an unknown id is a 404 and an unknown action a
+  400, and the queue **drains by itself** — the queued job runs in the same
+  conversation without another request. Verified in the browser against a real
+  local model (`qwen/qwen3.8-27b`): the strip showed `1. … ×` while the first turn
+  ran, then emptied on its own.
+
+### Changed
+
+- Sending during a turn is allowed, so the **Send** button no longer greys out
+  while the agent works (Stop sits next to it). A queued message shows
+  "queued — position N" as a notice.
+- Docs: the [Chat](README.md#chat) section, the API table, and the `data/` tree.
+
+
+
 ## [1.8.0] — 2026-10-21
 
 Two changes that make the agent *carry more without carrying it in the prompt*.

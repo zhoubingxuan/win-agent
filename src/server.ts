@@ -70,6 +70,13 @@ let conversation: ConversationRecord = getSettings().remember
   ? loadConversation()
   : newConversation();
 let running = false;
+/**
+ * Messages sent while a turn is running. They wait here and start one after
+ * another, so a user can hand over three jobs and walk away. In memory only: a
+ * restart clears the queue (the conversation itself is still on disk).
+ */
+const queue: Array<{ id: string; message: string; addedAt: string }> = [];
+const MAX_QUEUE = 20;
 /** Cancels the LLM request(s) of the turn that is running (the Stop button). */
 let taskAbort: AbortController | null = null;
 
@@ -379,6 +386,63 @@ function buildTools() {
 /* Agent run                                                                  */
 /* -------------------------------------------------------------------------- */
 
+/** Where waiting messages survive a restart. */
+function queueFile(): string {
+  return path.join(dataDir(), "queue.json");
+}
+
+/**
+ * Write the queue to disk. It is a convenience, never the source of truth for a
+ * turn: a read-only data folder must not fail a request because of it.
+ */
+function saveQueue(): void {
+  try {
+    fs.writeFileSync(queueFile(), JSON.stringify({ items: queue }, null, 2), "utf8");
+  } catch {
+    /* the queue still works in memory */
+  }
+}
+
+/** Read back the messages that were waiting when the server stopped. */
+function loadQueue(): void {
+  try {
+    const raw = JSON.parse(fs.readFileSync(queueFile(), "utf8")) as { items?: unknown };
+    if (!Array.isArray(raw.items)) return;
+    for (const item of raw.items) {
+      const record = item as { id?: unknown; message?: unknown; addedAt?: unknown };
+      if (typeof record?.message !== "string" || !record.message.trim()) continue;
+      if (queue.length >= MAX_QUEUE) break;
+      queue.push({
+        id: typeof record.id === "string" ? record.id : randomUUID(),
+        message: record.message,
+        addedAt: typeof record.addedAt === "string" ? record.addedAt : new Date().toISOString(),
+      });
+    }
+  } catch {
+    /* first run: there is no queue file yet */
+  }
+}
+
+/** Put a message in the queue; null when the queue is full. */
+function enqueue(message: string): { id: string; message: string; addedAt: string } | null {
+  if (queue.length >= MAX_QUEUE) return null;
+  const item = { id: randomUUID(), message, addedAt: new Date().toISOString() };
+  queue.push(item);
+  saveQueue();
+  broadcast({ type: "queue", items: queue });
+  return item;
+}
+
+/** Start the next queued message, if nothing is running. */
+function drainQueue(): void {
+  if (running || queue.length === 0) return;
+  const next = queue.shift();
+  if (!next) return;
+  saveQueue();
+  broadcast({ type: "queue", items: queue });
+  void runAgent(next.message);
+}
+
 async function runAgent(message: string): Promise<void> {
   if (running) {
     broadcast({ type: "error", message: "The agent is already working on a task." });
@@ -459,6 +523,8 @@ async function runAgent(message: string): Promise<void> {
     running = false;
     taskAbort = null;
     broadcast({ type: "status", running: false });
+    // Something may be waiting: start it now that the machine is free.
+    drainQueue();
   }
 }
 
@@ -1123,10 +1189,41 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, skills: listSkills() });
       }
 
+      case "GET /api/queue":
+        return json(res, 200, { items: queue, running, limit: MAX_QUEUE });
+
+      case "POST /api/queue": {
+        const body = await readJsonBody(req);
+        const action = typeof body.action === "string" ? body.action : "";
+        if (action === "clear") {
+          queue.length = 0;
+          saveQueue();
+          broadcast({ type: "queue", items: queue });
+          return json(res, 200, { ok: true, items: queue });
+        }
+        if (action === "remove") {
+          const id = typeof body.id === "string" ? body.id : "";
+          const index = queue.findIndex((item) => item.id === id);
+          if (index < 0) return json(res, 404, { error: `no queued message with id ${id}` });
+          queue.splice(index, 1);
+          saveQueue();
+          broadcast({ type: "queue", items: queue });
+          return json(res, 200, { ok: true, items: queue });
+        }
+        return json(res, 400, { error: 'action must be "remove" or "clear"' });
+      }
+
       case "POST /api/chat": {
         const body = await readJsonBody(req);
         const message = typeof body.message === "string" ? body.message.trim() : "";
         if (!message) return json(res, 400, { error: "message is required" });
+        // While a turn is running, a new message is queued instead of refused: the
+        // user can line up the next jobs and leave. It starts when the turn ends.
+        if (running) {
+          const item = enqueue(message);
+          if (!item) return json(res, 429, { error: `the queue is full (${MAX_QUEUE} waiting)` });
+          return json(res, 202, { ok: true, queued: true, position: queue.length, id: item.id });
+        }
         void runAgent(message);
         return json(res, 202, { ok: true });
       }
@@ -1232,6 +1329,17 @@ server.listen(boundPort, "127.0.0.1", () => {
     /* a read-only data folder is not a reason to fail */
   }
   if (getSettings().mcpEnabled) console.log("  mcp        : connecting to the configured servers…");
+  // Messages that were waiting when the server stopped are waiting again, and the
+  // first one starts now: a restart does not lose the jobs that were lined up.
+  try {
+    loadQueue();
+    if (queue.length > 0) {
+      console.log(`  queue      : ${queue.length} waiting (${queueFile()})`);
+      drainQueue();
+    }
+  } catch {
+    /* a read-only data folder is not a reason to fail */
+  }
   for (const notice of bootNotices) console.log(`  ${notice}`);
 
   // Which PowerShell is being driven, and whether it is elevated, is the first

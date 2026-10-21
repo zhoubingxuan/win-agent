@@ -1,6 +1,6 @@
 {
   "name": "win-agent",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "A Windows automation agent that lets local LLMs drive Windows via high-level tools.",
   "type": "module",
   "bin": {
