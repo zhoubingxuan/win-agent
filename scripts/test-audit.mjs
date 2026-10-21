@@ -323,6 +323,53 @@ try {
     check("and it drains", auditLog().pending().length === 0);
   }
 
+  section("two processes never share a copy name");
+  {
+    // The web UI and an `--mcp-server` run (or a restart) are separate processes, each
+    // with its own counter. A copy name that only counts from zero would let the
+    // second write over the first one's snapshot - the older entry would then restore
+    // the *newer* content, or refuse to undo at all.
+    const target = at("shared.txt");
+    fs.writeFileSync(target, "one", "utf8");
+    const processA = new AuditLog(path.join(scratch, "data"), true);
+    const copyA = await processA.backup(target);
+    const entryA = processA.record({
+      tool: "files",
+      action: "write",
+      summary: "wrote one",
+      paths: [target],
+      steps: [{ kind: "restore", path: target, backup: copyA }],
+    });
+    fs.writeFileSync(target, "two", "utf8");
+    const processB = new AuditLog(path.join(scratch, "data"), true);
+    const copyB = await processB.backup(target);
+    const entryB = processB.record({
+      tool: "files",
+      action: "edit",
+      summary: "wrote two",
+      paths: [target],
+      steps: [{ kind: "restore", path: target, backup: copyB }],
+    });
+    fs.writeFileSync(target, "three", "utf8");
+
+    check("the copies are two different files", copyA !== copyB && fs.existsSync(copyA) && fs.existsSync(copyB), `${copyA} / ${copyB}`);
+    check(
+      "each copy holds the content of its own moment",
+      fs.readFileSync(copyA, "utf8") === "one" && fs.readFileSync(copyB, "utf8") === "two",
+      `${fs.readFileSync(copyA, "utf8")} / ${fs.readFileSync(copyB, "utf8")}`,
+    );
+
+    const reopened = new AuditLog(path.join(scratch, "data"), true);
+    const pending = reopened.pending().map((entry) => entry.seq);
+    check("both changes can still be undone", pending.includes(entryA.seq) && pending.includes(entryB.seq), JSON.stringify(pending));
+    await reopened.undoEntry(entryB.seq);
+    check("undoing the newer change restores its own copy", fs.readFileSync(target, "utf8") === "two", fs.readFileSync(target, "utf8"));
+    await reopened.undoEntry(entryA.seq);
+    check("and the older one still gets its own content back", fs.readFileSync(target, "utf8") === "one", fs.readFileSync(target, "utf8"));
+  }
+
+  /* ---------------------------------------------------------------------- */
+
   section("copies outlive the server, but not the retention window");
   {
     const target = at("aged.txt");

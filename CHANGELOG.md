@@ -13,6 +13,32 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-10-21
+
+A bug the 2.0 demo found, fixed before it could eat anyone's undo stack.
+
+### Fixed
+
+- **Two processes no longer share a backup name.** The copies kept in `data/undo/`
+  were numbered with a counter that starts at zero in every process — the web UI and
+  an `--mcp-server` run (or a server restarted between two changes) would both write
+  `0001-notes.txt`, so the second snapshot overwrote the first. The older entry then
+  pointed at the newer content: rolling it back restored the wrong bytes, or (when
+  the copy had been dropped) the change silently stopped being undoable. Copy names
+  are now made unique against what is already in the folder, so every entry keeps its
+  own snapshot no matter which process took it.
+
+  Found by rolling back a real three-step sequence in `D:\try` (write → edit → delete,
+  driven through the MCP server while the web UI watched): undoing the delete and then
+  the edit left the write entry greyed out. With the fix the same sequence rolls back
+  delete → edit → write, each file byte-identical to its earlier self.
+
+- **`test:audit` grew to 83 checks** with that exact case: two `AuditLog` instances
+  (what two processes look like) backing up the same file, both copies holding their
+  own moment, and undoing the newer one not touching the older one's copy.
+
+
+
 ## [2.0.0] — 2026-10-21
 
 win-agent is no longer only a client: **it can be the toolset another agent uses**,

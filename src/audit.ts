@@ -240,6 +240,26 @@ export class AuditLog {
    * too large, unreadable, or the log is switched off) - the caller then records
    * the change as not undoable.
    */
+  /**
+   * Pick a copy name that is not taken yet. The counter alone is not enough: two
+   * processes (the web UI and an `--mcp-server` run, say) each start at zero, and
+   * the second would overwrite the first one's copy - leaving an older entry
+   * pointing at a file that now holds the *newer* content. Make the name unique
+   * against what is already in the folder instead.
+   */
+  private async copyName(base: string): Promise<string> {
+    await fsp.mkdir(this.backupDirPath, { recursive: true });
+    const used = new Set(await fsp.readdir(this.backupDirPath).catch(() => []));
+    let index = ++this.copies;
+    let name = `${String(index).padStart(4, "0")}-${base}`;
+    while (used.has(name)) {
+      index += 1;
+      name = `${String(index).padStart(4, "0")}-${base}`;
+    }
+    this.copies = index;
+    return path.join(this.backupDirPath, name);
+  }
+
   async backup(target: string): Promise<string | null> {
     if (!this.enabled) return null;
     try {
@@ -249,9 +269,8 @@ export class AuditLog {
       // Copies older than the retention window can go; the ones a pending entry
       // still points at are inside it (see sweep()).
       await this.sweep();
-      await fsp.mkdir(this.backupDirPath, { recursive: true });
       const base = (path.basename(target) || "item").slice(0, 60);
-      const copy = path.join(this.backupDirPath, `${String(++this.copies).padStart(4, "0")}-${base}`);
+      const copy = await this.copyName(base);
       await fsp.cp(target, copy, { recursive: true, verbatimSymlinks: true });
       return copy;
     } catch {
