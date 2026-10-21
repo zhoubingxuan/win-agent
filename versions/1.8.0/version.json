@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "1.8.0",
+  "createdAt": "2026-10-21T14:36:54.692Z",
+  "node": ">=20.3",
+  "files": 81,
+  "bytes": 1081772,
+  "note": "Two changes that make the agent *carry more without carrying it in the prompt*."
+}
