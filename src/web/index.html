@@ -375,8 +375,14 @@
             </p>
             <div class="row-toggles">
               <label class="switch"><input type="checkbox" id="s-mcpEnabled" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpEnabled">Master switch: enable MCP</span></label>
+              <label class="switch"><input type="checkbox" id="s-mcpServeAutoApprove" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpServeAutoApprove">MCP server mode: auto-approve</span></label>
               <span id="mcp-state" class="muted"></span>
             </div>
+            <p class="muted" data-i18n="settings.mcpServeHint">
+              The other direction: win-agent can also be the server — another agent starts
+              it with --mcp-server and uses these Windows tools. Nobody can press Approve
+              there, so destructive actions are refused unless the switch above is on.
+            </p>
             <div id="mcp-list" class="mcp-list"></div>
             <div class="mcp-add">
               <input id="m-id" type="text" data-i18n-placeholder="settings.mcpId" placeholder="id (a-z, 0-9, _)" />
@@ -456,6 +462,16 @@
                 <span id="k-msg" class="muted"></span>
               </div>
             </div>
+
+            <h4 data-i18n="settings.capabilities">Capabilities</h4>
+            <p class="muted" data-i18n-html="settings.capabilitiesHint">
+              What the model is offered right now: the tools it can call, the ones held back
+              (with the reason), the skills it can load, and the MCP servers behind it. This
+              is the capability surface, not a separate setting - it changes when you change
+              the mode or the tool switches above.
+            </p>
+            <div class="kv wide"><span data-i18n="settings.capNow">right now</span><span id="cap-summary" class="muted">…</span></div>
+            <div id="cap-tools" class="cap-list"></div>
 
             <h4 data-i18n="settings.customCommands">Custom commands</h4>
             <p class="muted" data-i18n-html="settings.customHint">

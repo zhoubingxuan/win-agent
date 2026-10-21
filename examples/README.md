@@ -20,6 +20,7 @@ emit, and the terminal lines are exactly what the agent accepts (verified with
 | [windows.md](windows.md) | Windows compatibility: PowerShell 5.1/7, elevation, encodings, timeouts |
 | [custom-commands.md](custom-commands.md) | turn your own PowerShell one-liners into tools the model can call |
 | [mcp.md](mcp.md) | add MCP servers (stdio + HTTP) and use their tools from the chat |
+| [mcp-server.md](mcp-server.md) | the other direction: another agent uses win-agent's Windows tools over MCP |
 | [api.md](api.md) | drive the agent from PowerShell / curl over the local HTTP API |
 | [audit-undo.md](audit-undo.md) | the change log and `/undo`: what can be taken back, what cannot, and what it looks like |
 | [settings.md](settings.md) | ready `data/settings.json` files: LM Studio, Ollama, a cloud API, MCP |

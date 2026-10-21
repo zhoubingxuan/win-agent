@@ -345,6 +345,29 @@ try {
 
   /* ---------------------------------------------------------------------- */
 
+  section("capabilities");
+  {
+    // What the model is offered, from the other end: the panel in Settings draws
+    // exactly this, and the MCP server hands the same tool set to another agent.
+    const caps = await api("/api/capabilities");
+    check("the report is served", caps.status === 200, JSON.stringify(caps.data).slice(0, 160));
+    check(
+      "it lists the tools the model can call",
+      Array.isArray(caps.data.tools) && caps.data.tools.some((tool) => tool.name === "files"),
+      JSON.stringify(caps.data.tools?.map((tool) => tool.name)),
+    );
+    check(
+      "each tool carries its description",
+      caps.data.tools.every((tool) => typeof tool.description === "string" && tool.description.length > 0),
+    );
+    check("it names the mode that produced the list", ["guided", "normal"].includes(caps.data.agentMode), caps.data.agentMode);
+    check("held-back tools are reported with a reason", Array.isArray(caps.data.withheld) && caps.data.withheld.every((tool) => typeof tool.reason === "string"));
+    check("skills are part of it", Array.isArray(caps.data.skills));
+    check("so are the MCP servers", Array.isArray(caps.data.mcp) && caps.data.mcp.length === 0, JSON.stringify(caps.data.mcp));
+  }
+
+  /* ---------------------------------------------------------------------- */
+
   section("static UI");
   {
     const page = await fetch(`${base}/`);

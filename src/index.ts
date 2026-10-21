@@ -13,12 +13,13 @@ interface Flags {
   yes: boolean;
   dryRun: boolean;
   listTools: boolean;
+  mcpServer: boolean;
   help: boolean;
   prompt: string;
 }
 
 function parseFlags(argv: string[]): Flags {
-  const flags: Flags = { yes: false, dryRun: false, listTools: false, help: false, prompt: "" };
+  const flags: Flags = { yes: false, dryRun: false, listTools: false, mcpServer: false, help: false, prompt: "" };
   const rest: string[] = [];
   for (const token of argv) {
     switch (token) {
@@ -31,6 +32,9 @@ function parseFlags(argv: string[]): Flags {
         break;
       case "--list-tools":
         flags.listTools = true;
+        break;
+      case "--mcp-server":
+        flags.mcpServer = true;
         break;
       case "-h":
       case "--help":
@@ -58,6 +62,7 @@ function printHelp(): void {
       "  -y, --yes        auto-approve all actions (use with care)",
       "  --dry-run        show what would happen without doing it",
       "  --list-tools     print the available tools and exit",
+      "  --mcp-server     serve the tools over MCP on stdio (for another agent)",
       "  -h, --help       show this help",
       "",
       `Settings file: ${settingsFile()}`,
@@ -90,6 +95,13 @@ async function main(): Promise<void> {
     } catch {
       /* keep current directory */
     }
+  }
+
+  if (flags.mcpServer) {
+    // MCP server mode: stdout belongs to the protocol, so nothing else may print.
+    const { runMcpServer } = await import("./mcp-server.js");
+    await runMcpServer();
+    return;
   }
 
   if (flags.listTools) {

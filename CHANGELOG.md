@@ -13,6 +13,62 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-10-21
+
+win-agent is no longer only a client: **it can be the toolset another agent uses**,
+and the whole capability surface can be read from one panel. 1.8 made it carry more
+(skills, no artificial step limit), 1.9 made it keep working when you leave (a queue
+that survives a restart), and 2.0 makes it **composable** — the same tools, in the
+other direction.
+
+### Added
+
+- **MCP server mode.** `win-agent --mcp-server` (or `npm run dev -- --mcp-server`)
+  speaks MCP over stdio: `initialize`, `tools/list`, `tools/call`, `ping`. Another
+  agent — Claude Desktop, an IDE, any MCP client — starts the process and gets the
+  same Windows tools the chat model gets, with the same JSON Schema:
+
+  ```json
+  {
+    "mcpServers": {
+      "windows": {
+        "command": "node",
+        "args": ["D:/new/dist/index.js", "--mcp-server"],
+        "env": { "AGENT_WORKDIR": "D:/work" }
+      }
+    }
+  }
+  ```
+
+  Two rules make it safe: **stdout carries protocol frames only** (everything for a
+  human goes to stderr, and a test fails if a single line is not JSON), and **there
+  is nobody to press Approve**, so destructive actions are refused with
+  `Cancelled by user.` and the reason on stderr unless **Settings → MCP → MCP server
+  mode: auto-approve** (or `AGENT_MCP_SERVE_AUTO_APPROVE=true`) is on. Even then the
+  change lands in `data/audit.jsonl`, so **Undo** still works.
+- **Capabilities panel** (**Settings → Capabilities**, `GET /api/capabilities`):
+  every tool the model is offered right now with its description, the tools held
+  back **and why** (guided mode withholds the raw shell), the skills that can be
+  loaded, and how many MCP servers are up. One glance answers "what can this agent
+  actually do?", and it changes with the mode and the tool switches.
+- **`npm run test:mcp-server`** (29 checks): the handshake (the client's protocol
+  version is echoed), `tools/list` schemas, a real read-only call, a relative path
+  resolved against the workdir, an unknown tool as `isError` rather than a crash,
+  invalid JSON and unknown methods, a destructive call refused and the file still
+  there, the same call succeeding with auto-approve on, and **stdout purity**.
+- [examples/mcp-server.md](examples/mcp-server.md): client config for a built copy
+  and a checkout, the tool table, the approval rule, a worked example, and a
+  troubleshooting table.
+
+### Changed
+
+- Settings table, env table, CLI list, architecture tree and the example index all
+  carry the new direction; `test:api` grew to 169 checks (the capabilities report),
+  and the Windows CI job runs the new suite while the portable job skips it, because
+  the tools under test are Windows tools.
+
+
+
 ## [1.9.0] — 2026-10-21
 
 One thing changes here: **a turn is no longer a lock on the whole agent**.

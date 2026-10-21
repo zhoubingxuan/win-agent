@@ -252,6 +252,14 @@ const I18N = {
     "settings.mcpHint":
       "MCP lets the agent use tools that live in other programs: a filesystem server, git, a database, your own service. Add one with its start command (<code>stdio</code>, e.g. <code>npx -y @modelcontextprotocol/server-filesystem D:\\</code>) or with a URL (<code>http</code>). Their tools show up in the model's tool list as <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> and ask for approval before they run.",
     "settings.mcpEnabled": "Master switch: enable MCP",
+    "settings.mcpServeAutoApprove": "MCP server mode: auto-approve",
+    "settings.mcpServeHint":
+      "The other direction: win-agent can also be the server - another agent starts it with --mcp-server and uses these Windows tools. Nobody can press Approve there, so destructive actions are refused unless the switch above is on.",
+    "settings.capabilities": "Capabilities",
+    "settings.capabilitiesHint":
+      "What the model is offered right now: the tools it can call, the ones held back (with the reason), the skills it can load, and the MCP servers behind it. It changes when you change the mode or the tool switches above.",
+    "settings.capNow": "right now",
+    "settings.capValue": "{0} tools · {1} skills · {2} MCP servers up · mode {3}",
     "settings.mcpId": "id (a-z, 0-9, _)",
     "settings.mcpCommand": "npx -y @modelcontextprotocol/server-filesystem D:\\",
     "settings.mcpStdio": "stdio",
@@ -519,6 +527,14 @@ const I18N = {
     "settings.mcpHint":
       "MCP 让 agent 用上别的程序里的工具：文件系统服务、git、数据库、你自己的服务。可以用启动命令添加（<code>stdio</code>，例如 <code>npx -y @modelcontextprotocol/server-filesystem D:\\</code>），也可以用网址添加（<code>http</code>）。这些工具会以 <code>mcp__&lt;服务器&gt;__&lt;工具&gt;</code> 出现在模型的工具列表里，执行前会征求你的同意。",
     "settings.mcpEnabled": "总开关：启用 MCP",
+    "settings.mcpServeAutoApprove": "MCP 服务端模式：自动批准",
+    "settings.mcpServeHint":
+      "反过来的方向：win-agent 也能当服务端——别的 agent 用 --mcp-server 启动它，就能用这些 Windows 工具。那边没人能点“批准”，所以除非打开上面这个开关，破坏性操作一律拒绝。",
+    "settings.capabilities": "能力面板",
+    "settings.capabilitiesHint":
+      "模型现在实际能用的东西：能调用的工具、被收起的工具（以及原因）、能加载的技能、背后的 MCP 服务端。改模式或改上面的工具开关，这里会跟着变。",
+    "settings.capNow": "现在",
+    "settings.capValue": "{0} 个工具 · {1} 个技能 · {2} 个 MCP 服务端在线 · 模式 {3}",
     "settings.mcpId": "id（a-z、0-9、_）",
     "settings.mcpCommand": "npx -y @modelcontextprotocol/server-filesystem D:\\",
     "settings.mcpStdio": "stdio",
@@ -1118,7 +1134,7 @@ async function loadData() {
   if (info.error) return;
   renderData(info);
   if (info.usage) renderUsage(info.usage);
-  await Promise.all([refreshAudit(), refreshSkills(), refreshQueue()]);
+  await Promise.all([refreshAudit(), refreshSkills(), refreshQueue(), refreshCapabilities()]);
 }
 
 /* ------------------------------------------------------- audit log & undo */
@@ -1854,6 +1870,7 @@ function fillSettingsForm(s) {
   el("s-auditLog").checked = s.auditLog !== false;
   el("s-undoRetentionDays").value = s.undoRetentionDays ?? 7;
   el("s-loopGuard").checked = s.loopGuard !== false;
+  el("s-mcpServeAutoApprove").checked = !!s.mcpServeAutoApprove;
   setVerbosityControls(s.verbosity);
   renderModeState();
   customTools = (s.customTools ?? []).map((c) => ({ ...c }));
@@ -2109,6 +2126,7 @@ async function saveSettings() {
     dryRun: el("s-dryRun").checked,
     autoApprove: el("s-autoApprove").checked,
     loopGuard: el("s-loopGuard").checked,
+    mcpServeAutoApprove: el("s-mcpServeAutoApprove").checked,
     sandbox: el("s-sandbox").checked,
     autoOpenBrowser: el("s-autoOpenBrowser").checked,
     stream: el("s-stream").checked,
@@ -2277,6 +2295,46 @@ function switchTab(name) {
   }
   if (name === "settings") loadData();
   if (name === "terminal") el("termInput").focus();
+}
+
+/* -------------------------------------------------------------- capabilities */
+
+/**
+ * Draw the capability surface: every tool the model can call, then the ones held
+ * back with their reason. Read-only - it changes when the mode or the tool
+ * switches change.
+ */
+async function refreshCapabilities() {
+  const report = await api("/api/capabilities");
+  if (report.error) return;
+  renderCapabilities(report);
+}
+
+function renderCapabilities(report) {
+  const mcpUp = (report.mcp ?? []).filter((server) => server.connected).length;
+  setText(
+    el("cap-summary"),
+    t("settings.capValue", report.tools?.length ?? 0, report.skills?.length ?? 0, mcpUp, report.agentMode ?? ""),
+  );
+  const box = el("cap-tools");
+  if (!box) return;
+  box.innerHTML = "";
+  const rows = [
+    ...(report.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, offered: true })),
+    ...(report.withheld ?? []).map((tool) => ({ name: tool.name, description: tool.reason, offered: false })),
+  ];
+  for (const row of rows) {
+    const div = document.createElement("div");
+    div.className = row.offered ? "cap-row" : "cap-row off";
+    const name = document.createElement("code");
+    name.textContent = row.name;
+    const text = document.createElement("span");
+    const value = String(row.description ?? "");
+    text.textContent = value.length > 160 ? `${value.slice(0, 160)}…` : value;
+    text.title = value;
+    div.append(name, text);
+    box.appendChild(div);
+  }
 }
 
 /* -------------------------------------------------------------------- queue */

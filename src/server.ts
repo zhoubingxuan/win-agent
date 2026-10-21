@@ -1150,6 +1150,37 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
+      case "GET /api/capabilities": {
+        // What this agent can actually do right now: the tools the model is offered,
+        // the ones deliberately withheld (with the reason), the procedures it can
+        // load, and the MCP servers behind it. Nothing here starts a turn.
+        const s = getSettings();
+        const tools = buildTools();
+        return json(res, 200, {
+          version: VERSION,
+          agentMode: s.agentMode,
+          dryRun: s.dryRun,
+          contextLimit: effectiveContextLimit().limit,
+          tools: tools.schemas().map((schema) => ({
+            name: schema.function.name,
+            description: schema.function.description,
+          })),
+          withheld: tools.withheld(),
+          skills: listSkills().map((skill) => ({
+            name: skill.name,
+            description: skill.description,
+            when: skill.when,
+          })),
+          mcp: mcp.status().map((server) => ({
+            id: server.id,
+            name: server.name,
+            connected: server.connected,
+            tools: server.tools.length,
+            error: server.error,
+          })),
+        });
+      }
+
       case "GET /api/skills": {
         ensureSkillsFolder();
         // ?name=… returns the body too, which is what the editor needs.

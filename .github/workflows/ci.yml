@@ -50,6 +50,7 @@ jobs:
       # sandbox    - the folder fence and the command fence (paths, junctions, scripts)
       # agent      - the agent loop: loop guard, step limit, result trimming
       # skills     - the skills folder: header block, index, the tool, path containment
+      # mcp-server - the other direction: win-agent's tools over MCP stdio (Windows tools)
       # i18n       - both dictionaries, the HTML attributes and the help text
       # api        - the real server on a temp data folder + a mock model
       # audit      - the audit log and undo, against a temp folder (live registry on Windows)

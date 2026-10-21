@@ -13,6 +13,7 @@ const SUITES = [
   ["context", "scripts/test-context.mjs", true],
   ["providers", "scripts/test-providers.mjs", true],
   ["mcp", "scripts/test-mcp.mjs", true],
+  ["mcp-server", "scripts/test-mcp-server.mjs", true],
   ["models", "scripts/test-models.mjs", true],
   ["mode", "scripts/test-mode.mjs", true],
   ["sandbox", "scripts/test-sandbox.mjs", true],

@@ -110,6 +110,7 @@ No other runtime dependency: the web UI is plain HTML/CSS/JS served by `node:htt
 [Windows compatibility notes](examples/windows.md),
 [custom commands](examples/custom-commands.md),
 [MCP servers](examples/mcp.md),
+[win-agent as an MCP server](examples/mcp-server.md),
 [HTTP API scripts](examples/api.md),
 [staying on the rails](examples/stability.md),
 [skills](examples/skills.md) and
@@ -605,6 +606,55 @@ picked up without restarting the agent.
 
 ---
 
+## MCP server mode — win-agent as the toolset
+
+The other direction: another agent can start **win-agent** and use its Windows tools.
+That is one flag — the protocol runs on stdin/stdout, so the client only needs a
+command line:
+
+```json
+{
+  "mcpServers": {
+    "windows": {
+      "command": "node",
+      "args": ["D:/new/dist/index.js", "--mcp-server"],
+      "env": { "AGENT_WORKDIR": "D:/work" }
+    }
+  }
+}
+```
+
+Any MCP client that speaks stdio works (Claude Desktop's `mcpServers` block looks
+exactly like that; so does `mcp-cli`). From a checkout, use
+`npx tsx src/index.ts --mcp-server` and point `cwd` at the repository.
+
+What the client can do:
+
+| Request | Answer |
+| --- | --- |
+| `initialize` | echoes the protocol version the client asked for, announces the `tools` capability, and names itself `win-agent` with its version |
+| `tools/list` | every tool the model would get here (`files`, `system`, `processes`, `services`, `network`, `registry`, `scheduled_tasks`, `ui`, `skills`, `powershell`, custom commands, MCP tools), with the same JSON Schema |
+| `tools/call` | runs the tool and returns its text; a tool error comes back as `isError: true`, not a broken connection |
+| `ping` | `{}` |
+
+Two rules make it safe to hand to another agent:
+
+- **Nothing but protocol frames on stdout.** Everything meant for a human goes to
+  stderr (`win-agent mcp: ready: 11 tools`), so a stray log line can never be read
+  as a malformed message. A test checks exactly that.
+- **There is nobody to press Approve.** Destructive actions are refused (the tool
+  answers `Cancelled by user.`) unless **Settings → MCP → MCP server mode:
+  auto-approve** is on, or `AGENT_MCP_SERVE_AUTO_APPROVE=true`. Every refusal and
+  every auto-approval is printed on stderr, so the operator can see what the other
+  agent tried. `dryRun` still applies if it is set here.
+
+The panel on `/` → **Settings → Capabilities** shows the same surface from the
+other side: every tool the model can call right now, the ones held back and why, the
+skills that can be loaded, and how many MCP servers are up. `GET /api/capabilities`
+returns it as JSON.
+
+---
+
 ## Web access — the `web` tool
 
 A Windows agent that cannot read the internet is only half useful. The `web` tool
@@ -1069,6 +1119,7 @@ with a message and nothing changes.
 | `syncLocalModels` | boolean | `true` | also ask LM Studio (1234) and Ollama (11434) for their models and merge them into the model picker |
 | `mcpEnabled` | boolean | `false` | the MCP master switch; while off no MCP server is started and no MCP tool is offered |
 | `mcpServers` | object[] | `[]` | MCP servers: `id`, `name`, `transport` (`stdio`\|`http`), `command`, `args`, `env`, `url`, `enabled`, `autoApprove`, `tools` |
+| `mcpServeAutoApprove` | boolean | `false` | MCP **server** mode only: answer destructive actions on another agent's behalf instead of refusing them (see [MCP server mode](#mcp-server-mode--win-agent-as-the-toolset)) |
 | `recentWorkdirs` | string[] | `[]` | the working directories offered by the chat picker (last 10) |
 | `enabledTools` | string[] \| `null` | `null` | `null` = all tools enabled |
 | `customTools` | object[] | `[]` | your own commands (see below) |
@@ -1099,6 +1150,7 @@ on. Every variable is the upper-case setting name with an `AGENT_` prefix:
 | `AGENT_SANDBOX` | `sandbox` | `true` / `false` |
 | `AGENT_VERBOSITY` | `verbosity` | `answer` / `thinking` / `full` |
 | `AGENT_AUDIT_LOG` | `auditLog` | `true` / `false` |
+| `AGENT_MCP_SERVE_AUTO_APPROVE` | `mcpServeAutoApprove` | `true` / `false` (MCP server mode) |
 | `AGENT_UNDO_RETENTION_DAYS` | `undoRetentionDays` | a number of days, 1–365 |
 | `AGENT_PS_ENGLISH_ERRORS` | `psEnglishErrors` | `true` / `false` |
 | `AGENT_WEB_PORT` | `webPort` | |
@@ -1278,6 +1330,7 @@ whole process tree (`taskkill /T /F`), and the result says the command was kille
 npm run dev                              # interactive
 npm run dev -- "<task>"                  # one task, then exit
 npm run dev -- --list-tools              # print the tool catalog
+npm run dev -- --mcp-server              # serve the tools over MCP on stdio
 npm run dev -- --dry-run "<task>"        # preview only
 npm run dev -- --yes "<task>"            # auto-approve
 npm run dev -- --help
@@ -1311,6 +1364,7 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `GET` | `/api/skills` | `{ dir, skills }` — every skill in the folder (name, description, when, files, problem); `?name=<id>` returns that one with its `body` |
 | `POST` | `/api/skills` | `{ name, description, when, body }` — create or replace a skill; 400 with the reason when the name or the body is missing |
 | `POST` | `/api/skills/delete` | `{ name }` — remove the skill folder (404 when it does not exist) |
+| `GET` | `/api/capabilities` | what the model is offered right now: `{ tools, withheld, skills, mcp, agentMode, contextLimit }` |
 | `GET` | `/api/fs/list` | `?path=<dir>` — sub-folders (and `parent`) for the chat folder picker; an empty `path` lists the drives. Directories only, no files |
 | `POST` | `/api/diagnose` | probe the endpoint and return `{ checks, context, verdict, text }` |
 | `POST` | `/api/profiles` | `{ action: "use"\|"save"\|"create"\|"remove", id, ... }` — manage endpoints |
@@ -1358,6 +1412,7 @@ src/
   context.ts      token estimation + context budgeting (what to send, what to trim)
   providers.ts    endpoint compatibility memory + context-length discovery
   mcp.ts          MCP client: stdio + Streamable HTTP, tool discovery, call routing
+  mcp-server.ts   MCP server: the same tools over stdio, for another agent (--mcp-server)
   diagnose.ts     the /diagnose probes (chat, usage, tools, streaming, context)
   commands.ts     internal "/command" dispatcher
   terminal.ts     terminal runner with a remembered working directory
@@ -1382,6 +1437,7 @@ scripts/
   test-context.mjs    model-free checks for the context planner (npm test)
   test-providers.mjs  endpoint-compatibility checks against a mock server
   test-mcp.mjs        MCP client checks (stdio + HTTP) against a mock MCP server
+test-mcp-server.mjs the other direction: JSON-RPC over stdio, tool calls, the approval rule
   test-models.mjs     local model discovery: LM Studio / Ollama routes, merging
   test-isolation.mjs  two copies never share data or a version number
   test-mode.mjs       agent modes + JSON repair + encodings (model-free, any platform)
@@ -1430,6 +1486,7 @@ npm run version:tag         # create the v<version> tag (needs a clean tree)
 npm test                    # context planner checks (no model needed)
 npm run test:providers      # endpoint compatibility checks against a mock server
 npm run test:mcp            # MCP client checks against a mock MCP server (stdio + HTTP)
+npm run test:mcp-server     # MCP server mode: the handshake, tools/list, calls, approvals
 npm run test:models         # local model sync: LM Studio / Ollama discovery + merging
 npm run test:isolation      # two copies never share data or a version number
 npm run test:mode           # agent modes, JSON repair, encodings (no model needed)

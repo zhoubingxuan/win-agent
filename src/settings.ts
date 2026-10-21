@@ -223,6 +223,12 @@ export interface Settings {
   // MCP (Model Context Protocol)
   /** Master switch: when off, no MCP server is started and no MCP tool is offered. */
   mcpEnabled: boolean;
+  /**
+   * MCP *server* mode (`--mcp-server`): another MCP client runs win-agent's tools.
+   * There is no human at this agent's UI, so anything that would ask for approval is
+   * refused unless this is on.
+   */
+  mcpServeAutoApprove: boolean;
   /** Servers whose tools the model may call (see src/mcp.ts). */
   mcpServers: McpServer[];
   /** Merge every local endpoint's loadable models into one list in the pickers. */
@@ -315,6 +321,7 @@ export const DEFAULTS: Settings = {
   enabledTools: null,
   customTools: [],
   mcpEnabled: false,
+  mcpServeAutoApprove: false,
   mcpServers: [],
   syncLocalModels: true,
   recentWorkdirs: [],
@@ -349,6 +356,7 @@ const BOOLEAN_KEYS: Array<keyof Settings> = [
   "stream",
   "psEnglishErrors",
   "mcpEnabled",
+  "mcpServeAutoApprove",
   "syncLocalModels",
   "auditLog",
 ];
@@ -567,6 +575,7 @@ function fromEnv(): Record<string, unknown> {
   if (env.AGENT_CONTEXT_LIMIT) patch.contextLimit = env.AGENT_CONTEXT_LIMIT;
   if (env.AGENT_REQUEST_TIMEOUT_MS) patch.requestTimeoutMs = env.AGENT_REQUEST_TIMEOUT_MS;
   if (env.AGENT_MAX_RETRIES) patch.maxRetries = env.AGENT_MAX_RETRIES;
+  if (env.AGENT_MCP_SERVE_AUTO_APPROVE) patch.mcpServeAutoApprove = env.AGENT_MCP_SERVE_AUTO_APPROVE;
   if (env.AGENT_WEB_SEARCH_URL) patch.webSearchUrl = env.AGENT_WEB_SEARCH_URL;
   return patch;
 }
