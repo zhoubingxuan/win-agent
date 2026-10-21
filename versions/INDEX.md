@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 2.0.2 | 2026-10-21 16:01 | 84 | Rollback becomes something you can see and pick, instead of a stack you have to reason about. |
 | 2.0.1 | 2026-10-21 15:32 | 84 | A bug the 2.0 demo found, fixed before it could eat anyone's undo stack. |
 | 2.0.0 | 2026-10-21 15:01 | 84 | win-agent is no longer only a client: **it can be the toolset another agent uses**, and the whole capability surface can be read from one panel. 1.8 made it… |
 | 1.9.0 | 2026-10-21 14:48 | 81 | One thing changes here: **a turn is no longer a lock on the whole agent**. |
