@@ -13,6 +13,53 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-10-22
+
+A small model's commonest failure is not a wrong tool call: it is answering "done"
+with half the task untouched. Now it has to write the half down, and the loop will not
+believe "done" while the list says otherwise.
+
+### Added
+
+- **`todo` tool — the model's own checklist.** `set` writes the steps of the task,
+  `list` shows them, `done` / `doing` / `reopen` move one item, `clear` empties it. It
+  changes nothing on the machine and needs no approval; it exists because writing a
+  step down is the only way a small model remembers it. Loose input from small models
+  is accepted (`items`, a newline-separated `text`, `{"text": …}` objects, `-`/`1.`
+  list markers) and the result is always the numbered list, so the model sees its own
+  state after every call.
+- **Live checklist in the chat.** While a turn runs, the plan and its progress sit above
+  the composer (SSE `todo`); when the turn ends it becomes part of the answer's card —
+  `✓` done, `▶` in progress, `○` open, plus "2 still open". Unlike the file card it is
+  shown at **every** detail level: it is what the model promised, not process noise.
+  Saved with the conversation and with each turn (`history.json`, `/api/state`,
+  `/api/turns`), so it survives "continue", a reload and a restart; a new conversation
+  starts empty.
+- **`todoCheck` — a turn cannot end with open items.** If the model answers while its
+  own list still has items, it is told exactly which ones (a system note for one request
+  only, never stored) and gets to continue — at most **two** reminders, then it may
+  finish and the card still shows what is open. A model that never writes a list is
+  never reminded. Switch on the Settings tab or `AGENT_TODO_CHECK=false`.
+- The default system prompt and both guided prompts now say when to write a list
+  (two or more parts, one item per part) and to tick each item off.
+
+### Tests
+
+- `npm run test:todo` (69 checks): list manipulation and limits, seeding from a saved
+  conversation, live subscribers, every tool action plus the aliases and the loose-JSON
+  forms, the two-language reminder text, and that the tool set still withholds the shell
+  in guided mode.
+- `test-agent` (13 new checks): a turn is reminded twice and then allowed to end, a
+  finished list never triggers a reminder, `todoCheck: false` ends the turn immediately,
+  and every attempt stays in the conversation.
+- `test-api` (11 new checks): a real mock turn sets two items, ticks one, writes a file
+  and tries to stop; the turn card, `/api/state`, `/api/turns` and `history.json` all
+  carry the list, and `/api/reset` clears it.
+- `test:all` now runs the todo suite (all 17 suites green).
+- Measured, not assumed: `qwen/qwen3.8-27b` (Q6_K) still scores **26/26** with the
+  checklist on (2.4 min, 721 018 tokens against 2.1 min / 510 282 before). The 28 extra
+  calls are the plans and ticks; they concentrate in the six multi-step tasks.
+
 ## [2.0.3] — 2026-10-22
 
 The suite could say "the code is right"; nothing could say "this model can do the job".

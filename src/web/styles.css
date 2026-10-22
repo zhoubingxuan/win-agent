@@ -284,6 +284,96 @@ body {
   white-space: nowrap;
 }
 
+/* --------------------------------------------------------------- checklist */
+
+/* The live list above the composer: it must fit on one screen line per step and
+   never push the composer off-screen, so it scrolls instead of growing. */
+.todo-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 14px 0;
+  font-size: 12px;
+  max-height: 22vh;
+  overflow: auto;
+}
+
+.todo-strip[hidden] {
+  display: none;
+}
+
+.todo-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10.5px;
+  white-space: nowrap;
+  padding-top: 2px;
+}
+
+.todo-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.todo-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  line-height: 1.45;
+}
+
+.todo-mark {
+  width: 1em;
+  flex: none;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.todo-item.doing .todo-mark {
+  color: var(--accent, #4c8dff);
+}
+
+.todo-item.done .todo-mark {
+  color: var(--ok, #57c785);
+}
+
+.todo-item.done .todo-text {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.todo-item.doing .todo-text {
+  font-weight: 600;
+}
+
+.todo-text {
+  overflow-wrap: anywhere;
+}
+
+.turn-todos {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.turn-files > .turn-todos:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.todo-open {
+  color: var(--warn, #e0a33e);
+}
+
 .turn-gone {
   color: var(--muted);
   font-size: 10.5px;

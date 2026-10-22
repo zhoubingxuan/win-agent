@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ChatMessage, Usage } from "./llm.js";
+import type { TodoItem } from "./todo.js";
 import { parseJson } from "./util/json.js";
 
 /**
@@ -57,6 +58,12 @@ export interface TurnRecord {
   /** History length when the turn ended: the card is drawn after that position. */
   at: number;
   files: TurnFile[];
+  /**
+   * The model's checklist when the turn ended (empty when it never wrote one). A
+   * turn can change no files and still leave a list, so this is saved separately
+   * from `files`.
+   */
+  todos?: TodoItem[];
 }
 
 export interface ConversationRecord {
@@ -69,6 +76,8 @@ export interface ConversationRecord {
   messages: ChatMessage[];
   /** The last few turns with their changed files (bounded; see the server). */
   turns?: TurnRecord[];
+  /** The checklist as it stands now - carried across turns, cleared on reset. */
+  todos?: TodoItem[];
 }
 
 export function emptyTotals(): UsageTotals {
@@ -242,6 +251,7 @@ function parseRecord(raw: string): ConversationRecord | null {
       calls: Array.isArray(parsed.calls) ? (parsed.calls as UsageEntry[]) : [],
       messages: Array.isArray(parsed.messages) ? (parsed.messages as ChatMessage[]) : [],
       turns: Array.isArray(parsed.turns) ? (parsed.turns as TurnRecord[]) : [],
+      todos: Array.isArray(parsed.todos) ? (parsed.todos as TodoItem[]) : [],
     };
   } catch {
     return null;

@@ -13,6 +13,7 @@
 import http from "node:http";
 import { Agent, callSignature, repeatedCall, stepLimit } from "../src/agent.js";
 import { DEFAULTS, toConfig } from "../src/settings.js";
+import { clearTodos, markTodo, setTodoTexts, unfinishedTodos } from "../src/todo.js";
 
 let passed = 0;
 let failures = 0;
@@ -41,6 +42,8 @@ const scripts = {
   BIG: () => call({ x: 1 }),
   // Five calls, then a plain answer: the "no step limit" run.
   FINISH: (step) => (step <= 5 ? call({ x: step }) : null),
+  // Plain answers only: used to test what the loop does when the model tries to end.
+  TODO: () => null,
 };
 
 let requests = 0;
@@ -240,6 +243,71 @@ try {
     check("the note says how much is missing", Boolean(stored && /characters trimmed; use a narrower call/.test(stored)));
     check("the stored result is bounded", (stored ?? "").length < 30_000, `${(stored ?? "").length} characters`);
     check("both ends are kept", Boolean(stored && stored.startsWith("x") && stored.endsWith("x")));
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* The checklist                                                          */
+  /* ---------------------------------------------------------------------- */
+
+  section("a turn cannot end with open checklist items");
+  {
+    /** A plain agent (no tool calls in the script) that records the reminders. */
+    const plain = (options = {}) => {
+      const config = toConfig({
+        ...DEFAULTS,
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        apiKey: "mock-key",
+        model: "mock-1",
+        stream: false,
+        language: "en",
+        maxSteps: 0,
+        ...options,
+      });
+      const nudges = [];
+      const texts = [];
+      const agent = new Agent(config, registry(() => "unused"), {
+        onTodoNudge: (open, attempt) => nudges.push({ open, attempt }),
+        onAssistantText: (text) => texts.push(text),
+      });
+      return { agent, nudges, texts };
+    };
+
+    clearTodos();
+    setTodoTexts(["write a.txt", "write b.txt"]);
+    const first = plain();
+    const final = await first.agent.run("TODO do both things");
+    check("the model is reminded instead of being allowed to stop", first.nudges.length === 2, `${first.nudges.length} reminders`);
+    check("the reminder says how many items are open", first.nudges.every((item) => item.open === 2));
+    check("the reminders are numbered", first.nudges.map((item) => item.attempt).join(",") === "1,2");
+    check(
+      "the premature answer stays in the conversation",
+      first.agent.getHistory().filter((entry) => entry.role === "assistant").length === 3,
+      String(first.agent.getHistory().filter((entry) => entry.role === "assistant").length),
+    );
+    check("after two reminders the turn ends", /done after 2 steps/.test(final), final);
+    check("the items are still open in the board", unfinishedTodos().length === 2);
+    check("each attempt was shown to the user", first.texts.length === 3, String(first.texts.length));
+
+    clearTodos();
+    setTodoTexts(["only one"]);
+    markTodo(1, "done");
+    const completed = plain();
+    const doneFinal = await completed.agent.run("TODO all items are already done");
+    check("a finished checklist does not trigger a reminder", completed.nudges.length === 0);
+    check("the turn ends on the first answer", /done after 0 steps/.test(doneFinal), doneFinal);
+
+    clearTodos();
+    setTodoTexts(["a", "b"]);
+    const off = plain({ todoCheck: false });
+    const offFinal = await off.agent.run("TODO the reminder is off");
+    check("switching the check off removes the reminder", off.nudges.length === 0);
+    check("and the turn ends immediately", /done after 0 steps/.test(offFinal), offFinal);
+
+    clearTodos();
+    const noList = plain();
+    await noList.agent.run("TODO no list was ever written");
+    check("a model that never wrote a checklist is never reminded", noList.nudges.length === 0);
+    clearTodos();
   }
 
   /* ---------------------------------------------------------------------- */

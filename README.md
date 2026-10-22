@@ -345,11 +345,59 @@ cannot help. A finite `maxSteps` (1–1000) puts the old cap back.
 | Switch | Default | What it does |
 | --- | --- | --- |
 | `loopGuard` | `true` | the repeated-call block above; switch it off for plain step-by-step execution |
+| `todoCheck` | `true` | refuse to end a turn while the model's own checklist still has open items (two reminders; see [The checklist](#the-checklist--what-the-model-owes-you)) |
 | `maxSteps` | `0` | how many tool rounds one turn may take (0 = no limit, 1–1000) |
 | `psEnglishErrors` | `true` | force PowerShell error text to English (the hint still follows the interface) |
 
 `examples/stability.md` shows a blocked call, a run that hits the step limit, and a
 trimmed result.
+
+---
+
+## The checklist — what the model owes you
+
+Ask a small model to do two things and it will often do one, say "done", and stop. That
+is not a tool problem: it is a memory problem, and the fix is to make the promise
+visible.
+
+When a task has more than one part, the model writes the parts down with the **`todo`**
+tool:
+
+```json
+{"action": "set", "items": ["read config.ini", "change port to 9090", "restart the service"]}
+```
+
+Nothing on the machine changes — the list is text. Each item gets a number, and the
+model ticks it off as it goes (`{"action": "done", "id": 2}`). The page shows the list
+**live** while the turn runs, and afterwards it stays **under that answer**, with
+`✓` done, `▶` in progress and `○` still open — at every detail level, because it is
+part of what the model promised, not process noise.
+
+If the model then tries to answer while an item is still open, the turn does not end:
+
+```text
+2 item(s) on your checklist are still open:
+1. [ ] read config.ini
+3. [ ] restart the service
+Do them now and mark each one done with the todo tool, or mark an item done and say
+why it is no longer needed.
+Do not end the turn yet.
+```
+
+It gets **two** reminders, then it may finish (the card still shows what is open, so
+nothing is hidden). The reminder is sent to the model only — it is not stored as a
+message — and the user sees a one-line notice that it happened.
+
+| Piece | Where | What it does |
+| --- | --- | --- |
+| `todo` tool | every mode | set / list / done / doing / reopen / clear; changes nothing, needs no approval |
+| live list | above the composer | the plan and its progress while the turn runs (SSE `todo`) |
+| turn card | under the answer | the list as it ended, saved with the conversation |
+| reminder | `todoCheck` (default `true`) | refuses to end the turn with open items, twice; switch off with the Settings toggle or `AGENT_TODO_CHECK=false` |
+
+The list survives "continue" and a restart (it is in `history.json`), and a new
+conversation starts with an empty one. A model that never writes a list is never
+reminded — the loop only checks the list the model itself made.
 
 ---
 
@@ -426,8 +474,9 @@ the terminal:
 | `thinking` | the above, plus the model's **reasoning** as it arrives, in a block that folds away the moment the answer starts. Reasoned-out history replays folded. |
 | `full` | the machine room: reasoning, every tool call with its arguments and result, step markers (`step 3/12`) and the token count of every call. |
 
-Three things worth knowing:
+Four things worth knowing:
 
+- **The checklist is shown at every level.** The `todo` list the model writes is part of what it promised, not process noise, so its card stays under the answer even on `answer` (see [The checklist](#the-checklist--what-the-model-owes-you)).
 - **It changes nothing about the work.** The agent calls the same tools with the same
   arguments; only the drawing changes. The full process is always broadcast, so moving
   the slider re-draws the conversation you are looking at.
@@ -1110,6 +1159,7 @@ with a message and nothing changes.
 | `maxSteps` | number | `0` | tool-calling rounds per user turn; `0` = no limit, otherwise 1–1000 |
 | `temperature` | number | `0` | 0–2 |
 | `loopGuard` | boolean | `true` | refuse a third identical call that already returned the same answer twice (see [Staying on the rails](#staying-on-the-rails)) |
+| `todoCheck` | boolean | `true` | refuse to end a turn while the model's own checklist still has open items, twice (see [The checklist](#the-checklist--what-the-model-owes-you)) |
 | `agentMode` | `"guided"` \| `"normal"` | `guided` | supervision for small local models (see [Agent modes](#agent-modes--guided-vs-normal)) |
 | `verbosity` | `"answer"` \| `"thinking"` \| `"full"` | `answer` | how much of the process the chat log shows (see [Output detail](#output-detail)) |
 | `auditLog` | boolean | `true` | append every change to `data/audit.jsonl` and keep the undo stack (see [Audit log and undo](#audit-log-and-undo)) |
@@ -1157,6 +1207,7 @@ on. Every variable is the upper-case setting name with an `AGENT_` prefix:
 | `AGENT_API_KEY` | `apiKey` | `OPENAI_API_KEY` is accepted too |
 | `AGENT_MAX_STEPS` | `maxSteps` | |
 | `AGENT_LOOP_GUARD` | `loopGuard` | `true` / `false` |
+| `AGENT_TODO_CHECK` | `todoCheck` | `true` / `false` |
 | `AGENT_LANGUAGE` | `language` | `en` / `zh` |
 | `AGENT_SYSTEM_PROMPT` | `systemPrompt` | |
 | `AGENT_WORKDIR` | `workdir` | |
@@ -1235,6 +1286,7 @@ Custom commands run arbitrary PowerShell, so they always require approval
 | `registry` | get, list, set, delete |
 | `ui` | clipboard_get, clipboard_set, screenshot, open, notify |
 | `skills` | list, load, read — procedures from `data/skills/`, loaded only when a task matches (see [Skills](#skills)) |
+| `todo` | set, list, done, doing, reopen, clear — the model's own checklist, shown live in the chat (see [The checklist](#the-checklist--what-the-model-owes-you)) |
 | `powershell` | raw script escape hatch (always confirmed; with the sandbox on the script is read first and refused if a path leaves the folder) |
 | `custom` | your own commands (only present when you add some; not confined — they are code you wrote and approved) |
 
@@ -1362,7 +1414,7 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/state` | running flag, cwd, enabled tools, all tool names, catalog, version, settings, chat history, context budget, endpoint capabilities, memory info, usage totals, data folder, `windows` (PowerShell binary, version, edition, elevation, English-errors flag) |
+| `GET` | `/api/state` | running flag, cwd, enabled tools, all tool names, catalog, version, settings, chat history, the current checklist (`todos`), the last turns (`turns`), context budget, endpoint capabilities, memory info, usage totals, data folder, `windows` (PowerShell binary, version, edition, elevation, English-errors flag) |
 | `GET` | `/api/usage` | token totals of the open conversation, all-time totals, per-call list |
 | `GET` | `/api/data` | data folder paths, open conversation, usage, archived conversation list |
 | `GET` | `/api/audit` | `?n=<count>` — the newest `n` audit records plus `pending` (what can still be reversed), the log file, whether logging is on, and `retentionDays` |
@@ -1398,14 +1450,15 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 Event types on `/api/events`: `user`, `assistant`, `delta`, `thinking`, `step`,
 `tool_call`, `tool_result`, `usage`, `context`, `approval`, `approval_result`, `done`,
 `stopping`, `stopped`, `error`, `status`, `settings`, `terminal`, `reset`,
-`reload_history`, `archived`, `server_restart`, `notice`, `queue`, `turn`.
+`reload_history`, `archived`, `server_restart`, `notice`, `queue`, `turn`, `todo`.
 
 `delta` carries one live piece of the answer (`{ text }`), `thinking` reports how much
 a reasoning model has thought so far (`{ chars }`), `stopped` means the user cancelled
 the turn, `context` reports the budget of a request that had to be trimmed
 (`{ estimatedTokens, limit, budget, droppedMessages, truncatedToolResults }`), and
-`turn` is sent when a turn ends with `{ turn }` — the files it changed, ready for the
-card under the answer.
+`turn` is sent when a turn ends with `{ turn }` — the files it changed and the
+checklist it ended with, ready for the card under the answer. `todo` carries the
+model's live checklist (`{ todos }`) every time it is written or ticked off.
 
 Example:
 
@@ -1709,6 +1762,14 @@ Baseline, guided mode, one run each (`data/eval/*.json` keeps every result):
 | --- | --- | --- | --- | --- |
 | `qwen/qwen3.8-27b` | Q6_K | **26/26** | 2.1 min | 510 282 |
 | `qwen3.6-35b-a3b` | Q6_K | 24/26 | 3.8 min | 570 729 |
+
+The same `qwen/qwen3.8-27b` run **after the checklist landed** (2.1.0) still passes
+**26/26** — 2.4 min and 721 018 tokens (85 → 113 calls). The extra calls are the plan
+and the ticks, and they land where they should: `rename_batch` +8, `move_into_tree` +5,
+`multi_mixed` +5, `nested_write` +4 — the six multi-step jobs — while the single-file
+tasks mostly stayed put (one even got faster). Each request also carries ~380 more
+tokens of tool schema and prompt. That is the price of not believing a model that says
+"done" after half the job.
 
 The two failures of the second model were *empty replies* (the UI shows “模型没有给出回复”),
 not wrong files — which is exactly the kind of thing a benchmark should catch and a

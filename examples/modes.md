@@ -162,3 +162,36 @@ agentMode = guided
 `GET /api/state` reports it too, and its `catalog` field returns the **verbose**
 catalogue when guided mode is on — so a custom front end can show the model exactly
 what it was told.
+
+## The checklist / 清单
+
+Both modes get the same tool, and `guided` adds rule 8 to the prompt: *if the request
+has two or more parts, call `todo` with action `set` first, then mark each item
+`done`*.
+
+```text
+you> 读一下 notes.txt，把端口改成 9090，然后汇报
+tool> todo {"action":"set","items":["读取 notes.txt","把端口改成 9090","汇报结果"]}
+      Checklist: 0/3 done
+      1. [ ] 读取 notes.txt
+      2. [ ] 把端口改成 9090
+      3. [ ] 汇报结果
+tool> files {"action":"read","path":"notes.txt"}
+tool> todo {"action":"done","id":1}
+      Checklist: 1/3 done
+      ...
+```
+
+While the turn runs the list is drawn live above the composer; afterwards it stays
+under the answer as a card (`✓` / `▶` / `○`), including how many items are still open.
+If the model answers while one is open it is reminded — twice — and then may finish;
+the card still shows the open item, so "done" is never taken on trust.
+
+```powershell
+PS> /set todoCheck false     # keep the list, drop the reminder
+PS> /unset todoCheck         # back to the default (on)
+```
+
+```powershell
+$env:AGENT_TODO_CHECK = "false"; npm run web
+```

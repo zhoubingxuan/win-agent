@@ -4,6 +4,8 @@ import { chat, type ChatMessage, type ToolCall, type Usage } from "./llm.js";
 import { capText, planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import type { ToolRegistry } from "./tools/index.js";
 import { skillIndex } from "./skills.js";
+import { subscribeTodos, todoNudge, TODO_NUDGE_LIMIT, unfinishedTodos, clearTodos } from "./todo.js";
+import type { TodoItem } from "./todo.js";
 
 export interface AgentEvents {
   onAssistantText?: (text: string) => void;
@@ -18,6 +20,10 @@ export interface AgentEvents {
   onUsage?: (usage: Usage) => void;
   /** Fired when the prompt had to be trimmed to fit the model's context window. */
   onContext?: (stats: ContextStats) => void;
+  /** The model's checklist changed (item added, started, finished). */
+  onTodos?: (items: TodoItem[]) => void;
+  /** The turn was about to end with open items; the model was asked to continue. */
+  onTodoNudge?: (open: number, attempt: number) => void;
 }
 
 /**
@@ -295,6 +301,16 @@ export class Agent {
 
   /** Run one user turn to completion and return the final assistant text. */
   async run(userInput: string, signal?: AbortSignal): Promise<string> {
+    // The page watches the checklist live, so subscribe for exactly this turn.
+    const unsubscribe = subscribeTodos((items) => this.events.onTodos?.(items));
+    try {
+      return await this.runTurn(userInput, signal);
+    } finally {
+      unsubscribe();
+    }
+  }
+
+  private async runTurn(userInput: string, signal?: AbortSignal): Promise<string> {
     this.history.push({ role: "user", content: userInput });
 
     // Characters of "thinking" this turn produced. When the model answers with
@@ -306,6 +322,10 @@ export class Agent {
     // Blocked repeats in a row. With no step limit this is what ends a turn that
     // cannot move: five identical calls that were each refused.
     let blocked = 0;
+    // Reminders already given this turn about checklist items still open, and the
+    // one-shot note the next request carries (never stored - see todoNudge()).
+    let todoNudges = 0;
+    let nudgeOnce: string | null = null;
 
     // `maxSteps` 0 means "no step limit": a long task is allowed to take as many
     // rounds as it needs. The brakes are the loop guard (a repeat that cannot change
@@ -337,7 +357,10 @@ export class Agent {
           },
         });
 
-      let { message, usage } = await request(plan.messages);
+      let { message, usage } = await request(
+        nudgeOnce ? [...plan.messages, { role: "system", content: nudgeOnce }] : plan.messages,
+      );
+      nudgeOnce = null;
       this.events.onUsage?.(usage);
 
       // Nothing to show and nothing to run: give it one more chance with a nudge
@@ -379,6 +402,18 @@ export class Agent {
       this.history.push(message);
 
       if (toolCalls.length === 0) {
+        // A turn is not over while the model's own checklist says otherwise. The
+        // reminder goes into the next request only (the reply that tried to end the
+        // turn is already in the history, and the user already saw it), and it is
+        // given at most twice: a model that keeps arguing with its own list is not
+        // helped by a third round.
+        const open = unfinishedTodos();
+        if (this.config.todoCheck !== false && open.length > 0 && todoNudges < TODO_NUDGE_LIMIT) {
+          todoNudges += 1;
+          nudgeOnce = todoNudge(this.config.language, open);
+          this.events.onTodoNudge?.(open.length, todoNudges);
+          continue;
+        }
         let text = message.content;
         if (!text) {
           // Never end a turn on a blank bubble: say what happened instead. The
@@ -449,5 +484,7 @@ export class Agent {
   /** Clear the conversation while keeping the system prompt. */
   reset(): void {
     this.history.splice(1);
+    // The checklist belongs to the conversation, so it goes with it.
+    clearTodos();
   }
 }

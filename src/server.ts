@@ -30,6 +30,7 @@ import { mcp, type McpServer } from "./mcp.js";
 import { diagnose, formatDiagnosis } from "./diagnose.js";
 import { planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import { runCommand, type CommandHost } from "./commands.js";
+import { clearTodos, seedTodos, todos as boardTodos, todoNudgeNotice } from "./todo.js";
 import { addTerminalHistory, getTerminalCwd, runShellLine, setTerminalCwd } from "./terminal.js";
 import {
   addCumulative,
@@ -235,6 +236,7 @@ function announceCapabilities(): void {
 function startNewConversation(): ConversationRecord {
   const archived = archiveConversation(conversation);
   conversation = newConversation();
+  clearTodos();
   persistHistory();
   if (archived) broadcast({ type: "archived", id: conversation.id, file: archived });
   return conversation;
@@ -529,6 +531,9 @@ async function runAgent(message: string): Promise<void> {
   // This turn belongs to the conversation that is open right now; keep a direct
   // reference so nothing can be written into a different record mid-turn.
   const convo = conversation;
+  // The checklist is conversation state, not turn state: "continue" must pick up the
+  // same list, and an untouched list survives a restart with the conversation.
+  seedTodos(convo.todos ?? []);
   // Reasoning models can think for a long while before any visible text. The chat
   // view can show that text (verbosity `thinking` and up), so it is forwarded as it
   // arrives - in small batches, so a token-per-event model does not flood the page.
@@ -565,6 +570,13 @@ async function runAgent(message: string): Promise<void> {
         addCumulative(usage);
         broadcast({ type: "usage", usage, totals: usageSnapshot(convo) });
       },
+      onTodos: (items) => {
+        convo.todos = items;
+        broadcast({ type: "todo", todos: items });
+      },
+      onTodoNudge: (open, attempt) => {
+        broadcast({ type: "notice", text: todoNudgeNotice(getSettings().language, open, attempt) });
+      },
     },
     history(),
   );
@@ -591,12 +603,16 @@ async function runAgent(message: string): Promise<void> {
     // The files this turn changed, for the card under the answer. Cheap enough to
     // rebuild from the log every time, and honest after a stop or an error.
     const files = turnFiles(turnId);
-    if (files.length > 0) {
+    // A turn may have written a checklist and touched no file at all; the card is
+    // still worth saving, because it is what the turn promised.
+    const checklist = boardTodos();
+    if (files.length > 0 || checklist.length > 0) {
       const turn: TurnRecord = {
         id: turnId,
         time: new Date().toISOString(),
         at: convo.messages.filter((m) => m.role !== "system").length,
         files,
+        todos: checklist,
       };
       convo.turns = [...(convo.turns ?? []), turn].slice(-MAX_TURN_RECORDS);
       broadcast({ type: "turn", turn: turnView(turn) });
@@ -844,6 +860,7 @@ const server = http.createServer(async (req, res) => {
           settings: publicSettings(),
           history: conversation.messages.filter((m) => m.role !== "system"),
           turns: (conversation.turns ?? []).map(turnView),
+          todos: conversation.todos ?? [],
           context: contextSnapshot(),
           capabilities: capabilityReport(),
           memory: {
@@ -906,6 +923,7 @@ const server = http.createServer(async (req, res) => {
           archiveConversation(conversation);
           conversation = found;
           unarchiveConversation(found.id);
+          seedTodos(found.todos ?? []);
           persistHistory();
           // Every tab re-draws from /api/state, so the log matches this record.
           broadcast({ type: "reload_history" });

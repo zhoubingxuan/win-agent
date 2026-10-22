@@ -91,8 +91,9 @@ export const GUIDED_INSTRUCTIONS: Record<Language, string> = {
     "5. If a result starts with 'Error:' or 'Refused:', fix the arguments and call the SAME tool again. After two failures, explain the problem in plain text and stop.",
     "6. Write paths exactly as the user gave them (C:\\Users\\Name\\file.txt); never guess a path.",
     "7. Before a destructive step (delete, move, kill, stop a service, change the registry, shut down), say in one short sentence what you are about to do.",
-    "8. When the task is done, answer in plain text with a short summary of what you did, and do not call a tool.",
-    "9. There is no shell in this mode: never write command lines, scripts or registry paths. Every step is one of the tool actions listed above.",
+    "8. If the request has two or more parts, call todo with action \"set\" first (one item per part), then mark each item \"done\" as you finish it.",
+    "9. When the task is done, answer in plain text with a short summary of what you did, and do not call a tool.",
+    "10. There is no shell in this mode: never write command lines, scripts or registry paths. Every step is one of the tool actions listed above.",
   ].join("\n"),
   zh: [
     "操作规范（请严格遵守）：",
@@ -103,8 +104,9 @@ export const GUIDED_INSTRUCTIONS: Record<Language, string> = {
     "5. 如果结果以 'Error:' 或 'Refused:' 开头，修正参数后再次调用同一个工具；连续失败两次就用纯文本说明问题并停止。",
     "6. 路径必须与用户给的一致（例如 C:\\Users\\Name\\file.txt），不要自己猜测路径。",
     "7. 执行破坏性操作前（删除、移动、结束进程、停止服务、改注册表、关机），先用一句话说明你将要做什么。",
-    "8. 任务完成后，用纯文本简短总结你做了什么，此时不要再调用工具。",
-    "9. 本模式没有命令行工具：不要自己编写任何命令、脚本或注册表路径，每一步都必须是上面列出的工具动作。",
+    "8. 如果任务有两件或更多事，先调用 todo（action 为 \"set\"，每件事一条），做完一件就把它标记为 \"done\"。",
+    "9. 任务完成后，用纯文本简短总结你做了什么，此时不要再调用工具。",
+    "10. 本模式没有命令行工具：不要自己编写任何命令、脚本或注册表路径，每一步都必须是上面列出的工具动作。",
   ].join("\n"),
 };
 
@@ -117,6 +119,11 @@ export interface Config {
   temperature: number;
   /** Refuse a third identical call that has already returned the same answer twice. */
   loopGuard: boolean;
+  /**
+   * Refuse to end a turn while the model's own checklist still has open items (up
+   * to a couple of reminders). See src/todo.ts.
+   */
+  todoCheck: boolean;
   language: Language;
   systemPrompt: string;
   workdir: string;
@@ -185,6 +192,12 @@ export interface Settings {
    */
   loopGuard: boolean;
   /**
+   * Refuse to end a turn while the model's own checklist still has open items (on
+   * by default, at most two reminders). It changes nothing on the machine; it only
+   * makes "I finished" mean something. See src/todo.ts.
+   */
+  todoCheck: boolean;
+  /**
    * Confine every file path the tools are handed to the working directory (on by
    * default). While it is on, the raw shell and custom commands are withheld too.
    * See src/sandbox.ts.
@@ -246,6 +259,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "3. If a tool returns 'Error:' or a failure message, read it and adjust your arguments.",
   "4. Some actions need approval and may be cancelled; respect that and suggest an alternative.",
   "5. When the task is done, reply in plain text with a short summary. Do not call tools then.",
+  "6. If the request has more than one part, write the parts down with the todo tool and tick each one off. Do not finish while an item is still open.",
   "Keep answers concise. Prefer doing over explaining.",
 ].join("\n");
 
@@ -290,6 +304,8 @@ export const DEFAULTS: Settings = {
   temperature: 0,
   // A model that repeats itself is the most common way a small model burns a turn.
   loopGuard: true,
+  // A model that says "done" with half the list still open is the second most common.
+  todoCheck: true,
   language: "zh",
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   workdir: process.cwd(),
@@ -350,6 +366,7 @@ const BOOLEAN_KEYS: Array<keyof Settings> = [
   "dryRun",
   "autoApprove",
   "loopGuard",
+  "todoCheck",
   "sandbox",
   "autoOpenBrowser",
   "remember",
@@ -560,6 +577,7 @@ function fromEnv(): Record<string, unknown> {
   if (env.OPENAI_API_KEY ?? env.AGENT_API_KEY) patch.apiKey = env.OPENAI_API_KEY ?? env.AGENT_API_KEY;
   if (env.AGENT_MAX_STEPS) patch.maxSteps = env.AGENT_MAX_STEPS;
   if (env.AGENT_LOOP_GUARD) patch.loopGuard = env.AGENT_LOOP_GUARD;
+  if (env.AGENT_TODO_CHECK) patch.todoCheck = env.AGENT_TODO_CHECK;
   if (env.AGENT_LANGUAGE) patch.language = env.AGENT_LANGUAGE;
   if (env.AGENT_SYSTEM_PROMPT) patch.systemPrompt = env.AGENT_SYSTEM_PROMPT;
   if (env.AGENT_WORKDIR) patch.workdir = env.AGENT_WORKDIR;
@@ -781,6 +799,7 @@ export function toConfig(settings: Settings = current): Config {
     maxSteps: settings.maxSteps,
     temperature: settings.temperature,
     loopGuard: settings.loopGuard !== false,
+    todoCheck: settings.todoCheck !== false,
     language: settings.language,
     systemPrompt: settings.systemPrompt,
     workdir: settings.workdir,

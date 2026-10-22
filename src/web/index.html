@@ -114,6 +114,10 @@
               Refresh models
             </button>
           </div>
+          <div id="todo-strip" class="todo-strip" hidden>
+            <span class="todo-label" data-i18n="todo.live">Checklist</span>
+            <div id="todo-items" class="todo-items"></div>
+          </div>
           <div id="queue-strip" class="queue-strip" hidden>
             <span class="queue-label" data-i18n="chat.queued">Queued</span>
             <div id="queue-items" class="queue-items"></div>
@@ -255,6 +259,14 @@
               answer twice, the third one is answered with a note instead of being run again - the
               commonest way a small model burns a turn. A poll whose answer keeps changing is never
               stopped, and switching this off returns to plain step-by-step execution.
+            </p>
+
+            <label class="switch"><input type="checkbox" id="s-todoCheck" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.todoCheck">Finish the checklist</span></label>
+            <p class="muted" data-i18n="settings.todoCheckHint">
+              On by default. When a task has several parts the model writes them into a checklist
+              (the todo tool) and the chat shows it live. If it then tries to answer while an item is
+              still open, it is told which ones - at most twice - before the turn may end. The list is
+              saved with the conversation; switching this off only removes the reminder.
             </p>
 
             <h4 data-i18n="settings.mode">Agent mode — how closely the model is supervised</h4>

@@ -183,6 +183,9 @@ const I18N = {
     "settings.loopGuard": "Stop repeated calls",
     "settings.loopGuardHint":
       "On by default. When the model asks for exactly the same call and gets exactly the same answer twice, the third one is answered with a note instead of being run again - the commonest way a small model burns a turn. A poll whose answer keeps changing is never stopped, and switching this off returns to plain step-by-step execution.",
+    "settings.todoCheck": "Finish the checklist",
+    "settings.todoCheckHint":
+      "On by default. When a task has several parts the model writes them into a checklist (the todo tool) and the chat shows it live. If it then tries to answer while an item is still open, it is told which ones - at most twice - before the turn may end. The list is saved with the conversation; switching this off only removes the reminder.",
     "settings.savedFile": "saved to {0}",
     "settings.saved": "saved: {0}",
     "settings.noChanges": "no changes",
@@ -218,6 +221,13 @@ const I18N = {
     "turn.gone": "already undone, or no copy left",
     "turn.noVersion": "no saved version for this change",
     "turn.atVersion": "file is at this version now",
+    "todo.live": "Checklist",
+    "todo.title": "This turn's checklist",
+    "todo.summary": "{0}/{1} done",
+    "todo.open": "{0} still open",
+    "todo.allDone": "all done",
+    "todo.doing": "in progress",
+    "todo.empty": "no checklist for this turn",
     "settings.context": "Context window and robustness",
     "settings.contextHint":
       "Small local models have a small window. The agent measures every request and quietly drops the oldest exchanges (and squeezes huge tool results) when it would not fit — the stored conversation is never shortened. Leave 0 to use the length the endpoint reports.",
@@ -469,6 +479,9 @@ const I18N = {
     "settings.loopGuard": "拦截原地打转的调用",
     "settings.loopGuardHint":
       "默认开启。同一个调用连续两次返回完全相同的结果时，第三次不再执行，而是回一条说明——这是小模型最常白烧步数的方式。结果一直在变化的轮询不会被拦；关掉它就回到普通的逐步执行。",
+    "settings.todoCheck": "清单没做完不许收尾",
+    "settings.todoCheckHint":
+      "默认开启。任务里有两件以上的事时，模型会先用 todo 工具写下清单，聊天里实时显示。如果清单还有没做完的项它就想收尾，代理会点名告诉它还差哪几项——最多提醒两次——才允许结束这一轮。清单随对话保存；关掉它只是不再提醒，清单本身照常工作。",
     "settings.savedFile": "已保存到 {0}",
     "settings.saved": "已保存：{0}",
     "settings.noChanges": "没有变化",
@@ -504,6 +517,13 @@ const I18N = {
     "turn.gone": "已经撤销过，或副本已过期",
     "turn.noVersion": "这次改动没有保存版本",
     "turn.atVersion": "当前就是这个版本",
+    "todo.live": "清单",
+    "todo.title": "本轮清单",
+    "todo.summary": "完成 {0}/{1}",
+    "todo.open": "还有 {0} 项没完成",
+    "todo.allDone": "全部完成",
+    "todo.doing": "进行中",
+    "todo.empty": "本轮没有清单",
     "settings.context": "上下文窗口与健壮性",
     "settings.contextHint":
       "本地小模型的上下文窗口很小。每次请求前 agent 都会先量一遍，装不下就悄悄丢掉最早的几段对话（并把过大的工具结果压缩）——磁盘上的对话不会被删短。填 0 表示使用接口报告的窗口长度。",
@@ -1255,11 +1275,18 @@ function handle(ev) {
       addApproval(ev);
       break;
     case "turn":
-      // The turn is over: list what it changed, with the rollback verbs on it.
+      // The turn is over: list what it changed and what it promised, with the
+      // rollback verbs on the files.
+      renderTodoStrip([]);
       addTurnCard(ev.turn);
+      break;
+    case "todo":
+      // The model just wrote down or ticked off a step: show it while it works.
+      renderTodoStrip(ev.todos);
       break;
     case "done":
       flushUsage();
+      renderTodoStrip([]);
       closeStream();
       closeThinking();
       if (ev.totals) renderUsage(ev.totals);
@@ -1271,6 +1298,7 @@ function handle(ev) {
       break;
     case "stopped":
       flushUsage();
+      renderTodoStrip([]);
       closeStream(true);
       closeThinking();
       setRunning(false);
@@ -1278,6 +1306,7 @@ function handle(ev) {
       break;
     case "error":
       flushUsage();
+      renderTodoStrip([]);
       closeStream(true);
       closeThinking();
       setRunning(false);
@@ -1291,6 +1320,7 @@ function handle(ev) {
       break;
     case "reset":
       clearLog();
+      renderTodoStrip([]);
       break;
     case "reload_history":
       reloadHistory();
@@ -1896,6 +1926,7 @@ function fillSettingsForm(s) {
   el("s-auditLog").checked = s.auditLog !== false;
   el("s-undoRetentionDays").value = s.undoRetentionDays ?? 7;
   el("s-loopGuard").checked = s.loopGuard !== false;
+  el("s-todoCheck").checked = s.todoCheck !== false;
   el("s-mcpServeAutoApprove").checked = !!s.mcpServeAutoApprove;
   setVerbosityControls(s.verbosity);
   renderModeState();
@@ -2152,6 +2183,7 @@ async function saveSettings() {
     dryRun: el("s-dryRun").checked,
     autoApprove: el("s-autoApprove").checked,
     loopGuard: el("s-loopGuard").checked,
+    todoCheck: el("s-todoCheck").checked,
     mcpServeAutoApprove: el("s-mcpServeAutoApprove").checked,
     sandbox: el("s-sandbox").checked,
     autoOpenBrowser: el("s-autoOpenBrowser").checked,
@@ -2361,28 +2393,83 @@ function turnRow(file) {
   return row;
 }
 
-/** The card under an answer: every file that turn touched, and how to roll it back. */
+/** The card under an answer: the checklist it promised, every file it touched, and
+ * how to roll each file back. */
 function addTurnCard(turn) {
-  if (!showsProcess()) return null;
-  if (!turn?.files?.length) return null;
+  // The checklist is part of the answer (it is what the model said it would do), so
+  // it is shown at every detail level; the file list stays a "full" view.
+  const items = turn?.todos ?? [];
+  const files = showsProcess() ? (turn?.files ?? []) : [];
+  if (items.length === 0 && files.length === 0) return null;
   const card = document.createElement("div");
-  card.className = "turn-files";
+  card.className = "turn-files turn-card";
   card.dataset.turn = turn.id;
-  const head = document.createElement("div");
-  head.className = "turn-head";
-  const count = document.createElement("b");
-  count.textContent = t("turn.files", turn.files.length);
-  const hint = document.createElement("span");
-  hint.className = "muted";
-  hint.textContent = ` · ${t("turn.hint")}`;
-  head.append(count, hint);
-  const list = document.createElement("div");
-  list.className = "turn-list";
-  for (const file of turn.files) list.appendChild(turnRow(file));
-  card.append(head, list);
+  if (items.length > 0) card.appendChild(todoBlock(items));
+  if (files.length > 0) {
+    const head = document.createElement("div");
+    head.className = "turn-head";
+    const count = document.createElement("b");
+    count.textContent = t("turn.files", files.length);
+    const hint = document.createElement("span");
+    hint.className = "muted";
+    hint.textContent = ` · ${t("turn.hint")}`;
+    head.append(count, hint);
+    const list = document.createElement("div");
+    list.className = "turn-list";
+    for (const file of files) list.appendChild(turnRow(file));
+    card.append(head, list);
+  }
   log.appendChild(card);
   scrollToBottom(log);
   return card;
+}
+
+/* --------------------------------------------------------------- checklist */
+
+/** One line of the checklist. Symbols, not words: readable at a glance. */
+function todoRow(item) {
+  const row = document.createElement("div");
+  row.className = `todo-item ${item.status}`;
+  const mark = document.createElement("span");
+  mark.className = "todo-mark";
+  mark.textContent = item.status === "done" ? "✓" : item.status === "doing" ? "▶" : "○";
+  const text = document.createElement("span");
+  text.className = "todo-text";
+  text.textContent = item.text;
+  row.append(mark, text);
+  return row;
+}
+
+/** "This turn's checklist · 2/4 done · 1 still open" */
+function todoBlock(items) {
+  const block = document.createElement("div");
+  block.className = "turn-todos";
+  const head = document.createElement("div");
+  head.className = "turn-head";
+  const done = items.filter((item) => item.status === "done").length;
+  const open = items.length - done;
+  const title = document.createElement("b");
+  title.textContent = `${t("todo.title")} · ${t("todo.summary", done, items.length)}`;
+  const state = document.createElement("span");
+  state.className = open > 0 ? "todo-open" : "muted";
+  state.textContent = ` · ${open > 0 ? t("todo.open", open) : t("todo.allDone")}`;
+  head.append(title, state);
+  block.appendChild(head);
+  for (const item of items) block.appendChild(todoRow(item));
+  return block;
+}
+
+/** The live list above the composer, fed by the `todo` event while a turn runs. */
+function renderTodoStrip(items) {
+  const strip = el("todo-strip");
+  const list = el("todo-items");
+  const shown = (items ?? []).filter((item) => item && item.text);
+  list.innerHTML = "";
+  strip.hidden = shown.length === 0;
+  if (shown.length === 0) return;
+  const done = shown.filter((item) => item.status === "done").length;
+  setText(strip.querySelector(".todo-label"), `${t("todo.live")} · ${t("todo.summary", done, shown.length)}`);
+  for (const item of shown) list.appendChild(todoRow(item));
 }
 
 let fileMenu = null;
@@ -2443,10 +2530,12 @@ async function refreshTurns() {
   const data = await api("/api/turns");
   if (data.error) return;
   const byId = new Map((data.turns ?? []).map((turn) => [turn.id, turn]));
-  for (const card of log.querySelectorAll(".turn-files")) {
+  for (const card of log.querySelectorAll(".turn-card")) {
     const fresh = byId.get(card.dataset.turn);
     if (!fresh) continue;
     const list = card.querySelector(".turn-list");
+    // A checklist-only turn has no file list to refresh.
+    if (!list) continue;
     list.innerHTML = "";
     for (const file of fresh.files) list.appendChild(turnRow(file));
   }

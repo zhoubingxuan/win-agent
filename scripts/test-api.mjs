@@ -132,6 +132,51 @@ const mock = http.createServer((req, res) => {
       );
       return;
     }
+    // A turn that keeps a checklist: two items, one ticked, a file written, then an
+    // answer with one item still open. The loop reminds it (twice), and what the user
+    // must still see afterwards is the list, open item included.
+    if (JSON.stringify(body.messages ?? []).includes("TODO_TEST")) {
+      const messages = body.messages ?? [];
+      const toolMessages = messages.filter((entry) => entry.role === "tool");
+      const hasTodo = toolMessages.some((entry) => entry.name === "todo");
+      const hasDone = toolMessages.some(
+        (entry) => entry.name === "todo" && String(entry.content ?? "").includes("1. [x]"),
+      );
+      const hasFile = toolMessages.some((entry) => entry.name === "files");
+      const callTo = (name, args) => ({
+        model: "mock-1",
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: `call-${name}-${toolMessages.length}`,
+                  type: "function",
+                  function: { name, arguments: JSON.stringify(args) },
+                },
+              ],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+        usage: { prompt_tokens: 20, completion_tokens: 6, total_tokens: 26 },
+      });
+      let payload;
+      if (!hasTodo) payload = callTo("todo", { action: "set", items: ["write a.txt", "write b.txt"] });
+      else if (!hasDone) payload = callTo("todo", { action: "done", id: 1 });
+      else if (!hasFile) payload = callTo("files", { action: "write", path: "todo-demo.txt", content: "checklist\n" });
+      else
+        payload = {
+          model: "mock-1",
+          choices: [{ index: 0, message: { role: "assistant", content: "done" }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 20, completion_tokens: 1, total_tokens: 21 },
+        };
+      res.end(JSON.stringify(payload));
+      return;
+    }
     // A slow turn: the queue checks send a second message while this one is still
     // running, and need it to still be running when they do.
     if (JSON.stringify(body.messages ?? []).includes("SLOW_TURN")) {
@@ -868,6 +913,80 @@ try {
 
     const wiped = await api("/api/reset", "POST", {});
     check("the conversation can be reset again", wiped.status === 200);
+  }
+
+  /* ---------------------------------------------------------------------- */
+
+  section("the checklist a turn leaves behind");
+  {
+    // More steps than the suite's default, because the turn is meant to be reminded
+    // twice before it may end (see src/agent.ts).
+    await api("/api/settings", "POST", { maxSteps: 8, todoCheck: true });
+    const started = await api("/api/chat", "POST", { message: "TODO_TEST please" });
+    check("the turn starts", started.status === 202 && started.data.queued !== true, JSON.stringify(started.data));
+
+    let state = null;
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      state = (await api("/api/state")).data;
+      const turn = (state.turns ?? []).at(-1);
+      if (state.running === false && (turn?.todos ?? []).length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+
+    const turn = (state?.turns ?? []).at(-1);
+    check("the turn is kept even though the list is the point", Boolean(turn), JSON.stringify(turn));
+    check("its card carries the checklist", (turn?.todos ?? []).length === 2, JSON.stringify(turn?.todos));
+    check("the ticked item is done", turn?.todos?.[0]?.status === "done", JSON.stringify(turn?.todos));
+    check("the forgotten item is still open", turn?.todos?.[1]?.status === "todo", JSON.stringify(turn?.todos));
+    check(
+      "the file it wrote is on the same card",
+      (turn?.files ?? []).some((file) => file.path.endsWith("todo-demo.txt")),
+      JSON.stringify(turn?.files),
+    );
+    check(
+      "the open list is the conversation's current list",
+      (state?.todos ?? []).length === 2 && state.todos[1].status === "todo",
+      JSON.stringify(state?.todos),
+    );
+    check(
+      "the checklist lives in history.json, not only in memory",
+      (() => {
+        try {
+          const saved = JSON.parse(fs.readFileSync(path.join(dataDir, "history.json"), "utf8"));
+          return Array.isArray(saved.todos) && saved.todos.length === 2;
+        } catch {
+          return false;
+        }
+      })(),
+    );
+    check(
+      "and in the saved turn",
+      (() => {
+        try {
+          const saved = JSON.parse(fs.readFileSync(path.join(dataDir, "history.json"), "utf8"));
+          return (saved.turns ?? []).some((entry) => (entry.todos ?? []).length === 2);
+        } catch {
+          return false;
+        }
+      })(),
+    );
+
+    const turns = await api("/api/turns");
+    check(
+      "GET /api/turns returns it too",
+      (turns.data.turns ?? []).at(-1)?.todos?.[1]?.text === "write b.txt",
+      JSON.stringify((turns.data.turns ?? []).at(-1)?.todos),
+    );
+
+    const wiped = await api("/api/reset", "POST", {});
+    const clean = (await api("/api/state")).data;
+    check(
+      "a new conversation starts with an empty checklist",
+      wiped.status === 200 && (clean.todos ?? []).length === 0,
+      JSON.stringify(clean.todos),
+    );
+    await api("/api/settings", "POST", { maxSteps: 4 });
   }
 
   /* ---------------------------------------------------------------------- */

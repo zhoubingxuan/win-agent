@@ -12,6 +12,7 @@ import { powershellTool } from "./powershell.js";
 import { createWebTool } from "./web.js";
 import { createCustomTool } from "./custom.js";
 import { skillsTool } from "./skills.js";
+import { todoTool } from "./todo.js";
 import { mcp } from "../mcp.js";
 
 export { ToolRegistry } from "./registry.js";
@@ -43,6 +44,7 @@ export const GUIDED_NO_SHELL_HINT =
 /** Build the Windows tool set, honouring the enabled/custom configuration. */
 export function createWindowsTools(approval: Approval, options: ToolOptions = {}): ToolRegistry {
   const registry = new ToolRegistry(approval, options.dryRun ?? false)
+    .register(todoTool)
     .register(filesTool)
     .register(systemTool)
     .register(processesTool)
