@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.1.0",
+  "createdAt": "2026-10-22T14:41:35.627Z",
+  "node": ">=20.3",
+  "files": 89,
+  "bytes": 1253525,
+  "note": "A small model's commonest failure is not a wrong tool call: it is answering \"done\" with half the task untouched. Now it has to write the half down, and the…"
+}
