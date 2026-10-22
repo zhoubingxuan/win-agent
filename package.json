@@ -1,6 +1,6 @@
 {
   "name": "win-agent",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "A Windows automation agent that lets local LLMs drive Windows via high-level tools.",
   "type": "module",
   "bin": {
@@ -35,7 +35,9 @@
     "version:list": "node scripts/version.mjs --list",
     "version:diff": "node scripts/version.mjs --diff",
     "version:tag": "node scripts/version.mjs --tag",
-    "release": "npm run build && node scripts/version.mjs --snapshot"
+    "release": "npm run build && node scripts/version.mjs --snapshot",
+    "test:eval": "node scripts/test-eval.mjs",
+    "eval": "node scripts/eval.mjs"
   },
   "keywords": [
     "agent",

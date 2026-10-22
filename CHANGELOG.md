@@ -13,6 +13,53 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.0.3] — 2026-10-22
+
+The suite could say "the code is right"; nothing could say "this model can do the job".
+Now something can, and the answer is a number instead of an opinion.
+
+### Added
+
+- **`npm run eval` — 26 Windows jobs against a real model.** Each task starts a fresh
+  conversation, gets its own folder in a temp workdir and a prompt, and is scored by
+  **reading the disk** (or the final answer for reading tasks) — never by trusting the
+  model's summary. The run uses the real HTTP server, the real tools and the real
+  prompts, so it measures the product, not a copy of it.
+  - Floor tasks: exact write, append, edit one value, nested folders, copy, rename,
+    delete the right file, read a number, locate a word, find a file, three files in
+    one turn, edit+append+delete, JSON field, zip round-trip, UTF-8, UTF-16 edit,
+    `whoami`, free space.
+  - Hard tasks: sum a CSV column, find the one `mode=dev` config, rename four files by
+    a pattern, move three files into a new tree, find the line two files share, edit a
+    UTF-16 file without breaking the encoding.
+  - `--model`, `--base-url`, `--mode`, `--only`, `--limit`, `--timeout`, `--out`,
+    `--keep`, `--verbose`, `--self-check`. The loaded quant is read from LM Studio's
+    own API and printed and saved with the result.
+  - Sandbox on, approvals automatic **inside the throwaway folder only**, results in
+    `data/eval/<timestamp>.json` (git-ignored). Nothing outside temp is touched.
+- **`npm run test:eval`** — the benchmark's own honesty check, with no model: every
+  one of the 26 checks must reject an untouched folder **and** accept the result a
+  correct agent would leave. A check that is always green (or always red) fails CI.
+  It runs inside `npm run test:all`.
+
+### Changed
+
+- The README has a **Measuring a model** section with the flags and the first baseline
+  table, so "works with small local models" is a claim with a number behind it.
+
+### Tests
+
+- `test:eval` 9 checks; `test:all` now runs it.
+- Baseline, guided mode, `qwen/qwen3.8-27b` (Q6_K): **26/26 in 2.1 min** (510 282 tok).
+  `qwen3.6-35b-a3b` (Q6_K): 24/26 in 3.8 min — both failures were empty replies
+  ("模型没有给出回复"), not wrong files, which is the kind of failure the unit suites
+  cannot see.
+- Three checks were loosened where *the task*, not the model, was ambiguous: "one
+  line" no longer demands a trailing newline, an unzip may keep the zipped folder as a
+  subfolder, and the move-into-tree prompt now says the new folder goes inside the
+  task folder (the model had reasonably put it at the workdir root).
+
+
 ## [2.0.2] — 2026-10-22
 
 Rollback becomes something you can see and pick, instead of a stack you have to

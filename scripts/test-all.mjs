@@ -25,6 +25,7 @@ const SUITES = [
   ["audit", "scripts/test-audit.mjs", true],
   ["windows", "scripts/test-windows.mjs", true],
   ["isolation", "scripts/test-isolation.mjs", false],
+  ["eval", "scripts/test-eval.mjs", false],
 ];
 
 /** The lines a suite prints per failed check (its summary reads "N passed, M failed"). */

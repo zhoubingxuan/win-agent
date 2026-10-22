@@ -1677,6 +1677,50 @@ recoverable, and the `CHANGELOG.md` entry is all that remains of it.
 
 ---
 
+## Measuring a model — `npm run eval`
+
+The test suites answer *"is the code right?"*. They cannot answer *"can this model
+actually do the job?"* — that depends on the model, and on the day. `npm run eval` is
+the other half: 26 small Windows jobs, run through the **real** HTTP server, the real
+tools and the real prompts, then checked by **looking at the disk** — never at what the
+model said it did.
+
+```powershell
+npm run eval                                  # the model in settings.json
+npm run eval -- --model qwen/qwen3.8-27b      # a specific one
+npm run eval -- --only write_exact,multi_mixed --verbose
+npm run eval -- --mode normal                 # full toolset instead of guided
+```
+
+Each task gets a fresh conversation and its own folder inside a temp workdir; the
+sandbox is on and approvals are automatic *inside that folder only*, so a model that
+wanders is refused instead of touching your files. A task is a pass only if the result
+is on disk (or, for reading tasks, in the final answer).
+
+The first 20 are the floor — single file operations, an edit, a JSON field, a zip
+round-trip, a UTF-16 edit, plus `whoami` and free space. The last 6 are the interesting
+ones: compute a column total, find the one config with `mode=dev`, rename four files by
+a pattern, move three files into a new folder tree, find the line two files share, and
+edit a UTF-16 file without turning it into UTF-8.
+
+Baseline, guided mode, one run each (`data/eval/*.json` keeps every result):
+
+| Model | Loaded as | Result | Time | Tokens |
+| --- | --- | --- | --- | --- |
+| `qwen/qwen3.8-27b` | Q6_K | **26/26** | 2.1 min | 510 282 |
+| `qwen3.6-35b-a3b` | Q6_K | 24/26 | 3.8 min | 570 729 |
+
+The two failures of the second model were *empty replies* (the UI shows “模型没有给出回复”),
+not wrong files — which is exactly the kind of thing a benchmark should catch and a
+test suite never will. Re-run before believing a number: a local model is not
+deterministic.
+
+`npm run test:eval` runs the same 26 checks **without a model**: every check must reject
+an untouched folder and accept the result a correct agent would produce, so a check that
+is always green (or always red) fails CI. That suite is part of `npm run test:all`.
+
+---
+
 ## Why small local models work here
 
 | Problem | Solution |
