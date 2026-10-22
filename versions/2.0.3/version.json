@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.0.3",
+  "createdAt": "2026-10-22T14:07:52.041Z",
+  "node": ">=20.3",
+  "files": 86,
+  "bytes": 1203029,
+  "note": "The suite could say \"the code is right\"; nothing could say \"this model can do the job\". Now something can, and the answer is a number instead of an opinion."
+}
