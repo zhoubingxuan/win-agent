@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.2.0",
+  "createdAt": "2026-10-23T14:47:58.499Z",
+  "node": ">=20.3",
+  "files": 96,
+  "bytes": 1352009,
+  "note": "The agent could change a line; it could not change a program and prove it still works. 2.2 gives it the three moves a coder turn needs — a **patch**, the…"
+}

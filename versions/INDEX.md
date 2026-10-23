@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 2.2.0 | 2026-10-23 14:47 | 96 | The agent could change a line; it could not change a program and prove it still works. 2.2 gives it the three moves a coder turn needs — a **patch**, the… |
 | 2.1.0 | 2026-10-22 14:41 | 89 | A small model's commonest failure is not a wrong tool call: it is answering "done" with half the task untouched. Now it has to write the half down, and the… |
 | 2.0.3 | 2026-10-22 14:07 | 86 | The suite could say "the code is right"; nothing could say "this model can do the job". Now something can, and the answer is a number instead of an opinion. |
 | 2.0.2 | 2026-10-21 16:01 | 84 | Rollback becomes something you can see and pick, instead of a stack you have to reason about. |
