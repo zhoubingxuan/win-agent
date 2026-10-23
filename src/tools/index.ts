@@ -13,6 +13,9 @@ import { createWebTool } from "./web.js";
 import { createCustomTool } from "./custom.js";
 import { skillsTool } from "./skills.js";
 import { todoTool } from "./todo.js";
+import { applyPatchTool } from "./patch.js";
+import { gitTool } from "./git.js";
+import { testsTool } from "./tests.js";
 import { mcp } from "../mcp.js";
 
 export { ToolRegistry } from "./registry.js";
@@ -39,13 +42,17 @@ export const GUIDED_NO_SHELL =
   "the raw shell is switched off in guided mode";
 export const GUIDED_NO_SHELL_HINT =
   'do not write commands or scripts. Use the structured tools instead: system (action ' +
-  '"disk" for free space), files, services, processes, network, registry, scheduled_tasks';
+  '"disk" for free space), files, apply_patch (change code with a diff), tests (run the ' +
+  'project\'s tests), git, services, processes, network, registry, scheduled_tasks';
 
 /** Build the Windows tool set, honouring the enabled/custom configuration. */
 export function createWindowsTools(approval: Approval, options: ToolOptions = {}): ToolRegistry {
-  const registry = new ToolRegistry(approval, options.dryRun ?? false)
+  const registry = new ToolRegistry(approval, options.dryRun ?? false, options.agentMode === "guided")
     .register(todoTool)
     .register(filesTool)
+    .register(applyPatchTool)
+    .register(gitTool)
+    .register(testsTool)
     .register(systemTool)
     .register(processesTool)
     .register(servicesTool)

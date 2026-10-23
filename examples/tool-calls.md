@@ -52,14 +52,21 @@ small model cannot destroy a file by paraphrasing it:
 Writing from scratch, and archives:
 
 ```json
-{"action":"write","path":"D:\\new\\tmp\\notes.txt","content":"hello","overwrite":true}
+{"action":"write","path":"D:\\new\\tmp\\notes.txt","content":"hello"}
+{"action":"write","path":"D:\\new\\tmp\\notes.txt","content":"hello again","overwrite":true,"expected":"hello"}
 {"action":"mkdir","path":"D:\\new\\tmp"}
 {"action":"copy","source":"D:\\new\\README.md","destination":"D:\\new\\tmp\\README.md","overwrite":true}
 {"action":"move","source":"D:\\new\\tmp\\notes.txt","destination":"D:\\new\\tmp\\old.txt"}
-{"action":"zip","source":"D:\\new\\tmp","destination":"D:\\new\\tmp.zip","overwrite":true}
+{"action":"zip","source":"D:\\new\\tmp","destination":"D:\\new\\tmp.zip"}
 {"action":"unzip","source":"D:\\new\\tmp.zip","destination":"D:\\new\\tmp2"}
 {"action":"delete","path":"D:\\new\\tmp","recursive":true}
 ```
+
+`write` is for new files. Replacing a file that already has content takes
+`overwrite: true` **and** `expected` — a piece of the text that is already there
+(or all of it, when the file is shorter than four characters). A model that never
+read the file cannot guess it, and the refusal tells it to read first. `edit` is
+still the better tool for changing one line.
 
 `delete` is the one that always asks for approval first.
 

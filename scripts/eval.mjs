@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Real-model evaluation: 26 small jobs, run through the real HTTP server, the real
-// tools and the real prompts, then checked by looking at the machine - not at what
-// the model said it did.
+// Real-model evaluation: small jobs in two suites (files, code), run through the
+// real HTTP server, the real tools and the real prompts, then checked by looking at
+// the machine - not at what the model said it did.
 //
 // The test suites answer "is the code right?". This answers "can a model actually
 // do the job?", which is the other half of the product. It exists so a version can
@@ -9,6 +9,7 @@
 //
 // Run with: npm run eval                       (uses settings.json's model/baseUrl)
 //           npm run eval -- --model qwen/qwen3.8-27b
+//           npm run eval -- --suite code       (the coder workflow only)
 //           npm run eval -- --only write_exact,edit_replace --verbose
 //           npm run eval -- --self-check       (no model: proves every check can
 //                                               fail and pass, used by test-eval)
@@ -27,7 +28,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -58,6 +59,94 @@ function read(dir, rel) {
 
 function exists(dir, rel) {
   return fs.existsSync(path.join(dir, rel));
+}
+
+/** Run a Node script inside a task folder; null when it exits non-zero. */
+function nodeRun(dir, file, args = []) {
+  try {
+    return execFileSync(process.execPath, [file, ...args], {
+      cwd: dir,
+      encoding: "utf8",
+      timeout: 30_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** `node --check`: true only when the file parses. */
+function nodeCheck(dir, file) {
+  try {
+    execFileSync(process.execPath, ["--check", file], {
+      cwd: dir,
+      timeout: 30_000,
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run an assertion that lives here, not in the task folder: the model may edit a
+ * helper script it was given, but it cannot edit the check.
+ */
+function nodeEval(dir, script) {
+  try {
+    return execFileSync(process.execPath, ["-e", script], {
+      cwd: dir,
+      encoding: "utf8",
+      timeout: 30_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** The test file code_fix_test must not be edited, so its exact text is the check. */
+const SUM_TEST = [
+  'const { sum } = require("./sum.js");',
+  'if (sum(2, 3) !== 5) {',
+  '  console.error("sum(2, 3) returned " + sum(2, 3));',
+  "  process.exit(1);",
+  "}",
+  'console.log("1 passing");',
+  "",
+].join("\n");
+
+/** A tiny real zip holding inner.txt = "zipped\n", for the self-check's solved folder. */
+const ZIP_SEED =
+  "UEsDBBQAAAAIAOCxV12sADrHCQAAAAcAAAAJAAAAaW5uZXIudHh0q8osKEhN4QIAUEsBAhQAFAAAAAgA4LFXXawAOscJAAAABwAAAAkAAAAAAAAAAAAAAAAAAAAAAGlubmVyLnR4dFBLBQYAAAAAAQABADcAAAAwAAAAAAA=";
+
+/**
+ * Does this archive really contain `wanted` with `size` uncompressed bytes? Reads the
+ * central directory (a zip is not a tar: `tar -tf` cannot check it portably). The
+ * point is that "unzip it elsewhere" has to produce an archive, not a copied file.
+ */
+function zipContains(dir, rel, wanted, size) {
+  try {
+    const buffer = fs.readFileSync(path.join(dir, rel));
+    const eocd = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    if (eocd < 0) return false;
+    const count = buffer.readUInt16LE(eocd + 10);
+    let offset = buffer.readUInt32LE(eocd + 16);
+    for (let index = 0; index < count; index += 1) {
+      if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014b50) return false;
+      const uncompressed = buffer.readUInt32LE(offset + 24);
+      const nameLength = buffer.readUInt16LE(offset + 28);
+      const extraLength = buffer.readUInt16LE(offset + 30);
+      const commentLength = buffer.readUInt16LE(offset + 32);
+      const name = buffer.toString("utf8", offset + 46, offset + 46 + nameLength).replace(/\\/g, "/");
+      if (name === wanted || name.endsWith(`/${wanted}`)) return uncompressed === size;
+      offset += 46 + nameLength + extraLength + commentLength;
+    }
+  } catch {
+    // Missing or not a zip.
+  }
+  return false;
 }
 
 /**
@@ -245,17 +334,19 @@ const TASKS = [
       "在子文件夹 `zip_roundtrip/` 里做两步：\n" +
       "1) 把 z 目录打包成 z.zip\n" +
       "2) 把 z.zip 解压到 z-out 目录\n" +
-      "解压后要能在 z-out 里读到 inner.txt。",
+      "z/inner.txt 现在的内容是 zipped，不要修改它；解压后 z-out 里的 inner.txt 内容也必须还是 zipped。",
     setup: (dir) => seed(dir, "z/inner.txt", "zipped\n"),
     check: (dir) => {
       // Either layout is a working unzip: the folder that was zipped may stay as a
       // top-level folder inside z-out. Both prove the archive was readable.
       const inner = read(dir, "z-out/inner.txt") ?? read(dir, "z-out/z/inner.txt");
-      return norm(inner).trim() === "zipped";
+      // A copied file is not an archive: z.zip has to exist and contain inner.txt,
+      // otherwise "zip, then unzip" can be answered with a plain copy.
+      return norm(inner).trim() === "zipped" && zipContains(dir, "z.zip", "inner.txt", 7);
     },
     solve: (dir) => {
       seed(dir, "z-out/inner.txt", "zipped\n");
-      seed(dir, "z.zip", "not a real zip, only the self-check looks at z-out\n");
+      fs.writeFileSync(path.join(dir, "z.zip"), Buffer.from(ZIP_SEED, "base64"));
     },
   },
   {
@@ -387,6 +478,195 @@ const TASKS = [
       fs.writeFileSync(path.join(dir, "utf16.txt"), Buffer.from("\uFEFFname=新名字\n", "utf16le"));
     },
   },
+
+  /* ---------------------------------------------------------------------- */
+  /* The code suite: real edits, checked by running the result              */
+  /* ---------------------------------------------------------------------- */
+
+  {
+    id: "code_fix_operator",
+    suite: "code",
+    title: "fix a wrong operator and prove it",
+    prompt:
+      "子文件夹 `code_fix_operator/` 里的 calc.js 有一个 bug：add 算错了。" +
+      "修好 calc.js，然后运行 check.js 确认它输出 add works。不要改 check.js。",
+    setup: (dir) => {
+      seed(dir, "calc.js", "function add(a, b) {\n  return a - b;\n}\n\nmodule.exports = { add };\n");
+      seed(
+        dir,
+        "check.js",
+        'const { add } = require("./calc.js");\nif (add(2, 3) !== 5) {\n  console.error("add(2, 3) returned " + add(2, 3));\n  process.exit(1);\n}\nconsole.log("add works");\n',
+      );
+    },
+    check: (dir) =>
+      nodeEval(
+        dir,
+        'const { add } = require("./calc.js"); if (add(2, 3) !== 5) process.exit(1); console.log("ok");',
+      ) === "ok",
+    solve: (dir) => seed(dir, "calc.js", "function add(a, b) {\n  return a + b;\n}\n\nmodule.exports = { add };\n"),
+  },
+  {
+    id: "code_fix_syntax",
+    suite: "code",
+    title: "repair a syntax error",
+    prompt:
+      "子文件夹 `code_fix_syntax/` 里的 app.js 有语法错误。" +
+      "修好它，让 `node --check app.js` 通过。",
+    setup: (dir) => seed(dir, "app.js", 'const config = { name: "demo" ;\nconsole.log(config.name);\n'),
+    check: (dir) => (read(dir, "app.js") ?? "").includes("config") && nodeCheck(dir, "app.js"),
+    solve: (dir) => seed(dir, "app.js", 'const config = { name: "demo" };\nconsole.log(config.name);\n'),
+  },
+  {
+    id: "code_add_function",
+    suite: "code",
+    title: "add and export a function",
+    prompt:
+      "子文件夹 `code_add_function/` 里的 utils.js 只有 double。" +
+      "请新增 triple(n)（返回 n*3）并导出，double 的行为不能变。改完运行 check.js 确认。",
+    setup: (dir) => {
+      seed(
+        dir,
+        "utils.js",
+        "function double(n) {\n  return n * 2;\n}\n\nmodule.exports = { double };\n",
+      );
+      seed(
+        dir,
+        "check.js",
+        'const { double, triple } = require("./utils.js");\nif (double(4) !== 8) process.exit(1);\nif (typeof triple !== "function" || triple(4) !== 12) process.exit(1);\nconsole.log("utils ok");\n',
+      );
+    },
+    check: (dir) =>
+      nodeEval(
+        dir,
+        'const { double, triple } = require("./utils.js"); if (double(4) !== 8) process.exit(1); if (typeof triple !== "function" || triple(4) !== 12) process.exit(1); console.log("ok");',
+      ) === "ok",
+    solve: (dir) =>
+      seed(
+        dir,
+        "utils.js",
+        "function double(n) {\n  return n * 2;\n}\n\nfunction triple(n) {\n  return n * 3;\n}\n\nmodule.exports = { double, triple };\n",
+      ),
+  },
+  {
+    id: "code_rename_symbol",
+    suite: "code",
+    title: "rename a symbol across two files",
+    prompt:
+      "子文件夹 `code_rename_symbol/` 里，config.js 和 use.js 都用 oldPort 这个变量名。" +
+      "请把两处都改名为 newPort，值仍为 8080，程序行为不变。改完运行 use.js 应输出 8080。",
+    setup: (dir) => {
+      seed(dir, "config.js", "const oldPort = 8080;\nmodule.exports = { oldPort };\n");
+      seed(dir, "use.js", 'const { oldPort } = require("./config.js");\nconsole.log(oldPort);\n');
+    },
+    check: (dir) => {
+      const config = read(dir, "config.js") ?? "";
+      const use = read(dir, "use.js") ?? "";
+      return (
+        !config.includes("oldPort") &&
+        !use.includes("oldPort") &&
+        config.includes("newPort") &&
+        use.includes("newPort") &&
+        nodeRun(dir, "use.js") === "8080"
+      );
+    },
+    solve: (dir) => {
+      seed(dir, "config.js", "const newPort = 8080;\nmodule.exports = { newPort };\n");
+      seed(dir, "use.js", 'const { newPort } = require("./config.js");\nconsole.log(newPort);\n');
+    },
+  },
+  {
+    id: "code_multifile_config",
+    suite: "code",
+    title: "change a value in the file that defines it",
+    prompt:
+      "子文件夹 `code_multifile_config/` 里，TIMEOUT 定义在 config.js，由 client.js 引用。" +
+      "请把超时从 1000 改成 5000；client.js 必须继续从 config.js 取这个值，不能写死。改完运行 check.js。",
+    setup: (dir) => {
+      seed(dir, "config.js", "const TIMEOUT = 1000;\nmodule.exports = { TIMEOUT };\n");
+      seed(
+        dir,
+        "client.js",
+        'const { TIMEOUT } = require("./config.js");\nfunction wait() {\n  return TIMEOUT;\n}\nmodule.exports = { wait };\n',
+      );
+      seed(
+        dir,
+        "check.js",
+        'const { wait } = require("./client.js");\nif (wait() !== 5000) {\n  console.error("wait() returned " + wait());\n  process.exit(1);\n}\nconsole.log("timeout ok");\n',
+      );
+    },
+    check: (dir) =>
+      nodeEval(
+        dir,
+        'const { wait } = require("./client.js"); const fs = require("fs"); if (wait() !== 5000) process.exit(1); if (!fs.readFileSync("client.js", "utf8").includes("TIMEOUT")) process.exit(1); console.log("ok");',
+      ) === "ok",
+    solve: (dir) => seed(dir, "config.js", "const TIMEOUT = 5000;\nmodule.exports = { TIMEOUT };\n"),
+  },
+  {
+    id: "code_fix_test",
+    suite: "code",
+    title: "make npm test pass without touching the test",
+    prompt:
+      "子文件夹 `code_fix_test/` 是一个小 Node 项目，运行 `npm test` 会失败。" +
+      "请修好源码让测试通过；不要修改 test.js 或 package.json。",
+    setup: (dir) => {
+      seed(dir, "package.json", JSON.stringify({ name: "sum-project", private: true, scripts: { test: "node test.js" } }, null, 2));
+      seed(dir, "sum.js", "function sum(a, b) {\n  return a - b;\n}\n\nmodule.exports = { sum };\n");
+      seed(dir, "test.js", SUM_TEST);
+    },
+    check: (dir) => norm(read(dir, "test.js")) === SUM_TEST && nodeRun(dir, "test.js") === "1 passing",
+    solve: (dir) => seed(dir, "sum.js", "function sum(a, b) {\n  return a + b;\n}\n\nmodule.exports = { sum };\n"),
+  },
+  {
+    id: "code_import_error",
+    suite: "code",
+    title: "make a broken import run again",
+    prompt:
+      "子文件夹 `code_import_error/` 里 main.js 运行时报错，原因是它和 math.js 的模块导出方式不一致。" +
+      "请修好，让 `node main.js` 输出 9。",
+    setup: (dir) => {
+      seed(dir, "math.js", "function square(n) {\n  return n * n;\n}\n\nexport default square;\n");
+      seed(dir, "main.js", 'const { square } = require("./math.js");\nconsole.log(square(3));\n');
+    },
+    check: (dir) => nodeRun(dir, "main.js") === "9" && (read(dir, "main.js") ?? "").includes("math.js"),
+    solve: (dir) => {
+      seed(dir, "math.js", "function square(n) {\n  return n * n;\n}\n\nmodule.exports = { square };\n");
+    },
+  },
+  {
+    id: "code_two_bugs",
+    suite: "code",
+    title: "fix two bugs in one file",
+    prompt:
+      "子文件夹 `code_two_bugs/` 里的 stats.js 有两个 bug：max 返回了最小值，average 的分母多加了 1。" +
+      "请把两个都修好，然后运行 check.js 确认输出 stats ok。",
+    setup: (dir) => {
+      seed(
+        dir,
+        "stats.js",
+        "function max(numbers) {\n  return Math.min(...numbers);\n}\n\n" +
+          "function average(numbers) {\n  let total = 0;\n  for (const n of numbers) total += n;\n  return total / (numbers.length + 1);\n}\n\n" +
+          "module.exports = { max, average };\n",
+      );
+      seed(
+        dir,
+        "check.js",
+        'const { max, average } = require("./stats.js");\nif (max([1, 9, 4]) !== 9) { console.error("max failed"); process.exit(1); }\nif (average([2, 4]) !== 3) { console.error("average failed"); process.exit(1); }\nconsole.log("stats ok");\n',
+      );
+    },
+    check: (dir) =>
+      nodeEval(
+        dir,
+        'const { max, average } = require("./stats.js"); if (max([1, 9, 4]) !== 9) process.exit(1); if (average([2, 4]) !== 3) process.exit(1); console.log("ok");',
+      ) === "ok",
+    solve: (dir) =>
+      seed(
+        dir,
+        "stats.js",
+        "function max(numbers) {\n  return Math.max(...numbers);\n}\n\n" +
+          "function average(numbers) {\n  let total = 0;\n  for (const n of numbers) total += n;\n  return total / numbers.length;\n}\n\n" +
+          "module.exports = { max, average };\n",
+      ),
+  },
 ];
 
 /* -------------------------------------------------------------------------- */
@@ -405,6 +685,7 @@ function parseArgs(argv) {
     selfCheck: false,
     keep: false,
     verbose: false,
+    suite: "all",
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -421,6 +702,8 @@ function parseArgs(argv) {
     else if (arg.startsWith("--only=")) options.only = arg.slice(7).split(",").map((s) => s.trim()).filter(Boolean);
     else if (arg === "--limit") options.limit = Number(next()) || 0;
     else if (arg.startsWith("--limit=")) options.limit = Number(arg.slice(8)) || 0;
+    else if (arg === "--suite") options.suite = String(next() ?? "all").toLowerCase();
+    else if (arg.startsWith("--suite=")) options.suite = arg.slice(8).toLowerCase();
     else if (arg === "--out") options.out = next() ?? "";
     else if (arg.startsWith("--out=")) options.out = arg.slice(6);
     else if (arg === "--self-check") options.selfCheck = true;
@@ -446,6 +729,7 @@ function printHelp() {
   --timeout <ms>     per-task limit, default 150000
   --only <ids>       comma-separated task ids
   --limit <n>        run only the first n tasks
+  --suite <name>     all (default), files, or code
   --out <file>       write the JSON result here (default data/eval/<stamp>.json)
   --self-check       no model: prove every task's check rejects an empty folder
                      and accepts a correct one (this is what test:eval runs)
@@ -498,12 +782,25 @@ async function quantizationOf(baseUrl, model) {
 /* Self-check: every check must fail on an untouched folder and pass on a good one */
 /* -------------------------------------------------------------------------- */
 
-function selfCheck(only) {
-  const chosen = only ? TASKS.filter((task) => only.includes(task.id)) : TASKS;
-  if (chosen.length === 0) {
-    console.error(`no task matched ${JSON.stringify(only)}`);
-    return false;
+const SUITES = ["all", "files", "code"];
+
+/** `--only` narrows the ids, `--suite` narrows the kind; both may be used. */
+function selectTasks(options) {
+  if (!SUITES.includes(options.suite)) {
+    console.error(`unknown suite "${options.suite}" (use ${SUITES.join(", ")})`);
+    process.exit(2);
   }
+  const byOnly = options.only ? TASKS.filter((task) => options.only.includes(task.id)) : TASKS;
+  const chosen = options.suite === "all" ? byOnly : byOnly.filter((task) => (task.suite ?? "files") === options.suite);
+  if (chosen.length === 0) {
+    console.error(`no task matched ${JSON.stringify(options.only ?? "all")} in suite ${options.suite}`);
+    process.exit(2);
+  }
+  return chosen;
+}
+
+function selfCheck(options) {
+  const chosen = selectTasks(options);
   let passed = 0;
   const problems = [];
   for (const task of chosen) {
@@ -536,12 +833,9 @@ function selfCheck(only) {
 /* -------------------------------------------------------------------------- */
 
 async function run(options) {
-  const selected = (options.only ? TASKS.filter((task) => options.only.includes(task.id)) : TASKS).slice(
-    0,
-    options.limit > 0 ? options.limit : undefined,
-  );
+  const selected = selectTasks(options).slice(0, options.limit > 0 ? options.limit : undefined);
   if (selected.length === 0) {
-    console.error(`no task matched ${JSON.stringify(options.only)} (see the ids in this file)`);
+    console.error(`no task left after --limit`);
     process.exit(2);
   }
 
@@ -652,14 +946,31 @@ async function run(options) {
     fs.mkdirSync(dir, { recursive: true });
     task.setup?.(dir);
 
-    await call("/api/reset", "POST", {});
-    // The reset is synchronous, but give the previous turn's status a moment to settle.
-    await new Promise((resolve) => setTimeout(resolve, 150));
-
     const started = Date.now();
-    const asked = await call("/api/chat", "POST", {
-      message: `${task.prompt}\n\n所有文件都在工作目录的 ${task.id}\\ 子文件夹里，请用相对路径操作。`,
-    });
+    let asked;
+    try {
+      await call("/api/reset", "POST", {});
+      // The reset is synchronous, but give the previous turn's status a moment to settle.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      asked = await call("/api/chat", "POST", {
+        message: `${task.prompt}\n\n所有文件都在工作目录的 ${task.id}\\ 子文件夹里，请用相对路径操作。`,
+      });
+    } catch (error) {
+      // A dead server is a harness failure, not 34 model failures: say what
+      // happened, keep the server's last words, and stop instead of hammering it.
+      const tail = serverLog.trim().slice(-3000);
+      console.error(`ERR  ${task.id}  the server stopped answering: ${error.message}`);
+      if (tail) console.error(`server log (tail):\n${tail}`);
+      results.push({
+        id: task.id,
+        status: "ERROR",
+        seconds: 0,
+        tokens: 0,
+        calls: 0,
+        detail: `server connection failed: ${error.message}`,
+      });
+      break;
+    }
     if (asked.status !== 202) {
       results.push({ id: task.id, status: "ERROR", seconds: 0, tokens: 0, calls: 0, detail: JSON.stringify(asked.data) });
       console.log(`ERR  ${task.id.padEnd(16)} ${JSON.stringify(asked.data)}`);
@@ -668,36 +979,52 @@ async function run(options) {
 
     let timedOut = false;
     const deadline = Date.now() + options.timeoutMs;
-    // Wait until the turn really starts, so a fast poll cannot see "not running"
-    // from before the request and call it done.
-    await waitFor(
-      async () => {
+    let finalState;
+    try {
+      // Wait until the turn really starts, so a fast poll cannot see "not running"
+      // from before the request and call it done.
+      await waitFor(
+        async () => {
+          const now = await call("/api/state");
+          return now.data.running === true;
+        },
+        { timeoutMs: 15_000 },
+      );
+      for (;;) {
         const now = await call("/api/state");
-        return now.data.running === true;
-      },
-      { timeoutMs: 15_000 },
-    );
-    for (;;) {
-      const now = await call("/api/state");
-      if (!now.data.running) break;
-      if (Date.now() > deadline) {
-        timedOut = true;
-        await call("/api/abort", "POST", {});
-        // Give the abort a moment, then stop waiting regardless.
-        await waitFor(
-          async () => {
-            const after = await call("/api/state");
-            return after.data.running === false;
-          },
-          { timeoutMs: 10_000 },
-        );
-        break;
+        if (!now.data.running) break;
+        if (Date.now() > deadline) {
+          timedOut = true;
+          await call("/api/abort", "POST", {});
+          // Give the abort a moment, then stop waiting regardless.
+          await waitFor(
+            async () => {
+              const after = await call("/api/state");
+              return after.data.running === false;
+            },
+            { timeoutMs: 10_000 },
+          );
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400));
       }
-      await new Promise((resolve) => setTimeout(resolve, 400));
+      finalState = (await call("/api/state")).data;
+    } catch (error) {
+      const tail = serverLog.trim().slice(-4000);
+      console.error(`ERR  ${task.id}  the server stopped answering: ${error.message}`);
+      if (tail) console.error(`server log (tail):\n${tail}`);
+      results.push({
+        id: task.id,
+        status: "ERROR",
+        seconds: (Date.now() - started) / 1000,
+        tokens: 0,
+        calls: 0,
+        detail: `server connection failed: ${error.message}`,
+      });
+      break;
     }
     const seconds = (Date.now() - started) / 1000;
 
-    const finalState = (await call("/api/state")).data;
     const history = finalState.history ?? [];
     const answer = [...history].reverse().find((entry) => entry.role === "assistant" && entry.content)?.content ?? "";
     const calls = history.reduce((sum, entry) => sum + (entry.tool_calls?.length ?? 0), 0);
@@ -770,7 +1097,7 @@ async function run(options) {
 
 const options = parseArgs(process.argv.slice(2));
 if (options.selfCheck) {
-  const ok = selfCheck(options.only);
+  const ok = selfCheck(options);
   process.exit(ok ? 0 : 1);
 } else {
   run(options).then((results) => {

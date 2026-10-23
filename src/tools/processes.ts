@@ -1,7 +1,36 @@
 import { arg, argEnum, argNum, argOpt, type Tool } from "./registry.js";
+import { jailPath } from "../sandbox.js";
 import { psQuote, runPs, runPsJson } from "../util/ps.js";
 
 const ACTIONS = ["list", "find", "kill", "start"] as const;
+
+/**
+ * Programs that run a script rather than doing one thing. In guided mode a model
+ * that can `python test.py` is a model writing commands again - which is exactly
+ * what the structured tools exist to avoid. `tests` is the sanctioned way to run a
+ * project's own tests; everything else waits for normal mode.
+ */
+const SCRIPT_HOSTS = new Set([
+  "python",
+  "python3",
+  "py",
+  "node",
+  "nodejs",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "bun",
+  "powershell",
+  "pwsh",
+  "cmd",
+  "bash",
+  "sh",
+  "wsl",
+  "cscript",
+  "wscript",
+  "mshta",
+]);
 
 export const processesTool: Tool = {
   schema: {
@@ -18,6 +47,12 @@ export const processesTool: Tool = {
           name: { type: "string", description: "Process name or path for find/kill/start." },
           id: { type: "number", description: "Process id for kill." },
           args: { type: "string", description: "Arguments when starting a program." },
+          cwd: {
+            type: "string",
+            description:
+              "start: working folder for the program (relative to the working directory). " +
+              "Use it when the program reads or writes files in a project folder.",
+          },
           top: { type: "number", description: "How many rows for list. Default 15." },
         },
         required: ["action"],
@@ -72,11 +107,27 @@ export const processesTool: Tool = {
       case "start": {
         const name = arg(args, "name");
         const extra = argOpt(args, "args") ?? "";
-        if (!(await ctx.approve(`start program "${name}"`))) return "Cancelled by user.";
-        if (ctx.dryRun) return `DRY RUN: would start ${name} ${extra}`;
+        const host = name
+          .replace(/\\/g, "/")
+          .split("/")
+          .pop()!
+          .toLowerCase()
+          .replace(/\.(exe|cmd|bat|com)$/, "");
+        if (ctx.guided && SCRIPT_HOSTS.has(host)) {
+          return (
+            `Error: guided mode does not run interpreters or scripts (${name}). ` +
+            "Use the tests tool for a project's tests; switch to normal mode for the raw shell."
+          );
+        }
+        const cwdRaw = argOpt(args, "cwd")?.trim();
+        const cwd = cwdRaw ? jailPath(cwdRaw) : null;
+        const where = cwd ? ` in ${cwd}` : "";
+        if (!(await ctx.approve(`start program "${name}"${where}`))) return "Cancelled by user.";
+        if (ctx.dryRun) return `DRY RUN: would start ${name} ${extra}${where}`;
         const argPart = extra ? ` -ArgumentList ${psQuote(extra)}` : "";
-        await runPs(`Start-Process -FilePath ${psQuote(name)}${argPart}`);
-        return `Started ${name}.`;
+        const dirPart = cwd ? ` -WorkingDirectory ${psQuote(cwd)}` : "";
+        await runPs(`Start-Process -FilePath ${psQuote(name)}${argPart}${dirPart}`);
+        return `Started ${name}${extra ? ` ${extra}` : ""}${where}. Output is not captured; use a log file if you need it.`;
       }
 
       default:

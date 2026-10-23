@@ -45,6 +45,12 @@ What that means in practice:
 - **A sandbox** — every file path stays inside the working directory, and a PowerShell
   script is read before it runs (it is on by default). One switch in the chat sidebar,
   in Settings, or `/sandbox off` — see [Sandbox](#sandbox).
+- **Coder workflow** — `apply_patch` changes code with a unified diff (all-or-nothing,
+  encoding-preserving, backed up), `git` shows/stages/commits (never pushes or
+  discards), and `tests` finds and runs the project's own npm/pytest/cargo/go/dotnet
+  command and returns the failure. `files write` will not replace a file with content
+  unless you quote a piece of what is already there — see
+  [The coder workflow](#the-coder-workflow--patch-test-commit).
 - **Windows-hardened** — PowerShell 5.1 *and* 7, errors always in English, editors
   that wrote UTF-16 files still read correctly, hung commands are killed with their
   whole process tree, and "access denied" becomes a sentence that says what to do.
@@ -231,8 +237,14 @@ box — the language follows the `language` setting):
    the problem and stop.
 6. Write paths exactly as the user gave them; never guess.
 7. Announce a destructive step in one sentence before doing it.
-8. When the task is done, answer in plain text without calling a tool.
-9. There is no shell in this mode: never write command lines or scripts.
+8. If the request has more than one part, write the parts down with `todo`, then tick
+   each one off.
+9. To change code, read the file first, then use `apply_patch`; run `tests` afterwards
+   when the project has them. Never overwrite a file you have not read. Use
+   `files` `zip`/`unzip` for archives, not a script.
+10. When the task is done, answer in plain text without calling a tool.
+11. There is no shell in this mode: never write command lines, scripts or registry
+    paths.
 
 Why it helps: small models are excellent at "one tool, one result" and poor at
 planning six calls ahead. Forcing one call per step keeps every decision anchored to
@@ -245,9 +257,12 @@ and if it calls it anyway the answer is
 `Error: the raw shell is switched off in guided mode. do not write commands or scripts…`
 plus the list of structured tools to use instead. A 7B model that is asked to compute
 free space with `Get-CimInstance` will write five broken scripts; asked for
-`system { action: "disk" }` it succeeds. Use `normal` mode (slider, `/mode normal`)
-when you want the shell back — it also comes back in the **Tools** panel note and in
-`/tools` output.
+`system { action: "disk" }` it succeeds. For the same reason `processes start`
+refuses interpreters (`python`, `node`, `pwsh`, `cmd`, `bash`, …) in guided mode:
+a model that can run the script it just wrote is back to writing commands. `tests`
+is the sanctioned way to run a project's own suite; switch to `normal` for anything
+else. The shell comes back with the slider, `/mode normal`, the **Tools** panel note
+and `/tools` output.
 
 Switch to `normal` when you are driving a big model and want it to batch
 independent calls; nothing else changes — same tools, same approvals, same memory.
@@ -398,6 +413,81 @@ message — and the user sees a one-line notice that it happened.
 The list survives "continue" and a restart (it is in `history.json`), and a new
 conversation starts with an empty one. A model that never writes a list is never
 reminded — the loop only checks the list the model itself made.
+
+---
+
+## The coder workflow — patch, test, commit
+
+Windows jobs are mostly "change this file". Code is the same job with a test that
+can say no, so 2.2 adds three tools a small model can use without inventing commands:
+`apply_patch`, `git` and `tests`.
+
+### `apply_patch` — one diff, all or nothing
+
+```json
+{"action":"apply","patch":"--- a/src/sum.js\n+++ b/src/sum.js\n@@ -1,3 +1,3 @@\n function sum(a, b) {\n-  return a - b;\n+  return a + b;\n }\n"}
+```
+
+- Git-style unified diff: `a/` and `b/` prefixes, `/dev/null` for a new file, CRLF,
+  and a missing final newline are all handled.
+- Every file is patched **in memory first**. If one hunk does not match, nothing is
+  written; the error names the hunk and says how many places the context appears.
+- A stale line number is tolerated up to ±200 lines, but a context that appears more
+  than once is refused (add a line to make it unique).
+- The file keeps its original encoding (UTF-8 or UTF-16, BOM included), the old bytes
+  are backed up, and one `/undo` restores them.
+- `{"action":"preview"}` shows the changed lines and writes nothing.
+- Deleting a file through a patch is refused — use `files` `delete`, which is explicit
+  and undoable.
+
+### `git` — look, stage, commit (never push)
+
+| action | what it does |
+| --- | --- |
+| `status` | branch, staged and unstaged changes, untracked files |
+| `diff` | the actual diff; `staged: true` for the index, `file` for one path |
+| `log` | the last N commits (`max`, default 10) |
+| `add` | stage `files` (default `.`); needs no approval, changes no content |
+| `commit` | stage `files`, then commit with `message`; **asks first** |
+
+There is no `push`, `reset`, `checkout` or `clean` action at all: undoing is
+`/undo`'s job, and a force-push is not a mistake an approval prompt should be able
+to make. The commit message is passed as an argument, never through a shell.
+
+### `tests` — the project's command, not the model's
+
+| project | detected from | runs |
+| --- | --- | --- |
+| Node | `package.json` with a real `scripts.test` (the npm placeholder is ignored); `pnpm-lock.yaml`, `yarn.lock` or `bun.lockb` picks the manager | `npm test`, `pnpm test`, `yarn test`, `bun test` |
+| Python | `pytest.ini`, `tox.ini`, `[tool.pytest]` in `pyproject.toml`, or `tests/*.py` | `python -m pytest -q` |
+| Rust | `Cargo.toml` | `cargo test --quiet` |
+| Go | `go.mod` | `go test ./...` |
+| .NET | a `*.sln` in the folder | `dotnet test --nologo` |
+
+`{"action":"detect"}` says what would run and why; `run` asks for approval, starts
+the process **without a shell**, kills the whole process tree on timeout (default
+300 s, at most 900 s), and clips the output head+tail so a 2000-line failure still
+fits in the window. It is denied in `dryRun`. If a project has none of these, the
+answer says what was looked for instead of inventing a command.
+
+### The write guard
+
+`files write` on an existing file with content needs `overwrite: true` **and**
+`expected` — a piece of the text that is already there (or all of it, when the file
+is shorter than four characters). Without it:
+
+```text
+Refused: C:\work\z\inner.txt already has content. Read it first and pass expected with a piece
+of the current text ... - or use action "edit" to change just the part that should change.
+```
+
+This is not paranoia. In the 2.1 eval a model was told "already exists, pass
+overwrite=true", did exactly that, replaced `zipped` with invented text and reported
+success; the receipt said "replaced 7 characters", and the model ignored it. A guard
+that requires it to have seen the old text is what changed the outcome: the same task
+now passes, and the file it was asked not to touch is unchanged.
+
+`examples/code.md` has a complete session.
 
 ---
 
@@ -1276,9 +1366,12 @@ Custom commands run arbitrary PowerShell, so they always require approval
 
 | Tool | Actions |
 | --- | --- |
-| `files` | list, tree, read, write, append, **edit** (replace exact text, with a diff), copy, move, delete, mkdir, search, grep, hash, zip, unzip |
+| `files` | list, tree, read, write, append, **edit** (replace exact text, with a diff), copy, move, delete, mkdir, search, grep, hash, zip, unzip — replacing a file with content needs `overwrite` **and** `expected` |
+| `apply_patch` | apply, preview — a unified diff over one or more files; all-or-nothing, encoding-preserving, backed up and undoable |
+| `git` | status, diff, log, add, commit — never pushes, resets or discards; `commit` asks first |
+| `tests` | detect, run — npm/pnpm/yarn/bun, pytest, cargo, go or dotnet test; asks first, no shell |
 | `system` | info, cpu, memory, disk, uptime, battery, whoami, env_get/set/list, installed_apps, lock_screen, sleep, shutdown, restart, hibernate |
-| `processes` | list, find, kill, start |
+| `processes` | list, find, kill, start (with `cwd`; interpreters are refused in guided mode) |
 | `services` | list, status, start, stop, restart, enable, disable |
 | `network` | ipconfig, ping, dns_lookup, port_check, connections, firewall_list/add/remove, wifi_profiles |
 | `web` | search, fetch, download — internet access (see [Web access](#web-access--the-web-tool)) |
@@ -1734,13 +1827,14 @@ recoverable, and the `CHANGELOG.md` entry is all that remains of it.
 
 The test suites answer *"is the code right?"*. They cannot answer *"can this model
 actually do the job?"* — that depends on the model, and on the day. `npm run eval` is
-the other half: 26 small Windows jobs, run through the **real** HTTP server, the real
-tools and the real prompts, then checked by **looking at the disk** — never at what the
-model said it did.
+the other half: **34 small jobs in two suites** (26 file tasks, 8 code tasks), run
+through the **real** HTTP server, the real tools and the real prompts, then checked by
+**looking at the disk** — never at what the model said it did.
 
 ```powershell
-npm run eval                                  # the model in settings.json
+npm run eval                                  # the model in settings.json, all 34
 npm run eval -- --model qwen/qwen3.8-27b      # a specific one
+npm run eval -- --suite code                  # the 8 coder tasks only
 npm run eval -- --only write_exact,multi_mixed --verbose
 npm run eval -- --mode normal                 # full toolset instead of guided
 ```
@@ -1750,18 +1844,33 @@ sandbox is on and approvals are automatic *inside that folder only*, so a model 
 wanders is refused instead of touching your files. A task is a pass only if the result
 is on disk (or, for reading tasks, in the final answer).
 
-The first 20 are the floor — single file operations, an edit, a JSON field, a zip
-round-trip, a UTF-16 edit, plus `whoami` and free space. The last 6 are the interesting
-ones: compute a column total, find the one config with `mode=dev`, rename four files by
-a pattern, move three files into a new folder tree, find the line two files share, and
-edit a UTF-16 file without turning it into UTF-8.
+The **files** suite (26) is the floor — single file operations, an edit, a JSON field, a
+zip round-trip, a UTF-16 edit, plus `whoami` and free space — and the interesting
+multi-step jobs: compute a column total, find the one config with `mode=dev`, rename
+four files by a pattern, move three files into a new folder tree, find the line two
+files share. Its `zip_roundtrip` now verifies that `z.zip` is a real archive containing
+`inner.txt`, not just that a file appeared in `z-out`.
 
-Baseline, guided mode, one run each (`data/eval/*.json` keeps every result):
+The **code** suite (8) is new in 2.2: fix an operator, repair a syntax error, add and
+export a function, rename a symbol across two files, change a value in the file that
+defines it, make `npm test` pass without editing the test, repair a module-export
+mismatch, and fix two bugs in one file. The checks run the result with Node, and the
+oracle lives in `eval.mjs` — not in a helper file the model is free to edit.
 
-| Model | Loaded as | Result | Time | Tokens |
+Baseline, guided mode (`data/eval/*.json` keeps every result):
+
+| Model | Suite | Result | Time | Tokens |
 | --- | --- | --- | --- | --- |
-| `qwen/qwen3.8-27b` | Q6_K | **26/26** | 2.1 min | 510 282 |
-| `qwen3.6-35b-a3b` | Q6_K | 24/26 | 3.8 min | 570 729 |
+| `qwen/qwen3.8-27b` (2.1.0) | files (26) | **26/26** | 2.4 min | 721 018 |
+| `qwen3.6-35b-a3b` | files (26) | 24/26 | 3.8 min | 570 729 |
+| `qwen3-coder-30b-a3b-instruct-ud` (2.2.0) | **all (34)** | **33/34** | 2.4 min | 2 019 969 |
+
+In that full run the coder passed **26/26** files tasks (1 030 130 tokens) and **7/8**
+code tasks (989 839 tokens). The one miss is `code_import_error`: it changed
+`export default square` to `module.exports = square` while `main.js` still destructures
+`{ square }`, then reported success without running `node main.js`. The zip task that
+timed out at 127 calls in 2.1 now passes in 10 — the write guard is what changed it.
+Re-run before believing a number: a local model is not deterministic.
 
 The same `qwen/qwen3.8-27b` run **after the checklist landed** (2.1.0) still passes
 **26/26** — 2.4 min and 721 018 tokens (85 → 113 calls). The extra calls are the plan
@@ -1771,14 +1880,14 @@ tasks mostly stayed put (one even got faster). Each request also carries ~380 mo
 tokens of tool schema and prompt. That is the price of not believing a model that says
 "done" after half the job.
 
-The two failures of the second model were *empty replies* (the UI shows “模型没有给出回复”),
-not wrong files — which is exactly the kind of thing a benchmark should catch and a
-test suite never will. Re-run before believing a number: a local model is not
-deterministic.
+The two failures of `qwen3.6-35b-a3b` were *empty replies* (the UI shows
+“模型没有给出回复”), not wrong files — exactly the kind of thing a benchmark should
+catch and a test suite never will.
 
-`npm run test:eval` runs the same 26 checks **without a model**: every check must reject
+`npm run test:eval` runs all **34** checks **without a model**: every check must reject
 an untouched folder and accept the result a correct agent would produce, so a check that
-is always green (or always red) fails CI. That suite is part of `npm run test:all`.
+is always green (or always red) fails CI. It also proves `--suite files` is 26 and
+`--suite code` is 8. That suite is part of `npm run test:all`.
 
 ---
 
@@ -1813,6 +1922,18 @@ is always green (or always red) fails CI. That suite is part of `npm run test:al
   `autoApprove` is set.
 - `sandbox` is on by default: every file path stays inside the working directory, and a
   PowerShell script is read before it runs (see [Sandbox](#sandbox)).
+- **`apply_patch` is all-or-nothing**: every file is patched in memory first, and one
+  bad hunk writes nothing. The old bytes are backed up, `/undo` restores them, a binary
+  file is refused, and deleting through a patch is not an action at all.
+- **`files write` cannot replace a file it never read**: an existing non-empty file
+  needs `overwrite: true` *and* `expected`, a piece of the text already there.
+- **`git commit` asks first**, and `git` has no `push`, `reset`, `checkout` or `clean`.
+  Undoing is `/undo`'s job, not a force-push.
+- **`tests` asks first** (it executes project code), never runs through a shell, and is
+  denied in `dryRun`.
+- In **guided mode** `processes start` refuses interpreters and script hosts
+  (`python`, `node`, `npm`, `pwsh`, `cmd`, `bash`, `wsl`, …). A model that can run the
+  script it just wrote is back to writing commands; `tests` is the sanctioned way.
 - The raw `powershell` tool and all `custom` commands are always confirmed.
 - **MCP tools** are confirmed on every call unless you mark that server
   **auto-approve** — remember an MCP server is a program that runs with *your*

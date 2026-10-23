@@ -7,6 +7,12 @@ import { parseToolArguments } from "../util/json.js";
 export interface ToolContext {
   /** When true, destructive tools must report what they would do instead of doing it. */
   dryRun: boolean;
+  /**
+   * Guided mode. It has no raw shell, and `processes start` refuses interpreters
+   * (`python script.py`, `node x.js`, `pwsh -File ...`) for the same reason: a small
+   * model that can run a script it just wrote is back to writing commands.
+   */
+  guided: boolean;
   /** Ask the user to approve a destructive action. Resolves false if denied. */
   approve(summary: string): Promise<boolean>;
   /**
@@ -105,6 +111,8 @@ export class ToolRegistry {
   constructor(
     private readonly approval: Approval,
     private readonly dryRun = false,
+    /** Guided mode: structured tools only, no interpreter/script launches. */
+    private readonly guided = false,
   ) {}
 
   register(tool: Tool): this {
@@ -232,6 +240,7 @@ export class ToolRegistry {
     const audit = auditLog();
     const ctx: ToolContext = {
       dryRun: this.dryRun,
+      guided: this.guided,
       approve: this.approval,
       backup: (target: string) => audit.backup(target),
       record: (input: AuditInput) => audit.record({ ...input, tool: name }),

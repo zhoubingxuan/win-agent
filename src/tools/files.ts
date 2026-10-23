@@ -50,6 +50,29 @@ async function writeTextLike(target: string, text: string, like: DecodedText | n
   await fs.writeFile(target, encodeText(text, encoding, withBom));
 }
 
+/**
+ * A small model's favourite archive mistake: `{"action":"zip","path":"...","destination":"..."}`.
+ * Saying exactly which two arguments to use, and that `path` is not one of them,
+ * ends the loop faster than "missing required string argument".
+ */
+function archiveArgError(args: Record<string, unknown>, action: "zip" | "unzip", needDestination: boolean): string | null {
+  const source = (argOpt(args, "source") ?? "").trim();
+  const destination = (argOpt(args, "destination") ?? "").trim();
+  if (source && (!needDestination || destination)) return null;
+  const how =
+    action === "zip"
+      ? 'source = the folder to zip, destination = the .zip to create'
+      : 'source = the .zip, destination = the folder to extract into (optional, default ".")';
+  const usedPath = (argOpt(args, "path") ?? "").trim() !== "";
+  return `Error: ${action} needs ${how}.${usedPath ? ' "path" is not used by this action.' : ""}`;
+}
+
+/** The first non-empty line, shortened: a receipt that shows what was replaced. */
+function previewText(text: string, max = 60): string {
+  const first = text.split(/\r?\n/).find((line) => line.trim() !== "") ?? "";
+  return first.length > max ? `${first.slice(0, max)}...` : first;
+}
+
 /** A short unified-style diff of the changed lines, for the edit action. */
 function diffPreview(before: string, after: string, limit = 20): string {
   const a = before.split(/\r?\n/);
@@ -115,21 +138,28 @@ export const filesTool: Tool = {
       description:
         "Create, read, search and manage files and folders on this Windows machine. " +
         "actions: list, tree, read, write, append, edit (replace exact text), copy, move, " +
-        "delete, mkdir, search (by name), grep (by content), hash, zip, unzip.",
+        "delete, mkdir, search (by name), grep (by content), hash, " +
+        "zip (source folder -> destination .zip), unzip (source .zip -> destination folder).",
       parameters: {
         type: "object",
         properties: {
           action: { type: "string", enum: [...ACTIONS] },
-          path: { type: "string", description: "Primary file or folder path." },
-          source: { type: "string", description: "Source path for copy/move." },
-          destination: { type: "string", description: "Destination path or zip archive." },
+          path: { type: "string", description: "Primary file or folder path (list, tree, read, write, edit, delete, mkdir, search, grep, hash)." },
+          source: { type: "string", description: "copy/move/zip/unzip: the source file, folder, or .zip." },
+          destination: { type: "string", description: "copy/move/zip/unzip: the destination; for zip, the .zip to create; for unzip, the folder to extract into." },
           content: { type: "string", description: "Text to write or append." },
           find: { type: "string", description: "edit: exact existing text to locate." },
           replace: { type: "string", description: "edit: text to put in its place." },
           all: { type: "boolean", description: "edit: replace every occurrence, not just the first." },
           offset: { type: "number", description: "read: skip this many characters first." },
           pattern: { type: "string", description: "Wildcard (search) or regex (grep)." },
-          overwrite: { type: "boolean", description: "Allow replacing existing files." },
+          overwrite: { type: "boolean", description: "Allow replacing an existing file (together with expected)." },
+          expected: {
+            type: "string",
+            description:
+              "write: when replacing an existing file, a piece of its current text (at least 4 characters, " +
+              "or all of it when shorter) - read the file first. The write is refused if that text is not there.",
+          },
           recursive: { type: "boolean", description: "Recurse into subfolders for delete." },
           depth: { type: "number", description: "Max depth for tree/search. Default 3." },
           max: { type: "number", description: "Max results to return. Default 100." },
@@ -196,16 +226,40 @@ export const filesTool: Tool = {
         const target = jailPath(arg(args, "path"));
         const content = argOpt(args, "content") ?? "";
         const overwrite = argBool(args, "overwrite", false);
+        const expected = (argOpt(args, "expected") ?? "").trim();
         const existing = await statSafe(target);
         if (existing && !overwrite) {
-          return `Refused: ${target} already exists. Pass overwrite=true to replace it.`;
+          return (
+            `Refused: ${target} already exists. Read it first, then change it with action "edit" ` +
+            `(or apply_patch); to replace the whole file, pass overwrite=true and expected with a ` +
+            `piece of the current text.`
+          );
+        }
+        // Overwriting a file that Windows wrote as UTF-16 keeps it UTF-16.
+        const previous = existing ? await readText(target).catch(() => null) : null;
+        if (existing && overwrite && previous && previous.text.trim() !== "") {
+          // "overwrite": true alone is how a model destroys a file it never read.
+          // Requiring a piece of the current text turns that into a step it has to
+          // look at (and makes a wrong guess a refusal, not a loss).
+          if (expected.length < 4 && expected !== previous.text.trim()) {
+            return (
+              `Refused: ${target} already has content. Read it first and pass expected with a piece ` +
+              `of the current text (at least 4 characters, or the whole text if it is shorter) if you ` +
+              `really mean to replace the whole file - or use action "edit" to change just the part ` +
+              `that should change.`
+            );
+          }
+          if (!previous.text.includes(expected)) {
+            return (
+              `Refused: ${JSON.stringify(expected)} is not in ${target}. ` +
+              `Read the file and pass a piece of what it actually contains - or use action "edit".`
+            );
+          }
         }
         if (ctx.dryRun) return `DRY RUN: would write ${content.length} chars to ${target}`;
         // Save the old version before touching it: /undo puts this back.
         const backup = existing ? await ctx.backup(target) : null;
         await fs.mkdir(path.dirname(target), { recursive: true });
-        // Overwriting a file that Windows wrote as UTF-16 keeps it UTF-16.
-        const previous = existing ? await readText(target).catch(() => null) : null;
         await writeTextLike(target, content, previous);
         ctx.record({
           action: "write",
@@ -217,7 +271,16 @@ export const filesTool: Tool = {
               ? [{ kind: "restore", path: target, backup }]
               : [],
         });
-        return `Wrote ${content.length} characters to ${target}`;
+        // Say what was replaced: a model that "wrote" a file it never read has
+        // just destroyed something, and the receipt is where it can notice.
+        if (!existing) return `Wrote ${content.length} characters to ${target} (new file)`;
+        const oldLength = previous ? previous.text.length : null;
+        const oldStart = previous ? previewText(previous.text) : "";
+        const detail =
+          oldLength === null
+            ? "replaced existing content (it could not be read back as text)"
+            : `replaced ${oldLength} characters${oldStart ? `; the old text began ${JSON.stringify(oldStart)}` : ""}`;
+        return `Wrote ${content.length} characters to ${target} (${detail})`;
       }
 
       case "append": {
@@ -242,7 +305,9 @@ export const filesTool: Tool = {
               ? [{ kind: "restore", path: target, backup }]
               : [],
         });
-        return `Appended ${content.length} characters to ${target}`;
+        return existing
+          ? `Appended ${content.length} characters to ${target} (the file had ${existing.text.length})`
+          : `Appended ${content.length} characters to ${target} (created the file)`;
       }
 
       case "edit": {
@@ -381,7 +446,12 @@ export const filesTool: Tool = {
         );
         const items = await walk(dir, depth, 5_000);
         const matches = items.filter((i) => regex.test(path.basename(i.rel)));
-        if (matches.length === 0) return `No files matching "${pattern}" under ${dir}`;
+        if (matches.length === 0) {
+          return (
+            `No file *names* match "${pattern}" under ${dir} (searched ${items.length} entries).\n` +
+            'This searches names only - to search inside files, use action "grep".'
+          );
+        }
         return matches
           .slice(0, max)
           .map((m) => path.join(dir, m.rel))
@@ -395,6 +465,7 @@ export const filesTool: Tool = {
         const regex = new RegExp(pattern, "i");
         const items = await walk(dir, argNum(args, "depth", 5), 5_000);
         const hits: string[] = [];
+        let scanned = 0;
         for (const item of items) {
           if (item.dir || hits.length >= max) continue;
           if (item.size > 1_000_000) continue;
@@ -409,6 +480,7 @@ export const filesTool: Tool = {
           } catch {
             continue;
           }
+          scanned += 1;
           const lines = text.split(/\r?\n/);
           for (let i = 0; i < lines.length; i++) {
             if (regex.test(lines[i])) {
@@ -417,7 +489,10 @@ export const filesTool: Tool = {
             }
           }
         }
-        return hits.length === 0 ? `No matches for "${pattern}" under ${dir}` : hits.join("\n");
+        return hits.length === 0
+          ? `No matches for "${pattern}" in ${scanned} text file(s) under ${dir}` +
+              ` (file contents were searched, as a regular expression, case-insensitive).`
+          : hits.join("\n");
       }
 
       case "hash": {
@@ -428,6 +503,8 @@ export const filesTool: Tool = {
       }
 
       case "zip": {
+        const bad = archiveArgError(args, "zip", true);
+        if (bad) return bad;
         const source = jailPath(arg(args, "source"));
         const destination = jailPath(arg(args, "destination"));
         if (ctx.dryRun) return `DRY RUN: would zip ${source} -> ${destination}`;
@@ -443,6 +520,8 @@ export const filesTool: Tool = {
       }
 
       case "unzip": {
+        const bad = archiveArgError(args, "unzip", false);
+        if (bad) return bad;
         const source = jailPath(arg(args, "source"));
         const destination = jailPath(argOpt(args, "destination") ?? ".");
         if (ctx.dryRun) return `DRY RUN: would extract ${source} -> ${destination}`;

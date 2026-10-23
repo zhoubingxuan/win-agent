@@ -20,6 +20,7 @@ const SUITES = [
   ["agent", "scripts/test-agent.mjs", true],
   ["skills", "scripts/test-skills.mjs", true],
   ["todo", "scripts/test-todo.mjs", true],
+  ["code", "scripts/test-code-tools.mjs", true],
   ["i18n", "scripts/test-i18n.mjs", true],
   ["docs", "scripts/test-docs.mjs", true],
   ["api", "scripts/test-api.mjs", true],

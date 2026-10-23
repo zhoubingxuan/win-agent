@@ -12,6 +12,7 @@ emit, and the terminal lines are exactly what the agent accepts (verified with
 | --- | --- |
 | [tool-calls.md](tool-calls.md) | one worked example per tool: the request, the JSON the model emits, what comes back |
 | [prompts.md](prompts.md) | ready-to-send tasks (English + 中文), from one tool call to a multi-step job |
+| [code.md](code.md) | a coder turn: read, `apply_patch` (preview → apply), `tests` detect/run, `git` commit, and the overwrite guard |
 | [modes.md](modes.md) | the two agent modes (`guided` / `normal`): what changes, and how to pick one |
 | [verbosity.md](verbosity.md) | the output-detail slider (`answer` / `thinking` / `full`): one turn drawn at all three levels |
 | [sandbox.md](sandbox.md) | the folder fence (`sandbox`, on by default): a refused path, what is confined, how to switch it off |

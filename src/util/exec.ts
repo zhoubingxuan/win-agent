@@ -34,7 +34,13 @@ export function resolveCommand(command: string, extraDirs: string[] = []): strin
     ...(process.env.PATH ?? "").split(path.delimiter).filter(Boolean),
   ];
   for (const dir of dirs) {
-    for (const ext of ["", ...executableExtensions()]) {
+    // Windows resolves a bare name with PATHEXT, not by trying the literal name:
+    // trying "" first finds npm's POSIX shell script before npm.cmd, and spawning
+    // that fails with EINVAL. A file that really has no extension is still found
+    // last, so nothing that used to resolve stops resolving.
+    const extensions =
+      process.platform === "win32" ? [...executableExtensions(), ""] : ["", ...executableExtensions()];
+    for (const ext of extensions) {
       const candidate = path.join(dir, command + ext);
       try {
         if (fs.existsSync(candidate)) return candidate;

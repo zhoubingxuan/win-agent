@@ -13,6 +13,99 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-10-23
+
+The agent could change a line; it could not change a program and prove it still
+works. 2.2 gives it the three moves a coder turn needs — a **patch**, the project's
+**tests**, and a **commit** — without giving it a shell to do them with.
+
+### Added
+
+- **`apply_patch` — a unified diff, applied all-or-nothing.** Git-style headers,
+  `a/`/`b/` prefixes, `/dev/null` for a new file, CRLF and a missing final newline are
+  understood. Every file is patched **in memory first**; one bad hunk writes nothing
+  and the error names the hunk and how many places the context appears. A stale line
+  number is tolerated up to ±200 lines, but an ambiguous context is refused. The file
+  keeps its original encoding (UTF-8/UTF-16 and BOM), the old bytes are backed up, and
+  one `/undo` restores them. `action: "preview"` shows the changed lines and writes
+  nothing. Deleting through a patch is refused — `files delete` is explicit and
+  undoable.
+- **`git` — status, diff, log, add, commit.** `commit` stages `files` (default `.`)
+  and **asks first**; `add` does not (it changes no content). There is no `push`,
+  `reset`, `checkout` or `clean` action: undoing is `/undo`'s job, and a force-push is
+  not a mistake an approval prompt should be able to make. Commit messages are passed
+  as arguments, never through a shell.
+- **`tests` — the project's command, not the model's.** Detects a real
+  `package.json` `scripts.test` (npm's placeholder is ignored; lockfiles pick
+  npm/pnpm/yarn/bun), pytest (config or `tests/*.py`), `Cargo.toml`, `go.mod` and
+  `*.sln`. `detect` explains what would run; `run` asks for approval, starts the
+  process without a shell, kills the whole tree on timeout (default 300 s, max 900)
+  and clips the output head+tail. Denied in `dryRun`; a project with none of these
+  gets "looked for …" instead of an invented command.
+- **The write guard.** `files write` on an existing file with content now needs
+  `overwrite: true` **and** `expected` — a piece of the text that is already there (or
+  all of it, for a file shorter than four characters). A blind overwrite is refused
+  with an instruction to read first. This is a data guard, not another receipt: in the
+  2.1 eval a model read "already exists, pass overwrite=true", did exactly that,
+  replaced `zipped` with invented text and reported success while ignoring the
+  "replaced 7 characters" receipt.
+- **Guided mode refuses interpreters.** `processes start` in guided mode refuses
+  `python`, `node`, `npm`, `pwsh`, `cmd`, `bash`, `wsl`, … with a pointer to `tests`
+  and normal mode. Writing a script and running it was the last way around "no shell";
+  the coder eval found it (a model wrote 25 Python scripts trying to zip a folder).
+  `processes start` also gained `cwd`, so a program that reads relative files can be
+  started in its project folder.
+- **A `code` eval suite (8 tasks).** Fix an operator, repair a syntax error, add and
+  export a function, rename a symbol across two files, change a value in the file that
+  defines it, make `npm test` pass without touching the test, repair a module-export
+  mismatch, and fix two bugs in one file. Checks run the result with Node; the oracle
+  lives in `eval.mjs`, not in a file the model can edit. `--suite all|files|code`
+  selects; `all` is 34 tasks, `files` reproduces the old 26.
+
+### Changed
+
+- Both guided prompts now say: read before you overwrite, use `apply_patch` for code,
+  run `tests` afterwards, and use `files zip/unzip` rather than a script. The default
+  prompt gained the read-before-overwrite / patch / test rule.
+- The `files` schema now spells out that `zip` takes `source` (folder) and
+  `destination` (`.zip`), and answers a `path`-instead-of-`source` mistake with the
+  two argument names instead of a generic "missing required argument".
+- The `zip_roundtrip` eval now verifies that `z.zip` really is a zip containing
+  `inner.txt` (central directory), not just that a file was copied into `z-out`. The
+  previous check could be passed without ever making an archive.
+- `resolveCommand` now tries `PATHEXT` before an extensionless file on Windows, so
+  `npm` resolves to `npm.cmd` (the extensionless `npm` shell script cannot be spawned);
+  batch files are launched through `cmd.exe` with quoted, fixed arguments.
+
+### Fixed
+
+- `files write` reports how much it replaced and shows the first line of the old text
+  ("replaced 7 characters; the old text began \"zipped\""); `append` says how much was
+  already there. A 0-hit `search` says it searches *names* and points at `grep`; a
+  0-hit `grep` counts the text files it searched.
+- The guided "no shell" hint lists the code tools, so the model is not told to solve a
+  code task with `files write` alone.
+
+### Tests
+
+- `npm run test:code` (79 checks): patch parsing/application (exact, stale line
+  numbers, multi-hunk, ambiguity, context mismatch, CRLF, no final newline, create,
+  atomic multi-file, preview, sandbox refusal), `git` against a real temp repository
+  (status/add/commit/log/diff, approval, denial, dry run, non-repo), `tests`
+  (detect/run/pass/fail/dry run/deny/no command/pytest), the guided interpreter
+  refusal, and every receipt and write guard.
+- `test:audit` (90 checks) now passes `expected` on its overwrites; `test:all` runs 18
+  suites.
+- `test:eval` (14 checks): 34 tasks, 8 in the code suite, all checks honest on an
+  untouched folder and on a solved one, `--suite` filtering and unknown-suite refusal.
+- Measured with **`qwen3-coder-30b-a3b-instruct-ud` (Q6_K_XL)**, guided, one full run:
+  **33/34 in 2.4 min / 2 019 969 tokens**. The files suite is **26/26**
+  (1 030 130 tokens); the code suite is **7/8** (989 839 tokens). `code_import_error`
+  is the miss: it changed `export default square` to `module.exports = square` (while
+  `main.js` destructures `{ square }`) and reported success without running
+  `node main.js`. The zip task, which timed out at 127 calls in 2.1, passes in 10 calls
+  after the write guard and the archive hint.
+
 ## [2.1.0] — 2026-10-22
 
 A small model's commonest failure is not a wrong tool call: it is answering "done"

@@ -76,7 +76,7 @@ try {
     const original = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("记得写测试\n", "utf16le")]);
     fs.writeFileSync(target, original);
 
-    await call("files", { action: "write", path: target, content: "plain utf-8 now", overwrite: true });
+    await call("files", { action: "write", path: target, content: "plain utf-8 now", overwrite: true, expected: "记得写测试" });
     check("the file really changed", !fs.readFileSync(target).equals(original));
     await undo();
     check("the old bytes, BOM and encoding are back", fs.readFileSync(target).equals(original));
@@ -264,22 +264,28 @@ try {
     await runPowerShell(`Remove-Item -Path '${KEY}' -Recurse -Force -ErrorAction SilentlyContinue`);
 
     section("environment variables");
-    const NAME = "WIN_AGENT_AUDIT_TEST";
+    // A unique name, always deleted in `finally`: a test must never leave a real
+    // user environment variable behind, and must never adopt one a previous run left.
+    const NAME = `WIN_AGENT_AUDIT_TEST_${process.pid}`;
     const before = (await runPowerShell(`[Environment]::GetEnvironmentVariable('${NAME}','User')`)).stdout.trim();
 
-    await call("system", { action: "env_set", name: NAME, value: "one", scope: "User" });
-    await undo();
-    const removed = (await runPowerShell(`[Environment]::GetEnvironmentVariable('${NAME}','User')`)).stdout.trim();
-    check("a variable that did not exist is removed again", removed === before, `"${removed}"`);
+    try {
+      await call("system", { action: "env_set", name: NAME, value: "one", scope: "User" });
+      await undo();
+      const removed = (await runPowerShell(`[Environment]::GetEnvironmentVariable('${NAME}','User')`)).stdout.trim();
+      check("a variable that did not exist is removed again", removed === before, `"${removed}"`);
 
-    await call("system", { action: "env_set", name: NAME, value: "one", scope: "User" });
-    await call("system", { action: "env_set", name: NAME, value: "two", scope: "User" });
-    await undo();
-    const restoredEnv = (await runPowerShell(`[Environment]::GetEnvironmentVariable('${NAME}','User')`)).stdout.trim();
-    check("the previous value is restored", restoredEnv === "one", restoredEnv);
-    await undo();
-    const cleaned = (await runPowerShell(`[Environment]::GetEnvironmentVariable('${NAME}','User')`)).stdout.trim();
-    check("the test variable is gone again", cleaned === before, `"${cleaned}"`);
+      await call("system", { action: "env_set", name: NAME, value: "one", scope: "User" });
+      await call("system", { action: "env_set", name: NAME, value: "two", scope: "User" });
+      await undo();
+      const restoredEnv = (await runPowerShell(`[Environment]::GetEnvironmentVariable('${NAME}','User')`)).stdout.trim();
+      check("the previous value is restored", restoredEnv === "one", restoredEnv);
+      await undo();
+      const cleaned = (await runPowerShell(`[Environment]::GetEnvironmentVariable('${NAME}','User')`)).stdout.trim();
+      check("the test variable is gone again", cleaned === before, `"${cleaned}"`);
+    } finally {
+      await runPowerShell(`[Environment]::SetEnvironmentVariable('${NAME}', $null, 'User')`);
+    }
   } else {
     console.log("\nregistry and environment checks only run on Windows - skipped");
   }
@@ -421,7 +427,7 @@ try {
   {
     const target = at("aged.txt");
     fs.writeFileSync(target, "original", "utf8");
-    await call("files", { action: "write", path: target, content: "changed", overwrite: true });
+    await call("files", { action: "write", path: target, content: "changed", overwrite: true, expected: "original" });
 
     const entry = auditLog().pending().at(-1);
     const backup = entry?.steps.find((step) => step.kind === "restore")?.backup;
@@ -490,7 +496,7 @@ try {
     check("but it is not on the stack", auditLog().pending().length === 0);
 
     configureAudit(true);
-    await call("files", { action: "write", path: target, content: "y", overwrite: true });
+    await call("files", { action: "write", path: target, content: "y", overwrite: true, expected: "x" });
     check("turning it back on records again", auditLog().pending().length === 1);
     await undo();
     check("and that change can be undone", fs.readFileSync(target, "utf8") === "x");

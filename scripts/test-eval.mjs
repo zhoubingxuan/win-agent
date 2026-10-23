@@ -27,22 +27,45 @@ const source = fs.readFileSync(path.join(ROOT, "scripts", "eval.mjs"), "utf8");
 const ids = [...source.matchAll(/^\s{4}id: "([a-z0-9_]+)",/gm)].map((match) => match[1]);
 
 console.log("the task list");
-check("has 26 tasks", ids.length === 26, String(ids.length));
-check("no duplicate id", new Set(ids).size === ids.length, ids.join(", "));
+check("has 34 tasks", ids.length === 34, String(ids.length));
+check("no duplicate id", new Set(ids).size === ids.length, ids.join(","));
 check(
   "every task carries a prompt, a check and a solver",
-  (source.match(/^\s{4}prompt:/gm) ?? []).length === 26 &&
-    (source.match(/^\s{4}check:/gm) ?? []).length === 26 &&
-    (source.match(/^\s{4}solve:/gm) ?? []).length === 26,
+  (source.match(/^\s{4}prompt:/gm) ?? []).length === 34 &&
+    (source.match(/^\s{4}check:/gm) ?? []).length === 34 &&
+    (source.match(/^\s{4}solve:/gm) ?? []).length === 34,
 );
 check("the ids are readable in the report", ids.every((id) => /^[a-z][a-z0-9_]{2,}$/.test(id)));
+check("the code suite has 8 tasks", (source.match(/^\s{4}suite: "code",/gm) ?? []).length === 8);
+check("the files suite is the default", ids.filter((id) => id.startsWith("code_")).length === 8);
 
 console.log("\nself-check (no model)");
 const full = spawnSync(process.execPath, ["scripts/eval.mjs", "--self-check"], { cwd: ROOT, encoding: "utf8" });
 const fullOut = `${full.stdout ?? ""}${full.stderr ?? ""}`;
 check("it exits 0", full.status === 0, `status ${full.status}`);
-check("all 26 checks are honest", /26\/26 checks are honest/.test(fullOut), fullOut.split("\n").slice(-3).join(" | "));
+check("all 34 checks are honest", /34\/34 checks are honest/.test(fullOut), fullOut.split("\n").slice(-3).join(" | "));
 check("no check is trivially true", !/FAIL /.test(fullOut));
+
+const code = spawnSync(process.execPath, ["scripts/eval.mjs", "--self-check", "--suite", "code"], {
+  cwd: ROOT,
+  encoding: "utf8",
+});
+check("--suite code runs only the coder tasks", /8\/8 checks are honest/.test(`${code.stdout}${code.stderr}`), `${code.stdout}${code.stderr}`.split("\n").slice(-2).join(" | "));
+const files = spawnSync(process.execPath, ["scripts/eval.mjs", "--self-check", "--suite", "files"], {
+  cwd: ROOT,
+  encoding: "utf8",
+});
+check("--suite files skips the coder tasks", /26\/26 checks are honest/.test(`${files.stdout}${files.stderr}`), `${files.stdout}${files.stderr}`.split("\n").slice(-2).join(" | "));
+
+const badSuite = spawnSync(process.execPath, ["scripts/eval.mjs", "--self-check", "--suite", "nope"], {
+  cwd: ROOT,
+  encoding: "utf8",
+});
+check(
+  "an unknown suite is refused",
+  badSuite.status === 2 && /unknown suite/.test(`${badSuite.stdout}${badSuite.stderr}`),
+  `status ${badSuite.status}`,
+);
 
 const subset = spawnSync(
   process.execPath,
@@ -55,7 +78,7 @@ check("--only narrows the run", /2\/2 checks are honest/.test(subsetOut), subset
 const unknown = spawnSync(process.execPath, ["scripts/eval.mjs", "--self-check", "--only", "nope"], { cwd: ROOT, encoding: "utf8" });
 check(
   "an unknown task name is refused",
-  unknown.status === 1 && /no task matched/.test(`${unknown.stdout}${unknown.stderr}`),
+  unknown.status === 2 && /no task matched/.test(`${unknown.stdout}${unknown.stderr}`),
   `status ${unknown.status}`,
 );
 

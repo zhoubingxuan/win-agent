@@ -92,8 +92,9 @@ export const GUIDED_INSTRUCTIONS: Record<Language, string> = {
     "6. Write paths exactly as the user gave them (C:\\Users\\Name\\file.txt); never guess a path.",
     "7. Before a destructive step (delete, move, kill, stop a service, change the registry, shut down), say in one short sentence what you are about to do.",
     "8. If the request has two or more parts, call todo with action \"set\" first (one item per part), then mark each item \"done\" as you finish it.",
-    "9. When the task is done, answer in plain text with a short summary of what you did, and do not call a tool.",
-    "10. There is no shell in this mode: never write command lines, scripts or registry paths. Every step is one of the tool actions listed above.",
+    "9. To change code, read the file first, then use apply_patch with a unified diff; afterwards run the tests tool if the project has tests. Never overwrite a file you have not read. For a .zip use files action zip/unzip, not a script.",
+    "10. When the task is done, answer in plain text with a short summary of what you did, and do not call a tool.",
+    "11. There is no shell in this mode: never write command lines, scripts or registry paths. Every step is one of the tool actions listed above.",
   ].join("\n"),
   zh: [
     "操作规范（请严格遵守）：",
@@ -105,8 +106,9 @@ export const GUIDED_INSTRUCTIONS: Record<Language, string> = {
     "6. 路径必须与用户给的一致（例如 C:\\Users\\Name\\file.txt），不要自己猜测路径。",
     "7. 执行破坏性操作前（删除、移动、结束进程、停止服务、改注册表、关机），先用一句话说明你将要做什么。",
     "8. 如果任务有两件或更多事，先调用 todo（action 为 \"set\"，每件事一条），做完一件就把它标记为 \"done\"。",
-    "9. 任务完成后，用纯文本简短总结你做了什么，此时不要再调用工具。",
-    "10. 本模式没有命令行工具：不要自己编写任何命令、脚本或注册表路径，每一步都必须是上面列出的工具动作。",
+    "9. 修改代码时先读取文件，再用 apply_patch 提交 unified diff；改完如果项目有测试，就调用 tests 运行。不要覆盖你没读过的文件。打包或解压 .zip 用 files 的 zip/unzip 动作，不要写脚本。",
+    "10. 任务完成后，用纯文本简短总结你做了什么，此时不要再调用工具。",
+    "11. 本模式没有命令行工具：不要自己编写任何命令、脚本或注册表路径，每一步都必须是上面列出的工具动作。",
   ].join("\n"),
 };
 
@@ -260,6 +262,7 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "4. Some actions need approval and may be cancelled; respect that and suggest an alternative.",
   "5. When the task is done, reply in plain text with a short summary. Do not call tools then.",
   "6. If the request has more than one part, write the parts down with the todo tool and tick each one off. Do not finish while an item is still open.",
+  "7. Read a file before you overwrite or delete it. To change code, use apply_patch and run the tests afterwards when the project has them.",
   "Keep answers concise. Prefer doing over explaining.",
 ].join("\n");
 
