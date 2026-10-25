@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.4.0",
+  "createdAt": "2026-10-25T04:37:24.480Z",
+  "node": ">=20.3",
+  "files": 100,
+  "bytes": 1547846,
+  "note": "`auto` mode no longer has to guess from the number in the model name. A measured capability profile now decides between guided, normal and expert, with the old…"
+}
