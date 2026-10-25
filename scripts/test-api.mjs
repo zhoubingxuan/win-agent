@@ -742,6 +742,20 @@ try {
     const mcpBad = await api("/api/mcp", "POST", { action: "nonsense" });
     check("an unknown MCP action is refused", mcpBad.status === 400, JSON.stringify(mcpBad.data));
 
+    const modelProfiles = await api("/api/model-profiles");
+    check(
+      "GET /api/model-profiles reports an empty store",
+      modelProfiles.status === 200 &&
+        Array.isArray(modelProfiles.data.profiles) &&
+        modelProfiles.data.active === null &&
+        modelProfiles.data.version >= 1,
+      JSON.stringify(modelProfiles.data).slice(0, 200),
+    );
+    const modelBad = await api("/api/model-profiles", "POST", { action: "nonsense" });
+    check("an unknown model-profile action is refused", modelBad.status === 400, JSON.stringify(modelBad.data));
+    const modelDelete = await api("/api/model-profiles", "POST", { action: "delete", key: "not-there" });
+    check("forgetting an unknown result is a no-op", modelDelete.status === 200 && modelDelete.data.removed === false);
+
     const mcpBadId = await api("/api/mcp", "POST", { action: "add", id: "bad id" });
     check("an invalid MCP server id is refused", mcpBadId.status === 400, JSON.stringify(mcpBadId.data));
 

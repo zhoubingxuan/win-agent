@@ -13,6 +13,61 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-10-25
+
+`auto` mode no longer has to guess from the number in the model name. A measured
+capability profile now decides between guided, normal and expert, with the old 14B
+heuristic as the fallback.
+
+### Added
+
+- **Measured model profiles (`src/model-profile.ts`).** Results live in
+  `data/model-profiles.json`, keyed by normalized **endpoint + model**, and carry the
+  probe version, timestamp, score, token count, speed, every check and the reasons for
+  failures. Re-running replaces the entry; deleting one returns that model to the
+  heuristic. An old `probeVersion` is ignored, so a future probe can change the tasks
+  without trusting stale numbers.
+- **Seven-task capability probe (`src/calibrate.ts`).** Read a file, create one
+  byte-exactly, fix code with `apply_patch`, chain two reads into a write, recover from
+  a missing file, follow a no-tool instruction, and use a read-only Windows tool. The
+  probe gets only `files`, `apply_patch`, `system` and `todo`; it runs in a temporary
+  working folder with its own data folder, as a child process, so it cannot touch the
+  live conversation or settings.
+- **Conservative recommendation rule.** `guided` when read/write are not both reliable,
+  tool reliability is below 50%, or the instruction is ignored; `normal` when tools and
+  multi-step work are reliable but patching is not; `expert` only when tool reliability
+  is at least 80%, the multi-step task passes, and `apply_patch` passes.
+- **`auto` prefers a measurement.** `effectiveAgentMode` now checks the measured
+  profile first, then falls back to `kind: "api"` / 14B+ / guided. An explicit mode
+  always wins; the probe never changes `agentMode`.
+- **Settings card and live UI.** **Model profile** shows the score, every check, speed,
+  request/token counts and the recommendation, with **Test this model**, **Stop test**
+  and **Forget result**. Progress arrives over SSE (`model_probe`); a finished run sends
+  `model_profile` and a refreshed `settings` event, so `auto → expert` updates without
+  a reload.
+- **HTTP API.** `GET /api/model-profiles` returns `{ version, profiles, active,
+  running }`; `POST /api/model-profiles` accepts `run`, `cancel` and `delete`.
+  `GET /api/state` also carries `modelProfile` and `modelProbe`.
+- **Failure is not a verdict.** A run in which the endpoint answered **zero**
+  requests (model could not load, connection refused, timeout) fails the job and keeps
+  the previous profile instead of saving a misleading 0%. This was observed live: the
+  30B model's first load attempt returned a 400, and the UI showed a test failure
+  rather than recommending guided for a model that never ran.
+- **`npm run test:model`** (34 checks): storage, key normalization, stale/corrupt
+  files, both recommendation paths, explicit-mode precedence and the dead-endpoint
+  rule.
+
+### Verified
+
+- On `qwen3-coder-30b-a3b-instruct-ud` at `127.0.0.1:1234`, the probe finished
+  **7/7 in 11.2 s** with 20 requests, 55 110 tokens and 67.5 tok/s, recommending
+  **expert**. A second run through the live HTTP API finished 7/7 and persisted the
+  profile in the server's data folder; `GET /api/state` then reported
+  `agentMode: auto → expert`.
+- The Settings card rendered the Chinese labels and all seven checks in the live UI.
+- `test:docs` now understands hyphenated API routes (`/api/model-profiles`) and still
+  checks all 34 documented routes against the server.
+
 ## [2.3.1] — 2026-10-25
 
 A small hardening release after 2.3.0 went out: the new MCP client was checked against

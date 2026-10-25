@@ -1,9 +1,10 @@
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { Agent } from "./agent.js";
 import {
   activeProfile,
@@ -30,6 +31,15 @@ import { VERSION } from "./version.js";
 import { capabilityReport, capabilities as endpointCapabilities, discoverLocalModels, listModelsAt, localEndpointsFor, probeContextLimits } from "./providers.js";
 import { mcp, parseMcpConfig, testMcpServer, type McpServer } from "./mcp.js";
 import { diagnose, formatDiagnosis } from "./diagnose.js";
+import {
+  MODEL_PROFILE_VERSION,
+  findModelProfile,
+  loadModelProfiles,
+  modelProfileKey,
+  removeModelProfile,
+  saveModelProfile,
+  type ModelProfile,
+} from "./model-profile.js";
 import { planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import { runCommand, type CommandHost } from "./commands.js";
 import { clearTodos, seedTodos, todos as boardTodos, todoNudgeNotice } from "./todo.js";
@@ -84,6 +94,33 @@ const queue: Array<{ id: string; message: string; addedAt: string }> = [];
 const MAX_QUEUE = 20;
 /** Cancels the LLM request(s) of the turn that is running (the Stop button). */
 let taskAbort: AbortController | null = null;
+
+/* -------------------------------------------------------------------------- */
+/* Model calibration                                                          */
+/* -------------------------------------------------------------------------- */
+
+interface CalibrationJob {
+  id: string;
+  state: "running" | "done" | "error" | "cancelled";
+  startedAt: string;
+  finishedAt: string;
+  baseUrl: string;
+  model: string;
+  profileId: string;
+  /** 0-based task index, and how many there are. */
+  index: number;
+  total: number;
+  phase: string;
+  title: string;
+  checks: Array<{ id: string; title: string; ok: boolean; ms: number; detail: string }>;
+  result: ModelProfile | null;
+  error: string;
+  stderr: string;
+}
+
+let calibrationJob: CalibrationJob | null = null;
+let calibrationChild: ChildProcess | null = null;
+let calibrationRoot = "";
 
 /** The live message list handed to the agent. */
 function history(): ChatMessage[] {
@@ -431,6 +468,209 @@ function mcpSnapshot(): {
     totalPrompts: servers.reduce((sum, x) => sum + x.prompts.length, 0),
     servers,
   };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Model profiles                                                             */
+/* -------------------------------------------------------------------------- */
+
+/** The job record sent to the UI; never includes the API key or child env. */
+function calibrationSnapshot(): CalibrationJob | null {
+  if (!calibrationJob) return null;
+  return {
+    ...calibrationJob,
+    checks: calibrationJob.checks.map((check) => ({ ...check })),
+    result: calibrationJob.result ? { ...calibrationJob.result } : null,
+  };
+}
+
+function broadcastCalibration(): void {
+  broadcast({ type: "model_probe", job: calibrationSnapshot() });
+}
+
+function stopCalibration(): boolean {
+  if (!calibrationJob || calibrationJob.state !== "running") return false;
+  calibrationJob.state = "cancelled";
+  calibrationJob.finishedAt = new Date().toISOString();
+  calibrationJob.error = "cancelled";
+  try {
+    calibrationChild?.kill();
+  } catch {
+    // It may already be gone.
+  }
+  calibrationChild = null;
+  broadcastCalibration();
+  return true;
+}
+
+/**
+ * Start the probe in a child process with its own data folder and work folder.
+ * It can run for minutes; the HTTP request only returns the job.
+ */
+function startCalibration(): CalibrationJob {
+  if (running) throw new Error(BUSY);
+  if (calibrationJob?.state === "running") throw new Error("a model test is already running");
+  const s = getSettings();
+  const profile = activeProfile();
+  if (!s.baseUrl.trim() || !s.model.trim()) throw new Error("pick an endpoint and a model first");
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "win-agent-calibration-"));
+  const data = path.join(root, "data");
+  const work = path.join(root, "work");
+  fs.mkdirSync(data, { recursive: true });
+  fs.mkdirSync(work, { recursive: true });
+  calibrationRoot = root;
+
+  const compiled = path.join(__dirname, "calibrate.js");
+  const source = path.join(__dirname, "calibrate.ts");
+  const built = fs.existsSync(compiled);
+  const script = built ? compiled : source;
+  if (!fs.existsSync(script)) {
+    fs.rmSync(root, { recursive: true, force: true });
+    throw new Error("the calibration runner was not built");
+  }
+  const args = built ? [script] : ["--import", "tsx", script];
+  const id = randomUUID();
+  const job: CalibrationJob = {
+    id,
+    state: "running",
+    startedAt: new Date().toISOString(),
+    finishedAt: "",
+    baseUrl: s.baseUrl,
+    model: s.model,
+    profileId: profile.id,
+    index: 0,
+    total: 7,
+    phase: "starting",
+    title: "starting the probe",
+    checks: [],
+    result: null,
+    error: "",
+    stderr: "",
+  };
+  calibrationJob = job;
+
+  const child = spawn(process.execPath, args, {
+    cwd: installDir(),
+    windowsHide: true,
+    env: {
+      ...process.env,
+      AGENT_DATA_DIR: data,
+      AGENT_SETTINGS_FILE: path.join(data, "settings.json"),
+      AGENT_WORKDIR: work,
+      AGENT_MODEL: s.model,
+      OPENAI_BASE_URL: s.baseUrl,
+      OPENAI_API_KEY: s.apiKey,
+      PROBE_ROOT: work,
+      PROBE_PROFILE_ID: profile.id,
+      PROBE_LABEL: `${s.model} @ ${s.baseUrl}`,
+      PROBE_TASK_TIMEOUT_MS: "120000",
+    },
+  });
+  calibrationChild = child;
+
+  const update = (event: Record<string, unknown>) => {
+    const current = calibrationJob;
+    if (!current || current.id !== id) return;
+    // A killed child can still flush one line before it goes away; never let that
+    // resurrect a cancelled job or overwrite a settled one.
+    if (current.state !== "running" && (event.type === "result" || event.type === "error")) return;
+    if (event.type === "progress") {
+      current.phase = "task";
+      current.index = Number(event.index ?? 0);
+      current.total = Number(event.total ?? current.total);
+      current.title = String(event.title ?? "");
+      broadcastCalibration();
+    } else if (event.type === "task") {
+      const check = event.check as CalibrationJob["checks"][number] | undefined;
+      if (check) {
+        current.checks.push(check);
+        current.index = Number(event.index ?? current.index);
+        current.total = Number(event.total ?? current.total);
+      }
+      broadcastCalibration();
+    } else if (event.type === "result") {
+      try {
+        const saved = saveModelProfile(event.profile as ModelProfile);
+        current.result = saved;
+        current.state = "done";
+        current.finishedAt = new Date().toISOString();
+        current.phase = "done";
+        current.title = `${saved.recommendedMode} recommended (${saved.passed}/${saved.total})`;
+        broadcast({ type: "model_profile", profile: saved, job: calibrationSnapshot() });
+        broadcast({ type: "settings", settings: publicSettings(), changed: ["modelProfile"] });
+      } catch (error) {
+        current.state = "error";
+        current.finishedAt = new Date().toISOString();
+        current.error = (error as Error).message;
+      }
+      broadcastCalibration();
+    } else if (event.type === "error") {
+      current.state = "error";
+      current.finishedAt = new Date().toISOString();
+      current.error = String(event.error ?? "the probe failed");
+      broadcastCalibration();
+    }
+  };
+
+  let out = "";
+  let err = "";
+  const consume = (chunk: string) => {
+    out += chunk;
+    const lines = out.split(/\r?\n/);
+    out = lines.pop() ?? "";
+    for (const line of lines) {
+      const text = line.trim();
+      if (!text) continue;
+      try {
+        update(JSON.parse(text) as Record<string, unknown>);
+      } catch {
+        // A stray line is not protocol; keep it out of the result but visible.
+        job.stderr = `${job.stderr}\n${text}`.slice(-4000);
+      }
+    }
+  };
+  child.stdout?.on("data", (chunk) => consume(String(chunk)));
+  child.stderr?.on("data", (chunk) => {
+    err += String(chunk);
+    job.stderr = err.slice(-4000);
+    broadcastCalibration();
+  });
+  child.on("error", (error) => {
+    job.state = "error";
+    job.finishedAt = new Date().toISOString();
+    job.error = error.message;
+    calibrationChild = null;
+    broadcastCalibration();
+  });
+  child.on("close", (code) => {
+    if (out.trim()) {
+      try {
+        update(JSON.parse(out.trim()) as Record<string, unknown>);
+      } catch {
+        job.stderr = `${job.stderr}\n${out.trim()}`.slice(-4000);
+      }
+    }
+    if (job.state === "running") {
+      job.state = "error";
+      job.finishedAt = new Date().toISOString();
+      job.error = `the probe exited with code ${code ?? "?"}`;
+    }
+    if (job.state === "cancelled") job.error = "cancelled";
+    calibrationChild = null;
+    if (calibrationRoot) {
+      try {
+        fs.rmSync(calibrationRoot, { recursive: true, force: true });
+      } catch {
+        // A leftover temp folder is not worth failing the job over.
+      }
+      calibrationRoot = "";
+    }
+    broadcastCalibration();
+  });
+
+  broadcastCalibration();
+  return job;
 }
 
 if (getSettings().mcpEnabled) {
@@ -919,6 +1159,8 @@ const server = http.createServer(async (req, res) => {
           usage: usageSnapshot(),
           data: dataInfo(),
           mcp: mcpSnapshot(),
+          modelProfile: findModelProfile(s.baseUrl, s.model),
+          modelProbe: calibrationSnapshot(),
           windows: await powerShellInfo(),
           notices: bootNotices,
         });
@@ -1016,6 +1258,43 @@ const server = http.createServer(async (req, res) => {
             error: (error as Error).message,
           });
         }
+      }
+
+      case "GET /api/model-profiles": {
+        const s = getSettings();
+        return json(res, 200, {
+          version: MODEL_PROFILE_VERSION,
+          profiles: loadModelProfiles(),
+          active: findModelProfile(s.baseUrl, s.model),
+          running: calibrationSnapshot(),
+        });
+      }
+
+      case "POST /api/model-profiles": {
+        const body = await readJsonBody(req);
+        const action = typeof body.action === "string" ? body.action : "";
+        const s = getSettings();
+        if (action === "run") {
+          try {
+            const job = startCalibration();
+            return json(res, 202, { ok: true, job });
+          } catch (error) {
+            const message = (error as Error).message;
+            return json(res, message === BUSY || /already running/.test(message) ? 409 : 400, { error: message });
+          }
+        }
+        if (action === "cancel") {
+          if (!stopCalibration()) return json(res, 409, { error: "no model test is running" });
+          return json(res, 200, { ok: true, job: calibrationSnapshot() });
+        }
+        if (action === "delete") {
+          const key = String(body.key ?? "") || modelProfileKey(s.baseUrl, s.model);
+          const removed = removeModelProfile(key);
+          broadcast({ type: "model_profile", profile: findModelProfile(s.baseUrl, s.model), job: calibrationSnapshot() });
+          broadcast({ type: "settings", settings: publicSettings(), changed: ["modelProfile"] });
+          return json(res, 200, { ok: true, removed, active: findModelProfile(s.baseUrl, s.model) });
+        }
+        return json(res, 400, { error: `unknown action "${action}"` });
       }
 
       case "GET /api/mcp":

@@ -5,12 +5,14 @@ different amounts of hand-holding. `agentMode` is that one switch.
 
 | Mode | Default for | What the model is given |
 | --- | --- | --- |
-| `auto` | **almost everyone** | resolves to `guided` or `expert` from the endpoint and model name |
+| `auto` | **almost everyone** | uses the measured profile when one exists, then falls back to the endpoint and model name |
 | `guided` | small local models | prompt + numbered operating procedure, required arguments spelled out, one tool call per step, **no raw shell tool** |
 | `normal` | a model you want unmanaged | prompt + full catalogue, any number of tool calls per step, shell included |
 | `expert` | cloud APIs and local models 14B+ | short prompt + brief catalogue, batched calls encouraged, shell included |
 
-`auto` is a resolver, not a fifth behaviour:
+`auto` is a resolver, not a fifth behaviour. It checks for a **measured model
+profile** first (Settings → Model profile → Test this model); if there is one for this
+endpoint + model, its recommendation is used. Otherwise the old heuristic applies:
 
 - a profile with `kind: "api"` → **`expert`**;
 - a local model whose name contains a size of at least **14B**
@@ -20,6 +22,17 @@ different amounts of hand-holding. `agentMode` is that one switch.
 The UI shows both values (`auto → expert`), `/status` prints the resolved mode, and
 `GET /api/settings` exposes `agentModeEffective`. An explicit `guided`, `normal` or
 `expert` always wins over the resolver.
+
+## Measured profile / 实测档案
+
+Seven small tasks (read, write, patch, multi-step, recovery, instruction, system tool)
+run in a temporary folder, through the normal agent loop, with only `files`,
+`apply_patch`, `system` and `todo`. The result is stored per endpoint + model in
+`data/model-profiles.json` and is visible in Settings with every check and its reason.
+`GET /api/model-profiles` reads it; `POST /api/model-profiles` with
+`{ "action": "run" }` starts a probe, `{ "action": "cancel" }` stops it, and
+`{ "action": "delete", "key": "..." }` forgets one. A dead endpoint is reported as a
+failed test and is not saved as a 0% profile.
 
 ## Switching / 切换
 

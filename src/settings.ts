@@ -4,6 +4,7 @@ import path from "node:path";
 import { dataDir, migrateLegacyData } from "./store.js";
 import { bomLabel, parseJsonWithBom } from "./util/json.js";
 import { decodeText } from "./util/text.js";
+import { measuredMode } from "./model-profile.js";
 import type { McpServer } from "./mcp.js";
 
 /** Languages supported by the UI and by the agent's replies. */
@@ -76,12 +77,26 @@ export function modelSizeB(name: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
-/** The mode the agent will actually run, resolving `auto`. */
-export function effectiveAgentMode(settings: Pick<Settings, "agentMode" | "profiles" | "activeProfile" | "model">): AgentMode {
+/**
+ * The mode the agent will actually run, resolving `auto`.
+ *
+ * A calibration result for this exact endpoint+model wins, including a measured
+ * `normal`. Without one, the old name-based heuristic applies: cloud = expert,
+ * local 14B+ = expert, everything else = guided. An explicit mode always wins.
+ */
+export function effectiveAgentMode(
+  settings: Pick<Settings, "agentMode" | "profiles" | "activeProfile" | "model" | "baseUrl">,
+): AgentMode {
   if (settings.agentMode !== "auto") return settings.agentMode;
   const profile = settings.profiles.find((entry) => entry.id === settings.activeProfile);
+  const baseUrl = settings.baseUrl || profile?.baseUrl || "";
+  const model = settings.model || profile?.model || "";
+  if (baseUrl && model) {
+    const measured = measuredMode(baseUrl, model);
+    if (measured) return measured;
+  }
   if (profile?.kind === "api") return "expert";
-  const size = modelSizeB(settings.model || profile?.model || "");
+  const size = modelSizeB(model);
   return size !== null && size >= EXPERT_LOCAL_MIN_B ? "expert" : "guided";
 }
 

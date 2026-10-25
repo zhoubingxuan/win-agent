@@ -288,6 +288,31 @@
             </div>
             <p class="muted" id="s-modeState">…</p>
 
+            <h4 data-i18n="settings.modelProfile">Model profile — measured capability</h4>
+            <p class="muted" data-i18n="settings.modelProfileHint">
+              Auto mode can stop guessing from the model name. One short run of seven file tasks measures
+              whether this endpoint can call tools, patch code, recover from a missing file and follow an
+              instruction. The result is stored per endpoint + model and is used only while the mode is Auto.
+            </p>
+            <div class="model-profile" id="mp-card">
+              <div class="mp-head">
+                <strong id="mp-model">—</strong>
+                <span id="mp-mode" class="mp-badge"></span>
+              </div>
+              <div class="muted" id="mp-summary">—</div>
+              <div class="mp-checks" id="mp-checks"></div>
+              <div class="progress" id="mp-progress" hidden>
+                <div class="progress-bar" id="mp-bar"></div>
+                <span class="muted small" id="mp-progressText"></span>
+              </div>
+              <div class="actions">
+                <button type="button" id="mp-run" data-i18n="settings.modelProfileTest">Test this model</button>
+                <button type="button" id="mp-cancel" class="ghost" data-i18n="settings.modelProfileCancel" hidden>Stop test</button>
+                <button type="button" id="mp-forget" class="ghost" data-i18n="settings.modelProfileForget">Forget result</button>
+                <span id="mp-msg" class="muted"></span>
+              </div>
+            </div>
+
             <h4 data-i18n="settings.verbosity">Output detail — how much of the process the chat shows</h4>
             <p class="muted" data-i18n="settings.verbosityHint">
               A view setting, nothing else: the agent does exactly the same work, and the whole record

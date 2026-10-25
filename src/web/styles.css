@@ -1943,6 +1943,118 @@ button.ghost.small {
   width: auto;
 }
 
+/* Measured model profile --------------------------------------------------- */
+
+.model-profile {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin: 0 0 18px;
+  display: grid;
+  gap: 9px;
+}
+
+.mp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mp-head strong {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.mp-badge {
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mp-badge:empty {
+  display: none;
+}
+
+.mp-badge[data-mode="expert"] {
+  border-color: rgba(53, 196, 138, 0.45);
+  color: var(--green);
+}
+
+.mp-badge[data-mode="guided"] {
+  border-color: rgba(224, 161, 58, 0.45);
+  color: var(--amber);
+}
+
+.mp-badge[data-mode="normal"] {
+  border-color: rgba(76, 141, 255, 0.45);
+  color: var(--accent);
+}
+
+.mp-checks {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.mp-check {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 6px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.mp-check.ok .mp-mark {
+  color: var(--green);
+}
+
+.mp-check.fail .mp-mark {
+  color: var(--red);
+}
+
+.mp-check.fail {
+  color: var(--text);
+}
+
+.mp-mark {
+  font-weight: 700;
+  text-align: center;
+}
+
+.model-profile .progress {
+  display: grid;
+  gap: 5px;
+}
+
+.model-profile .progress[hidden] {
+  display: none;
+}
+
+.model-profile .progress-bar {
+  height: 5px;
+  width: 0;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.model-profile .actions {
+  border-top: none;
+  padding-top: 4px;
+}
+
+.small {
+  font-size: 11.5px;
+}
+
 @media (max-width: 900px) {
   .app {
     grid-template-columns: 1fr;

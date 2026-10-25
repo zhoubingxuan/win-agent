@@ -14,11 +14,12 @@ translates that into correct, safely-quoted Windows commands.
 
 What that means in practice:
 
-- **Four agent modes, picked automatically** — `auto` (the default) inspects the
-  endpoint and model: cloud APIs and local models of 14B+ get the fast `expert`
-  workflow, small local models get `guided` supervision. `guided`, `normal` and
-  `expert` can also be pinned explicitly. One slider in Settings, `/mode` in the
-  terminal.
+- **Four agent modes, picked automatically** — `auto` (the default) prefers a
+  **measured model profile**: seven real file tasks decide between `guided`, `normal`
+  and `expert`. Without a measurement it falls back to endpoint and model size:
+  cloud APIs and local models of 14B+ get the fast `expert` workflow, small local
+  models get `guided` supervision. `guided`, `normal` and `expert` can also be
+  pinned explicitly. One slider in Settings, `/mode` in the terminal.
 - **Switchable endpoints** — flip between a local model server (LM Studio, Ollama,
   llama.cpp) and a cloud API; each keeps its own URL, key and model.
 - **Multi-model selection** — the model dropdown is filled from the endpoint's own
@@ -187,6 +188,9 @@ PS C:\Windows\Temp> /tools
 A form for **every** setting, plus:
 - **Agent mode** — the auto → guided → normal → expert slider, plus the mode `auto`
   actually resolved to (see [Agent modes](#agent-modes--auto-guided-normal-expert)).
+- **Model profile** — a measured capability card: run seven tasks against the current
+  endpoint and model, see every check, and let `auto` use the result (see
+  [Measured model profile](#measured-model-profile--auto-without-the-name-game)).
 - **Output detail** — how much of the process the chat log shows (see
   [Output detail](#output-detail)).
 - **Sandbox** — the folder fence and the command fence, on by default: file paths stay
@@ -233,12 +237,14 @@ Settings tab, `/mode <name>` in the terminal, or the `agentMode` setting.
 | Raw `powershell` | — | **not offered** | offered | offered |
 | Best for | almost everyone | LM Studio / Ollama 3B–13B | a model you want unmanaged | cloud APIs and local models 14B+ |
 
-`auto` is a resolver, not a fifth behaviour. It chooses **`expert`** when the active
-profile has `kind: "api"`, or when the model name contains a size of at least
-**14B** (`qwen3-coder-30b` → expert). Everything else resolves to **`guided`**, so a
+`auto` is a resolver, not a fifth behaviour. When a **measured profile** exists for
+the active endpoint + model, `auto` uses its recommendation. Without one it falls
+back to the old heuristic: **`expert`** when the active profile has `kind: "api"`,
+or when the model name contains a size of at least **14B**
+(`qwen3-coder-30b` → expert). Everything else resolves to **`guided`**, so a
 7B model still gets the supervised procedure. The UI shows the resolved value
 (`auto → expert`), and `/status` prints it too. An explicit `guided`, `normal` or
-`expert` always wins.
+`expert` always wins, measurement or not.
 
 ```powershell
 PS> /mode                 # current setting and what it resolves to
@@ -320,6 +326,53 @@ Expert mode roughly **halved the tokens** and fixed the one failure. The wall-cl
 time was similar once the 29-second first-call model load is excluded; the extra time
 in the raw number is startup, not reasoning. That is the intended trade: less prompt
 and less narration, more work per request.
+
+## Measured model profile — `auto` without the name game
+
+The 14B heuristic is cheap, but it is still a guess. A 30B model with broken tool
+calling does worse than a well-tuned 8B, and a cloud endpoint can be weaker than its
+name suggests. The **Model profile** card on the Settings tab replaces the guess with
+a measurement.
+
+Press **Test this model**. Seven small tasks run in a temporary folder, against the
+current endpoint and model, through the ordinary agent loop:
+
+| Check | What it proves |
+| --- | --- |
+| read | opens a file and uses its content |
+| write | creates a file byte-exactly |
+| patch | changes code with `apply_patch`, not a rewrite |
+| multi | reads two files, then writes a third |
+| recover | reacts to a missing file and creates it |
+| answer | follows a one-line instruction with no tool |
+| system | uses a read-only Windows tool and reports the result |
+
+The probe gets only `files`, `apply_patch`, `system` and `todo`; the raw shell is not
+part of it. It runs as a child process with its own data folder and working folder, so
+it cannot change the live conversation or settings. The result is stored in
+`data/model-profiles.json`, keyed by **endpoint + model**, together with the check
+details, token count, speed and the probe version. Re-running replaces the old result;
+**Forget result** deletes it and returns that model to the name heuristic.
+
+The rule is deliberately conservative:
+
+- **guided** when read/write are not both reliable, tool reliability is below 50%, or
+  the no-tool instruction is ignored;
+- **normal** when tools work and a multi-step task is finished, but patching does not;
+- **expert** when tool reliability is at least 80%, the multi-step task is finished,
+  and `apply_patch` works.
+
+Only `auto` reads the profile. An explicit `guided` / `normal` / `expert` always wins.
+A run in which the endpoint answered **zero** requests is reported as a failed test,
+not saved as a 0% model — a model that failed to load was not measured.
+
+On the 30B coder used for development, the probe finished **7/7 in 11 s**, with 20
+requests, 55 110 tokens and 67.5 tok/s of generation: `auto` therefore picks `expert`.
+That matches the old 14B guess, but now it is evidence rather than a number in the
+model name.
+
+`npm run test:model` covers the store, staleness, both resolution paths and the
+dead-endpoint rule without touching a model.
 
 ## Which mode should I use?
 
@@ -1374,7 +1427,7 @@ with a message and nothing changes.
 | `temperature` | number | `0` | 0–2 |
 | `loopGuard` | boolean | `true` | refuse a third identical call that already returned the same answer twice (see [Staying on the rails](#staying-on-the-rails)) |
 | `todoCheck` | boolean | `true` | refuse to end a turn while the model's own checklist still has open items, twice (see [The checklist](#the-checklist--what-the-model-owes-you)) |
-| `agentMode` | `"auto"` \| `"guided"` \| `"normal"` \| `"expert"` | `auto` | how much the model is supervised; `auto` resolves to `expert` for cloud endpoints and local models 14B+ (see [Agent modes](#agent-modes--auto-guided-normal-expert)) |
+| `agentMode` | `"auto"` \| `"guided"` \| `"normal"` \| `"expert"` | `auto` | how much the model is supervised; `auto` prefers a measured profile, then resolves to `expert` for cloud endpoints and local models 14B+ (see [Agent modes](#agent-modes--auto-guided-normal-expert) and [Measured model profile](#measured-model-profile--auto-without-the-name-game)) |
 | `verbosity` | `"answer"` \| `"thinking"` \| `"full"` | `answer` | how much of the process the chat log shows (see [Output detail](#output-detail)) |
 | `auditLog` | boolean | `true` | append every change to `data/audit.jsonl` and keep the undo stack (see [Audit log and undo](#audit-log-and-undo)) |
 | `undoRetentionDays` | number | `7` | how long the copies in `data/undo/` are kept, 1–365 (see [Audit log and undo](#audit-log-and-undo)) |
@@ -1646,6 +1699,8 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `GET` | `/api/models` | `?profile=<id>` — ask that endpoint which models it serves (remembers the list **and** the context lengths it reports). With `syncLocalModels` on, the answer also carries `endpoints` (every local server, with its route and error), `merged` (all models, each with its `endpointId`) and `context` |
 | `GET` | `/api/mcp` | the MCP master switch, cache TTL and every server, with transport, connection state, self-reported name, tools, resources, prompts, capabilities, latency, stderr and retry delay |
 | `POST` | `/api/mcp` | `{ action: "refresh" }` (force reconnect) · `{ action: "test", id, server }` · `{ action: "import", config }` · `{ action: "add", id, server }` · `{ action: "update", id, server }` · `{ action: "remove", id }` · `{ action: "toggle", id, enabled }` |
+| `GET` | `/api/model-profiles` | measured model profiles: `{ version, profiles, active, running }`; `active` is the result for the current endpoint + model, `running` is the live job (or its last state) |
+| `POST` | `/api/model-profiles` | `{ action: "run" }` starts the seven-task probe in a child process — `{ action: "cancel" }` stops it — `{ action: "delete", key }` forgets one result (or the active one when `key` is omitted) |
 | `GET` | `/api/skills` | `{ dir, skills }` — every skill in the folder (name, description, when, files, problem); `?name=<id>` returns that one with its `body` |
 | `POST` | `/api/skills` | `{ name, description, when, body }` — create or replace a skill; 400 with the reason when the name or the body is missing |
 | `POST` | `/api/skills/delete` | `{ name }` — remove the skill folder (404 when it does not exist) |
@@ -1740,6 +1795,7 @@ test-mcp-server.mjs the other direction: JSON-RPC over stdio, tool calls, the ap
   test-audit.mjs      the change log and undo, against a temp folder (live on Windows)
   test-windows.mjs    live Windows checks: PowerShell, elevation, files, services
   test-mcp-real.mjs   manual compatibility pass: real filesystem/everything/DeepWiki MCP
+  test-model-profile.mjs  measured profiles, staleness and the dead-endpoint rule
   test-all.mjs        runs the suites in order (npm run test:all), one annotation on failure
   fixtures/
     mock-mcp-server.mjs  a tiny MCP server used by test-mcp.mjs
@@ -1782,6 +1838,7 @@ npm run test:mcp-server     # MCP server mode: the handshake, tools/list, calls,
 npm run test:models         # local model sync: LM Studio / Ollama discovery + merging
 npm run test:isolation      # two copies never share data or a version number
 npm run test:mode           # agent modes, JSON repair, encodings (no model needed)
+npm run test:model          # measured model profiles, staleness, dead-endpoint rule
 npm run test:sandbox        # the folder fence and the command fence (no model needed)
 npm run test:agent          # the agent loop: guard, step limit, trimming (mock model)
 npm run test:skills         # the skills folder, the header block and the skills tool

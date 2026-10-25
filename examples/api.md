@@ -46,6 +46,9 @@ Invoke-RestMethod "$base/api/models?profile=cloud"
 # MCP: master switch + one entry per server, with live state
 Invoke-RestMethod "$base/api/mcp"
 
+# Measured model profiles: the store, the active result, the live job
+Invoke-RestMethod "$base/api/model-profiles"
+
 # The folder picker: sub-folders of a path (an empty path lists the drives)
 Invoke-RestMethod "$base/api/fs/list?path=D%3A%5Cnew"
 ```
@@ -70,6 +73,26 @@ A filtered view of just the final text and the tool calls:
 
 ```powershell
 curl.exe -N "$base/api/events" | Select-String '"type":"(tool_call|tool_result|done)"'
+```
+
+## Measure the model / 实测模型
+
+The probe runs in a child process and returns immediately; poll the same route for
+progress. A run in which the endpoint answers nothing is reported as an error rather
+than saved as a 0% profile.
+
+```powershell
+Invoke-RestMethod -Method Post "$base/api/model-profiles" -ContentType application/json `
+  -Body '{"action":"run"}'
+
+# progress and the final result
+Invoke-RestMethod "$base/api/model-profiles" | Select-Object -ExpandProperty running
+
+# stop it, or forget the result for this endpoint + model
+Invoke-RestMethod -Method Post "$base/api/model-profiles" -ContentType application/json `
+  -Body '{"action":"cancel"}'
+Invoke-RestMethod -Method Post "$base/api/model-profiles" -ContentType application/json `
+  -Body '{"action":"delete"}'
 ```
 
 ## Change settings / 改设置

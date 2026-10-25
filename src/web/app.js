@@ -86,6 +86,25 @@ const I18N = {
     "settings.modeStateGuided": "now: guided — one tool per step, explicit procedure, no raw shell",
     "settings.modeStateNormal": "now: normal — plain prompt, parallel tool calls allowed",
     "settings.modeStateExpert": "now: expert — short prompt, compact tool catalogue, batched calls, no checklist nagging",
+    "settings.modelProfile": "Model profile — measured capability",
+    "settings.modelProfileHint":
+      "Auto mode can stop guessing from the model name. One short run of seven file tasks measures whether this endpoint can call tools, patch code, recover from a missing file and follow an instruction. The result is stored per endpoint + model and is used only while the mode is Auto.",
+    "settings.modelProfileTest": "Test this model",
+    "settings.modelProfileCancel": "Stop test",
+    "settings.modelProfileForget": "Forget result",
+    "settings.modelProfileForgetAsk": "Forget the measured profile for {0}?",
+    "settings.modelProfileRunning": "Running the probe…",
+    "settings.modelProfileStarted": "Model test started; it runs in a separate folder.",
+    "settings.modelProfileProgress": "{0}/{1} · {2}",
+    "settings.modelProfileScore": "{0}% ({1}/{2} checks)",
+    "settings.modelProfileSpeed": "{0} tok/s · {1} requests · {2} tokens",
+    "settings.modelProfileTested": "tested {0}",
+    "settings.modelProfileHeuristic":
+      "No measurement yet. Auto uses the model-name heuristic: cloud or 14B+ local = expert, otherwise guided.",
+    "settings.modelProfileNoChecks": "No checks yet.",
+    "settings.modelProfileFailed": "Test failed: {0}",
+    "settings.modelProfileCancelled": "Test cancelled.",
+    "settings.modelProfileDeleted": "Measured profile forgotten.",
     "settings.verbosity": "Output detail — how much of the process the chat shows",
     "settings.verbosityHint":
       "A view setting, nothing else: the agent does exactly the same work, and the whole record is written to the data folder either way. Answer only shows your message and the model's reply; + thinking adds the model's reasoning in a block you can fold; + tools & usage is the machine room — every tool call with its arguments and result, step markers and token counts.",
@@ -441,6 +460,24 @@ const I18N = {
     "settings.modeStateGuided": "当前：高监督 —— 每步只调用一个工具，附操作规范，不提供原始 shell",
     "settings.modeStateNormal": "当前：普通 —— 原始提示词，允许一次调用多个工具",
     "settings.modeStateExpert": "当前：专家 —— 短提示词、精简工具目录、批量调用、不催清单",
+    "settings.modelProfile": "模型档案 — 实测能力",
+    "settings.modelProfileHint":
+      "自动模式可以不再靠模型名字猜。一次简短的测试会跑七个文件任务，检查这个接口能否可靠调用工具、修改代码、从文件不存在中恢复，以及遵守一句简单指令。结果按「接口 + 模型」保存，只在模式为自动时参与选择。",
+    "settings.modelProfileTest": "测试这个模型",
+    "settings.modelProfileCancel": "停止测试",
+    "settings.modelProfileForget": "删除结果",
+    "settings.modelProfileForgetAsk": "删除 {0} 的实测档案？",
+    "settings.modelProfileRunning": "正在运行测试…",
+    "settings.modelProfileStarted": "模型测试已开始，会在独立文件夹中运行。",
+    "settings.modelProfileProgress": "{0}/{1} · {2}",
+    "settings.modelProfileScore": "{0}%（{1}/{2} 项）",
+    "settings.modelProfileSpeed": "{0} tok/s · {1} 次请求 · {2} tokens",
+    "settings.modelProfileTested": "测试于 {0}",
+    "settings.modelProfileHeuristic": "还没有实测结果。自动模式仍按模型名字判断：云端或 14B 以上本地模型用专家，其余用高监督。",
+    "settings.modelProfileNoChecks": "还没有检查项。",
+    "settings.modelProfileFailed": "测试失败：{0}",
+    "settings.modelProfileCancelled": "测试已取消。",
+    "settings.modelProfileDeleted": "已删除实测档案。",
     "settings.verbosity": "输出详细程度 —— 对话区显示多少过程",
     "settings.verbosityHint":
       "这只是显示设置，agent 做的事情完全一样，完整记录也照样写进数据文件夹。「只显示回答」只有你的消息和模型的回答；「+ 思考过程」会把模型的思考放进一个可折叠的区块；「+ 工具与用量」是机房全开：每次工具调用及其参数和结果、步骤标记、token 用量。",
@@ -743,6 +780,9 @@ let state = {
   context: null,
   version: "",
   mcp: null,
+  modelProfiles: [],
+  modelProfile: null,
+  modelProbe: null,
   windows: null,
 };
 /** Local endpoints found by the last model refresh (LM Studio / Ollama). */
@@ -878,6 +918,7 @@ function applyLanguage() {
   renderMcp();
   renderFleet();
   renderModeState();
+  renderModelProfile();
   renderVerbosityState();
   renderWindows();
 }
@@ -1282,7 +1323,7 @@ async function loadData() {
   if (info.error) return;
   renderData(info);
   if (info.usage) renderUsage(info.usage);
-  await Promise.all([refreshAudit(), refreshSkills(), refreshQueue(), refreshCapabilities()]);
+  await Promise.all([refreshAudit(), refreshSkills(), refreshQueue(), refreshCapabilities(), refreshModelProfiles()]);
 }
 
 /* ------------------------------------------------------- audit log & undo */
@@ -1444,6 +1485,15 @@ function handle(ev) {
       // An API call (or another tab) changed the servers: redraw without a reload.
       if (ev.mcp) state.mcp = ev.mcp;
       renderMcp();
+      break;
+    case "model_probe":
+      state.modelProbe = ev.job;
+      renderModelProfile();
+      break;
+    case "model_profile":
+      state.modelProfile = ev.profile ?? null;
+      if (ev.job) state.modelProbe = ev.job;
+      renderModelProfile();
       break;
     case "terminal":
       if (ev.clientId === CLIENT_ID) break; // this tab renders it from the POST response
@@ -2346,6 +2396,12 @@ function fillSettingsForm(s) {
   el("s-mcpServeAutoApprove").checked = !!s.mcpServeAutoApprove;
   setVerbosityControls(s.verbosity);
   renderModeState();
+  renderModelProfile();
+  // A different endpoint or model means the measured profile changed too. The
+  // GET is cheap, and it keeps the card honest after a profile switch.
+  if (!state.modelProfile || state.modelProfile.model !== s.model || state.modelProfile.baseUrl !== s.baseUrl) {
+    void refreshModelProfiles();
+  }
   customTools = (s.customTools ?? []).map((c) => ({ ...c }));
   renderCustomTools();
   renderToolChecks(s.enabledTools);
@@ -2369,6 +2425,129 @@ function renderModeState() {
         : "settings.modeGuided",
   );
   setText(el("s-modeState"), t("settings.modeStateAuto", name));
+}
+
+/* ------------------------------------------------------------ model profile */
+
+/** Fetch the measured profiles and the job state (cheap, local file/read). */
+async function refreshModelProfiles() {
+  const report = await api("/api/model-profiles");
+  if (report.error) return;
+  state.modelProfiles = report.profiles ?? [];
+  state.modelProfile = report.active ?? null;
+  state.modelProbe = report.running ?? state.modelProbe;
+  renderModelProfile();
+}
+
+function modeLabel(mode) {
+  if (mode === "expert") return t("settings.modeExpert");
+  if (mode === "normal") return t("settings.modeNormal");
+  return t("settings.modeGuided");
+}
+
+/**
+ * Draw the "measured capability" card. It explains the score instead of showing
+ * a single number: every failed check carries the reason the probe saw.
+ */
+function renderModelProfile() {
+  const run = el("mp-run");
+  if (!run) return;
+  const job = state.modelProbe;
+  const active = state.modelProfile;
+  const settings = state.settings ?? {};
+  const runningNow = job?.state === "running";
+  const shownMode = active?.recommendedMode ?? job?.result?.recommendedMode ?? null;
+
+  setText(el("mp-model"), settings.model ? `${settings.model}` : "—");
+  el("mp-mode").textContent = shownMode ? modeLabel(shownMode) : "";
+  el("mp-mode").dataset.mode = shownMode ?? "";
+  run.disabled = runningNow;
+  el("mp-cancel").hidden = !runningNow;
+  el("mp-forget").disabled = runningNow || !active;
+
+  const progress = el("mp-progress");
+  progress.hidden = !runningNow;
+  if (runningNow) {
+    const done = Math.min(job.total || 7, (job.checks?.length ?? 0) + (job.phase === "task" ? 1 : 0));
+    el("mp-bar").style.width = `${Math.round((done / Math.max(1, job.total || 7)) * 100)}%`;
+    setText(el("mp-progressText"), t("settings.modelProfileProgress", done, job.total || 7, job.title || "…"));
+  }
+
+  let summary = "";
+  if (runningNow) {
+    summary = t("settings.modelProfileRunning");
+  } else if (active) {
+    summary = t("settings.modelProfileScore", active.score, active.passed, active.total);
+    summary += ` · ${t("settings.modelProfileSpeed", active.tokensPerSecond, active.requests, active.tokens)}`;
+    summary += ` · ${t("settings.modelProfileTested", String(active.testedAt).replace("T", " ").slice(0, 16))}`;
+  } else {
+    summary = t("settings.modelProfileHeuristic");
+  }
+  setText(el("mp-summary"), summary);
+
+  const box = el("mp-checks");
+  box.innerHTML = "";
+  const checks = (runningNow ? job.checks : active?.checks) ?? [];
+  if (checks.length === 0 && !runningNow) {
+    const empty = document.createElement("div");
+    empty.className = "muted small";
+    empty.textContent = t("settings.modelProfileNoChecks");
+    box.appendChild(empty);
+  }
+  for (const check of checks) {
+    const row = document.createElement("div");
+    row.className = `mp-check ${check.ok ? "ok" : "fail"}`;
+    const mark = document.createElement("span");
+    mark.className = "mp-mark";
+    mark.textContent = check.ok ? "✓" : "✗";
+    const text = document.createElement("span");
+    text.textContent = `${check.title} — ${check.detail}`;
+    row.append(mark, text);
+    box.appendChild(row);
+  }
+
+  let message = "";
+  if (job?.state === "error") message = t("settings.modelProfileFailed", job.error);
+  else if (job?.state === "cancelled") message = t("settings.modelProfileCancelled");
+  setText(el("mp-msg"), message);
+}
+
+async function runModelProfile() {
+  setText(el("mp-msg"), "");
+  const result = await api("/api/model-profiles", "POST", { action: "run" });
+  if (result.error) {
+    setText(el("mp-msg"), `${t("error.prefix")}${result.error}`);
+    return;
+  }
+  state.modelProbe = result.job;
+  renderModelProfile();
+  showNotice(t("settings.modelProfileStarted"), 8000);
+}
+
+async function cancelModelProfile() {
+  const result = await api("/api/model-profiles", "POST", { action: "cancel" });
+  if (result.error) {
+    setText(el("mp-msg"), `${t("error.prefix")}${result.error}`);
+    return;
+  }
+  state.modelProbe = result.job;
+  renderModelProfile();
+}
+
+async function forgetModelProfile() {
+  const active = state.modelProfile;
+  if (!active) return;
+  if (!window.confirm(t("settings.modelProfileForgetAsk", active.model))) return;
+  const result = await api("/api/model-profiles", "POST", { action: "delete", key: active.key });
+  if (result.error) {
+    setText(el("mp-msg"), `${t("error.prefix")}${result.error}`);
+    return;
+  }
+  state.modelProfile = result.active ?? null;
+  state.modelProbe = null;
+  renderModelProfile();
+  showNotice(t("settings.modelProfileDeleted"));
+  refreshState();
 }
 
 /** The detail level as words: the "now:" line in Settings, the label in the chatbar. */
@@ -2667,10 +2846,13 @@ async function refreshState() {
   state.version = data.version ?? state.version;
   setVerbosityControls(data.settings.verbosity);
   state.mcp = data.mcp ?? state.mcp;
+  state.modelProfile = data.modelProfile ?? null;
+  state.modelProbe = data.modelProbe ?? state.modelProbe;
   state.windows = data.windows ?? state.windows;
   setText(el("version"), state.version ? `v${state.version}` : "");
   renderRuntime(data.settings);
   renderMcp();
+  renderModelProfile();
   renderWindows();
   renderMemory(data.settings, data.memory);
   renderUsage(data.usage);
@@ -3402,6 +3584,9 @@ el("queue-clear").addEventListener("click", async () => {
 });
 el("k-new").addEventListener("click", clearSkillForm);
 
+el("mp-run").addEventListener("click", runModelProfile);
+el("mp-cancel").addEventListener("click", cancelModelProfile);
+el("mp-forget").addEventListener("click", forgetModelProfile);
 el("s-save").addEventListener("click", saveSettings);
 el("s-reload").addEventListener("click", async () => {
   const result = await api("/api/settings/reload", "POST");

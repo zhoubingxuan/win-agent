@@ -1,6 +1,6 @@
 {
   "name": "win-agent",
-  "version": "2.3.1",
+  "version": "2.4.0",
   "description": "A Windows automation agent that lets local LLMs drive Windows via high-level tools.",
   "type": "module",
   "bin": {
@@ -21,6 +21,7 @@
     "test:mcp-server": "tsx scripts/test-mcp-server.mjs",
     "test:models": "tsx scripts/test-models.mjs",
     "test:mode": "tsx scripts/test-mode.mjs",
+    "test:model": "tsx scripts/test-model-profile.mjs",
     "test:sandbox": "tsx scripts/test-sandbox.mjs",
     "test:agent": "tsx scripts/test-agent.mjs",
     "test:skills": "tsx scripts/test-skills.mjs",

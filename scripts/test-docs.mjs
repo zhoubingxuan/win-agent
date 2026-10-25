@@ -67,7 +67,7 @@ section("HTTP API");
   );
   check(`the README documents ${documented.length} routes`, documented.length >= 20, String(documented.length));
 
-  const implemented = [...serverSource.matchAll(/case "((?:GET|POST|DELETE) \/api\/[a-z/]+)":/g)].map((m) => m[1]);
+  const implemented = [...serverSource.matchAll(/case "((?:GET|POST|DELETE) \/api\/[a-z/-]+)":/g)].map((m) => m[1]);
   const implementedSet = new Set(implemented);
   check(`the server answers ${implemented.length} API routes`, implemented.length >= 20, String(implemented.length));
 
