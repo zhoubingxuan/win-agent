@@ -1440,6 +1440,11 @@ function handle(ev) {
     case "settings":
       applySettingsToUi(ev.settings);
       break;
+    case "mcp":
+      // An API call (or another tab) changed the servers: redraw without a reload.
+      if (ev.mcp) state.mcp = ev.mcp;
+      renderMcp();
+      break;
     case "terminal":
       if (ev.clientId === CLIENT_ID) break; // this tab renders it from the POST response
       termAppend(ev.input, ev.output, ev.kind, ev.cwd);

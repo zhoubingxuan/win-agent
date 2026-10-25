@@ -13,6 +13,31 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.3.1] — 2026-10-25
+
+A small hardening release after 2.3.0 went out: the new MCP client was checked against
+real servers, not only the fixture, and an open page now follows MCP changes made by
+the API.
+
+### Fixed
+
+- `POST /api/mcp` and MCP-related `POST /api/settings` now broadcast an `mcp` event with
+  the fresh snapshot. A second tab, or a script using the API, no longer leaves an open
+  Settings page showing the old server list until a reload.
+- The web UI handles that `mcp` event by replacing `state.mcp` and redrawing the cards.
+
+### Verified
+
+- **`@modelcontextprotocol/server-filesystem` 0.2.0** over stdio: 14 tools, protocol
+  `2025-06-18`, roots/resource handshake, Windows `npx`/`cmd.exe` startup.
+- **`@modelcontextprotocol/server-everything` 2.0.0** over stdio: 14 tools, 7 resources,
+  4 prompts, resource read and prompt render.
+- **DeepWiki** (`https://mcp.deepwiki.com/mcp`) over Streamable HTTP: 3 tools,
+  protocol `2025-06-18`.
+- Existing `test:mcp` (105 checks), `test:mcp-server` (36) and the full suite still pass.
+  The real-server pass is now repeatable with **`npm run test:mcp:real`** (19 checks);
+  it needs npm's registry/cache and network access, so it is not part of `test:all`.
+
 ## [2.3.0] — 2026-10-25
 
 2.2 gave the agent a coder workflow. 2.3 makes it **faster on capable models** and

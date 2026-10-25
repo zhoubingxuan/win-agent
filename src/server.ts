@@ -377,6 +377,11 @@ async function refreshMcp(announce = false, reconnect = false): Promise<{ tools:
 }
 
 /** What the UI needs to draw the MCP panel: config + live state. */
+/** Keep every open UI in step after an API request changed MCP state. */
+function broadcastMcp(): void {
+  broadcast({ type: "mcp", mcp: mcpSnapshot() });
+}
+
 function mcpSnapshot(): {
   enabled: boolean;
   ageMs: number;
@@ -1046,6 +1051,7 @@ const server = http.createServer(async (req, res) => {
 
         if (action === "refresh") {
           const result = await refreshMcp(true, true);
+          broadcastMcp();
           return json(res, 200, { ok: true, ...result, mcp: mcpSnapshot() });
         }
 
@@ -1067,6 +1073,7 @@ const server = http.createServer(async (req, res) => {
             updateSettings({ mcpServers: result.servers });
             saveSettings();
             const outcome = await refreshMcp(true, true);
+            broadcastMcp();
             return json(res, 200, {
               ok: true,
               added: result.added,
@@ -1103,6 +1110,7 @@ const server = http.createServer(async (req, res) => {
           saveSettings();
           mcp.drop(id);
           const result = await refreshMcp(false, true);
+          broadcastMcp();
           return json(res, 200, { ok: true, ...result, mcp: mcpSnapshot() });
         }
 
@@ -1112,6 +1120,7 @@ const server = http.createServer(async (req, res) => {
           saveSettings();
           mcp.drop(id);
           await refreshMcp(false, true);
+          broadcastMcp();
           return json(res, 200, { ok: true, mcp: mcpSnapshot() });
         }
 
@@ -1123,6 +1132,7 @@ const server = http.createServer(async (req, res) => {
           saveSettings();
           mcp.drop(id);
           await refreshMcp(false, true);
+          broadcastMcp();
           return json(res, 200, { ok: true, mcp: mcpSnapshot() });
         }
 
@@ -1251,6 +1261,7 @@ const server = http.createServer(async (req, res) => {
           );
         }
         broadcast({ type: "settings", settings: publicSettings(), changed: result.changed });
+        if (result.changed.includes("mcpEnabled") || result.changed.includes("mcpServers")) broadcastMcp();
         broadcast({ type: "context", ...contextSnapshot() });
         return json(res, 200, {
           settings: publicSettings(),
@@ -1266,6 +1277,7 @@ const server = http.createServer(async (req, res) => {
         const notices = applySettings();
         await refreshMcp(false, true);
         broadcast({ type: "settings", settings: publicSettings(), changed: ["*"] });
+        broadcastMcp();
         return json(res, 200, { settings: publicSettings(), notices, mcp: mcpSnapshot() });
       }
 

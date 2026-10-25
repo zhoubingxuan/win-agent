@@ -1739,6 +1739,7 @@ test-mcp-server.mjs the other direction: JSON-RPC over stdio, tool calls, the ap
   test-api.mjs        the real HTTP server + a mock model, on a temp data folder
   test-audit.mjs      the change log and undo, against a temp folder (live on Windows)
   test-windows.mjs    live Windows checks: PowerShell, elevation, files, services
+  test-mcp-real.mjs   manual compatibility pass: real filesystem/everything/DeepWiki MCP
   test-all.mjs        runs the suites in order (npm run test:all), one annotation on failure
   fixtures/
     mock-mcp-server.mjs  a tiny MCP server used by test-mcp.mjs
@@ -1776,6 +1777,7 @@ npm run version:tag         # create the v<version> tag (needs a clean tree)
 npm test                    # context planner checks (no model needed)
 npm run test:providers      # endpoint compatibility checks against a mock server
 npm run test:mcp            # MCP client checks against a mock MCP server (stdio + HTTP)
+npm run test:mcp:real       # manual: real filesystem/everything/DeepWiki servers (network)
 npm run test:mcp-server     # MCP server mode: the handshake, tools/list, calls, approvals
 npm run test:models         # local model sync: LM Studio / Ollama discovery + merging
 npm run test:isolation      # two copies never share data or a version number
