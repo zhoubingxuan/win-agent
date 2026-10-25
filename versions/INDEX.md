@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 2.3.1 | 2026-10-25 04:14 | 97 | A small hardening release after 2.3.0 went out: the new MCP client was checked against real servers, not only the fixture, and an open page now follows MCP… |
 | 2.3.0 | 2026-10-25 03:55 | 96 | 2.2 gave the agent a coder workflow. 2.3 makes it **faster on capable models** and **connected to the rest of the tool ecosystem**: an automatic expert mode, a… |
 | 2.2.0 | 2026-10-23 14:47 | 96 | The agent could change a line; it could not change a program and prove it still works. 2.2 gives it the three moves a coder turn needs — a **patch**, the… |
 | 2.1.0 | 2026-10-22 14:41 | 89 | A small model's commonest failure is not a wrong tool call: it is answering "done" with half the task untouched. Now it has to write the half down, and the… |
