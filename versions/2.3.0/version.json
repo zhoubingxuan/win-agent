@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.3.0",
+  "createdAt": "2026-10-25T03:55:22.853Z",
+  "node": ">=20.3",
+  "files": 96,
+  "bytes": 1475650,
+  "note": "2.2 gave the agent a coder workflow. 2.3 makes it **faster on capable models** and **connected to the rest of the tool ecosystem**: an automatic expert mode, a…"
+}
