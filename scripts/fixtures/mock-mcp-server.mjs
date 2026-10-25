@@ -73,7 +73,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         id,
         result: {
           protocolVersion: "2025-06-18",
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, resources: {}, prompts: {} },
           serverInfo: { name: "mock-mcp", version: "1.0.0" },
         },
       });
@@ -91,6 +91,63 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       }
       send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
       return;
+
+    case "resources/list":
+      send({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          resources: [
+            { uri: "mock://doc", name: "Mock document", description: "A test document", mimeType: "text/plain" },
+            { uri: "mock://other", name: "Other", mimeType: "text/plain" },
+          ],
+        },
+      });
+      return;
+
+    case "resources/read": {
+      const uri = message.params?.uri;
+      if (uri === "mock://doc") {
+        send({ jsonrpc: "2.0", id, result: { contents: [{ uri, mimeType: "text/plain", text: "resource body" }] } });
+        return;
+      }
+      send({ jsonrpc: "2.0", id, error: { code: -32602, message: `unknown resource ${uri}` } });
+      return;
+    }
+
+    case "prompts/list":
+      send({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          prompts: [
+            {
+              name: "greet",
+              description: "Greet someone",
+              arguments: [{ name: "name", description: "who", required: true }],
+            },
+          ],
+        },
+      });
+      return;
+
+    case "prompts/get": {
+      const name = message.params?.name;
+      if (name === "greet") {
+        const who = message.params?.arguments?.name ?? "world";
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            description: "Greet someone",
+            messages: [{ role: "user", content: { type: "text", text: `hello ${who}` } }],
+          },
+        });
+        return;
+      }
+      send({ jsonrpc: "2.0", id, error: { code: -32602, message: `unknown prompt ${name}` } });
+      return;
+    }
 
     case "tools/call": {
       const name = message.params?.name;

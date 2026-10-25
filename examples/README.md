@@ -13,18 +13,18 @@ emit, and the terminal lines are exactly what the agent accepts (verified with
 | [tool-calls.md](tool-calls.md) | one worked example per tool: the request, the JSON the model emits, what comes back |
 | [prompts.md](prompts.md) | ready-to-send tasks (English + 中文), from one tool call to a multi-step job |
 | [code.md](code.md) | a coder turn: read, `apply_patch` (preview → apply), `tests` detect/run, `git` commit, and the overwrite guard |
-| [modes.md](modes.md) | the two agent modes (`guided` / `normal`): what changes, and how to pick one |
+| [modes.md](modes.md) | the four agent modes (`auto` / `guided` / `normal` / `expert`): what changes, and how to pick one |
 | [verbosity.md](verbosity.md) | the output-detail slider (`answer` / `thinking` / `full`): one turn drawn at all three levels |
 | [sandbox.md](sandbox.md) | the folder fence (`sandbox`, on by default): a refused path, what is confined, how to switch it off |
 | [stability.md](stability.md) | staying on the rails: a blocked repeat, the step limit, a trimmed result, and the error hints |
 | [skills.md](skills.md) | three complete skills (temp cleanup, a restart checklist, a weekly report) and the one prompt line each adds |
 | [windows.md](windows.md) | Windows compatibility: PowerShell 5.1/7, elevation, encodings, timeouts |
 | [custom-commands.md](custom-commands.md) | turn your own PowerShell one-liners into tools the model can call |
-| [mcp.md](mcp.md) | add MCP servers (stdio + HTTP) and use their tools from the chat |
-| [mcp-server.md](mcp-server.md) | the other direction: another agent uses win-agent's Windows tools over MCP |
+| [mcp.md](mcp.md) | add MCP servers (stdio / HTTP / SSE), import a client config, use tools, resources and prompts, set per-tool policies |
+| [mcp-server.md](mcp-server.md) | the other direction: another agent uses win-agent's Windows tools, and installed skills appear as MCP prompts |
 | [api.md](api.md) | drive the agent from PowerShell / curl over the local HTTP API |
 | [audit-undo.md](audit-undo.md) | the change log and `/undo`: what can be taken back, what cannot, and what it looks like |
-| [settings.md](settings.md) | ready `data/settings.json` files: LM Studio, Ollama, a cloud API, MCP |
+| [settings.md](settings.md) | ready `data/settings.json` files: LM Studio, Ollama, a cloud API, agent modes, MCP with policies |
 
 Two things worth knowing before you read them:
 

@@ -185,9 +185,9 @@ starting it:
 
 ```text
 Error: guided mode does not run interpreters or scripts (python). Use the tests tool
-for a project's tests; switch to normal mode for the raw shell.
+for a project's tests; switch to normal or expert mode for the raw shell.
 ```
 
 That refusal is the point of the mode. `processes start` accepts `cwd` for a normal
 program (`{"action":"start","name":"notepad.exe","cwd":"D:\\new\\demo"}`), but an
-interpreter waits until you switch to `normal`.
+interpreter waits until you switch to `normal` or `expert`.

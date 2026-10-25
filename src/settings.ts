@@ -29,23 +29,60 @@ export function normalizeLanguage(value: unknown): Language {
 /**
  * How much the agent holds the model's hand.
  *
- * - `normal` - the plain system prompt. Right for a capable model (GPT-4 class).
  * - `guided` - for small local models (7B class): an explicit operating
  *   procedure, a tool catalog that spells out the required arguments, and one
  *   tool call per step, so the model cannot lose track of what it is doing.
+ * - `normal` - the plain system prompt, no extra procedure.
+ * - `expert` - for a large or cloud model: a short efficiency procedure, a
+ *   compact tool catalogue, no checklist nagging, and as many tool calls as the
+ *   model wants to batch. This is the fast path.
  */
-export type AgentMode = "normal" | "guided";
+export type AgentMode = "guided" | "normal" | "expert";
 
-export const AGENT_MODES: AgentMode[] = ["normal", "guided"];
+/** The stored setting can also be `auto`, which resolves from the endpoint. */
+export type AgentModeSetting = AgentMode | "auto";
 
-/** Accepts "guided"/"supervised"/"严格" and "normal"/"plain"; unknown -> guided. */
-export function normalizeAgentMode(value: unknown): AgentMode {
+export const AGENT_MODES: AgentMode[] = ["guided", "normal", "expert"];
+export const AGENT_MODE_SETTINGS: AgentModeSetting[] = ["auto", ...AGENT_MODES];
+
+/**
+ * Accepts the names in both languages; unknown values fall back to `auto`,
+ * which is the least surprising default: a cloud endpoint gets expert speed,
+ * a local 7B gets the guided procedure.
+ */
+export function normalizeAgentMode(value: unknown): AgentModeSetting {
   const raw = String(value ?? "").trim().toLowerCase();
+  if (["auto", "automatic", "自动", "自适应"].includes(raw)) return "auto";
   if (["guided", "guide", "supervised", "supervision", "strict", "监督", "高监督", "严格"].includes(raw)) {
     return "guided";
   }
+  if (["expert", "fast", "large", "cloud", "专家", "快速", "大模型", "云端"].includes(raw)) {
+    return "expert";
+  }
   if (["normal", "plain", "standard", "off", "普通", "正常"].includes(raw)) return "normal";
-  return "guided";
+  return "auto";
+}
+
+/**
+ * A local model with this many parameters is capable enough for the expert
+ * path. Below it, guided is still the safer default; a cloud endpoint is always
+ * expert. The user can override either way.
+ */
+export const EXPERT_LOCAL_MIN_B = 14;
+
+/** "qwen3-coder-30b-a3b" -> 30, "qwen2.5:7b" -> 7, "glm-4.7-flash" -> null. */
+export function modelSizeB(name: string): number | null {
+  const match = /(?:^|[^0-9])(\d{1,3}(?:\.\d+)?)\s*b(?:[^a-z0-9]|$)/i.exec(String(name ?? ""));
+  return match ? Number(match[1]) : null;
+}
+
+/** The mode the agent will actually run, resolving `auto`. */
+export function effectiveAgentMode(settings: Pick<Settings, "agentMode" | "profiles" | "activeProfile" | "model">): AgentMode {
+  if (settings.agentMode !== "auto") return settings.agentMode;
+  const profile = settings.profiles.find((entry) => entry.id === settings.activeProfile);
+  if (profile?.kind === "api") return "expert";
+  const size = modelSizeB(settings.model || profile?.model || "");
+  return size !== null && size >= EXPERT_LOCAL_MIN_B ? "expert" : "guided";
 }
 
 /**
@@ -112,6 +149,30 @@ export const GUIDED_INSTRUCTIONS: Record<Language, string> = {
   ].join("\n"),
 };
 
+/**
+ * The extra procedure for a capable model. It exists to remove friction, not to
+ * add rules: no checklist for a one-step job, no narrating every call, and
+ * permission to batch independent calls so the turn costs fewer round trips.
+ */
+export const EXPERT_INSTRUCTIONS: Record<Language, string> = {
+  en: [
+    "Expert mode (work efficiently):",
+    "1. Do not create a todo list for a one-step task. Use it only when the job has four or more distinct steps, and never restart a plan that is already done.",
+    "2. Batch independent tool calls in one reply when the API supports it; read their results together. Only sequence calls that depend on an earlier result.",
+    "3. Do not narrate routine reads, writes or scans. Skip the running commentary and spend the turn on the work.",
+    "4. Read a file before overwriting it. For code changes use apply_patch, then run the project's tests when they exist.",
+    "5. Keep the final answer short: what changed, where, and anything the user must know. Do not repeat tool output.",
+  ].join("\n"),
+  zh: [
+    "专家模式（高效执行）：",
+    "1. 一步就能完成的任务不要建 todo。只有包含四个以上独立步骤时才用清单，已经完成的计划不要重开。",
+    "2. 接口支持时，把互不依赖的工具调用放在同一次回复里批量执行，并一起读取结果；只有依赖前一步结果的调用才需要串行。",
+    "3. 不要为常规的读取、写入或扫描逐条解说。把这一轮用在做事上，而不是汇报过程。",
+    "4. 覆盖文件前先读取。改代码用 apply_patch，项目有测试就跑一遍。",
+    "5. 最终回答要短：改了什么、在哪里、用户还需要知道什么。不要复述工具输出。",
+  ].join("\n"),
+};
+
 /** Configuration object consumed by the LLM client and the agent. */
 export interface Config {
   apiKey: string;
@@ -129,7 +190,7 @@ export interface Config {
   language: Language;
   systemPrompt: string;
   workdir: string;
-  /** How much guidance the agent gives the model (see AgentMode). */
+  /** The resolved mode (auto is already applied when this object is built). */
   agentMode: AgentMode;
   /** Stream the model's answer token by token instead of waiting for all of it. */
   stream: boolean;
@@ -205,8 +266,8 @@ export interface Settings {
    * See src/sandbox.ts.
    */
   sandbox: boolean;
-  /** normal = plain prompt, guided = step-by-step supervision for small models. */
-  agentMode: AgentMode;
+  /** auto resolves from the endpoint; guided/normal/expert are explicit. */
+  agentMode: AgentModeSetting;
   /** How much of the process the chat view shows (see Verbosity). */
   verbosity: Verbosity;
   /** Write every change to data/audit.jsonl and keep a stack of undoable ones. */
@@ -246,6 +307,11 @@ export interface Settings {
   mcpServeAutoApprove: boolean;
   /** Servers whose tools the model may call (see src/mcp.ts). */
   mcpServers: McpServer[];
+  /**
+   * How long the MCP tool/resource lists are cached before a turn refreshes
+   * them. 0 would mean "every turn" and is not allowed; the minimum is 10s.
+   */
+  mcpRefreshSeconds: number;
   /** Merge every local endpoint's loadable models into one list in the pickers. */
   syncLocalModels: boolean;
   /** Recently used working directories, newest first (the chat picker). */
@@ -321,9 +387,9 @@ export const DEFAULTS: Settings = {
   // Safety first: paths stay inside the working directory unless the user turns
   // the sandbox off. A sandbox that is off by default does nothing for anybody.
   sandbox: true,
-  // The project exists to drive Windows with *small* local models, so the
-  // supervised mode is the default. One switch flips it to the plain prompt.
-  agentMode: "guided",
+  // Auto: a cloud endpoint gets the fast expert path, a local 7B gets the guided
+  // procedure. A large local model (14B+) is treated as expert too.
+  agentMode: "auto",
   // A small model chatters: dozens of tool calls before it answers. The quiet view
   // is the default, and two steps up turn the machine room back on.
   verbosity: "answer",
@@ -342,6 +408,7 @@ export const DEFAULTS: Settings = {
   mcpEnabled: false,
   mcpServeAutoApprove: false,
   mcpServers: [],
+  mcpRefreshSeconds: 120,
   syncLocalModels: true,
   recentWorkdirs: [],
 };
@@ -364,6 +431,7 @@ const NUMBER_KEYS: Array<keyof Settings> = [
   "requestTimeoutMs",
   "maxRetries",
   "undoRetentionDays",
+  "mcpRefreshSeconds",
 ];
 const BOOLEAN_KEYS: Array<keyof Settings> = [
   "dryRun",
@@ -386,6 +454,7 @@ const NUMERIC_RANGE: Record<string, [number, number]> = {
   temperature: [0, 2],
   webPort: [1, 65535],
   contextLimit: [0, 2_000_000],
+  mcpRefreshSeconds: [10, 3600],
   requestTimeoutMs: [5_000, 3_600_000],
   maxRetries: [0, 10],
   undoRetentionDays: [1, 365],
@@ -480,30 +549,68 @@ function asProfiles(value: unknown): Profile[] {
   });
 }
 
-/** Validate the MCP server list (see src/mcp.ts). */
-function asMcpServers(value: unknown): McpServer[] {
+/** A string map from JSON, for env vars and HTTP headers. */
+function asStringMap(value: unknown, label: string): Record<string, string> {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
+  const out: Record<string, string> = {};
+  for (const [name, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (name) out[String(name)] = String(raw ?? "");
+  }
+  return out;
+}
+
+/** Validate and normalize an MCP server list (see src/mcp.ts). */
+export function normalizeMcpServers(value: unknown): McpServer[] {
   if (!Array.isArray(value)) throw new Error("mcpServers must be an array");
+  const seen = new Set<string>();
   return value.map((entry) => {
     const item = (entry ?? {}) as Record<string, unknown>;
     const id = String(item.id ?? "").trim();
     if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) {
       throw new Error(`MCP server id "${id}" must be letters, digits, "-" or "_" (max 32)`);
     }
-    const env: Record<string, string> = {};
-    for (const [name, raw] of Object.entries((item.env ?? {}) as Record<string, unknown>)) {
-      if (name) env[String(name)] = String(raw);
+    if (seen.has(id)) throw new Error(`MCP server id "${id}" is used twice`);
+    seen.add(id);
+    const env = asStringMap(item.env, `MCP server "${id}" env`);
+    const headers = asStringMap(item.headers, `MCP server "${id}" headers`);
+    const toolPolicies: Record<string, "allow" | "ask" | "deny"> = {};
+    for (const [tool, raw] of Object.entries(asStringMap(item.toolPolicies, `MCP server "${id}" toolPolicies`))) {
+      const policy = raw.trim().toLowerCase();
+      if (policy !== "allow" && policy !== "ask" && policy !== "deny") {
+        throw new Error(`MCP tool policy for "${id}/${tool}" must be allow, ask or deny`);
+      }
+      toolPolicies[tool] = policy;
     }
-    const transport = item.transport === "http" ? "http" : "stdio";
+    const rawTransport = String(item.transport ?? "stdio").trim().toLowerCase();
+    const transport: McpServer["transport"] =
+      rawTransport === "sse" ? "sse" : rawTransport === "http" || rawTransport === "streamable-http" ? "http" : "stdio";
+    const rawTimeout = item.timeoutMs;
+    let timeoutMs: number | undefined;
+    if (rawTimeout !== undefined && rawTimeout !== null && String(rawTimeout).trim() !== "") {
+      const parsed = Number(rawTimeout);
+      if (!Number.isFinite(parsed)) throw new Error(`MCP server "${id}" timeoutMs must be a number`);
+      timeoutMs = Math.min(600_000, Math.max(1_000, Math.round(parsed)));
+    }
+    const cwd = String(item.cwd ?? "").trim();
     return {
       id,
-      name: String(item.name ?? id),
+      name: String(item.name ?? id) || id,
       transport,
       command: String(item.command ?? ""),
-      args: Array.isArray(item.args) ? item.args.map((a) => String(a)) : [],
+      args: Array.isArray(item.args)
+        ? item.args.map((a) => String(a))
+        : String(item.args ?? "").trim()
+          ? String(item.args).split(/\s+/)
+          : [],
       env,
+      ...(cwd ? { cwd } : {}),
       url: String(item.url ?? ""),
+      headers,
       enabled: item.enabled !== false,
       autoApprove: item.autoApprove === true,
+      ...(Object.keys(toolPolicies).length > 0 ? { toolPolicies } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       tools: Array.isArray(item.tools) ? item.tools.map((t) => String(t)) : [],
     } as McpServer;
   });
@@ -536,7 +643,7 @@ export function coerceSetting(key: string, value: unknown): unknown {
     return value.map((v) => String(v));
   }
   if (typed === "customTools") return asCustomTools(value);
-  if (typed === "mcpServers") return asMcpServers(value);
+  if (typed === "mcpServers") return normalizeMcpServers(value);
   if (typed === "recentWorkdirs") return asRecentWorkdirs(value);
   throw new Error(`unsupported setting "${key}"`);
 }
@@ -780,12 +887,15 @@ export function saveSettings(): void {
 /** Settings without the secrets, plus flags telling the UI whether keys are set. */
 export function publicSettings(): Omit<Settings, "apiKey" | "profiles"> & {
   apiKeySet: boolean;
+  /** The mode `auto` resolves to right now, so the UI can show it. */
+  agentModeEffective: AgentMode;
   profiles: Array<Omit<Profile, "apiKey"> & { apiKeySet: boolean }>;
 } {
   const { apiKey, profiles, ...rest } = current;
   return {
     ...rest,
     apiKeySet: apiKey.length > 0,
+    agentModeEffective: effectiveAgentMode(current),
     profiles: profiles.map(({ apiKey: key, ...profile }) => ({
       ...profile,
       apiKeySet: key.length > 0,
@@ -806,7 +916,7 @@ export function toConfig(settings: Settings = current): Config {
     language: settings.language,
     systemPrompt: settings.systemPrompt,
     workdir: settings.workdir,
-    agentMode: settings.agentMode,
+    agentMode: effectiveAgentMode(settings),
     stream: settings.stream,
     contextLimit: context.limit,
     requestTimeoutMs: settings.requestTimeoutMs,

@@ -1,5 +1,5 @@
 import type { AgentMode, Config, Language } from "./settings.js";
-import { GUIDED_INSTRUCTIONS, LANGUAGE_INSTRUCTIONS } from "./settings.js";
+import { EXPERT_INSTRUCTIONS, GUIDED_INSTRUCTIONS, LANGUAGE_INSTRUCTIONS } from "./settings.js";
 import { chat, type ChatMessage, type ToolCall, type Usage } from "./llm.js";
 import { capText, planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import type { ToolRegistry } from "./tools/index.js";
@@ -94,8 +94,9 @@ export function sanitizeAssistantText(text: string): string {
  * what the model is actually told. Empty in `normal` mode.
  */
 export function guidanceFor(mode: AgentMode, language: Language): string {
-  if (mode !== "guided") return "";
-  return GUIDED_INSTRUCTIONS[language] ?? GUIDED_INSTRUCTIONS.en;
+  if (mode === "guided") return GUIDED_INSTRUCTIONS[language] ?? GUIDED_INSTRUCTIONS.en;
+  if (mode === "expert") return EXPERT_INSTRUCTIONS[language] ?? EXPERT_INSTRUCTIONS.en;
+  return "";
 }
 
 /**
@@ -266,7 +267,7 @@ export class Agent {
       // model when (and only when) its `when` fits the task, so ten skills cost ten
       // lines of prompt instead of ten thousand characters.
       skillIndex(),
-      this.tools.describe({ verbose: mode === "guided" }),
+      this.tools.describe({ verbose: mode === "guided", brief: mode === "expert" }),
     ]
       .filter((part) => part && part.trim())
       .join("\n\n");
@@ -408,7 +409,14 @@ export class Agent {
         // given at most twice: a model that keeps arguing with its own list is not
         // helped by a third round.
         const open = unfinishedTodos();
-        if (this.config.todoCheck !== false && open.length > 0 && todoNudges < TODO_NUDGE_LIMIT) {
+        // Expert mode does not nag: a capable model may keep a checklist, but it
+        // decides when the task is done. The forced reminder is for small models.
+        if (
+          this.config.todoCheck !== false &&
+          this.config.agentMode !== "expert" &&
+          open.length > 0 &&
+          todoNudges < TODO_NUDGE_LIMIT
+        ) {
           todoNudges += 1;
           nudgeOnce = todoNudge(this.config.language, open);
           this.events.onTodoNudge?.(open.length, todoNudges);

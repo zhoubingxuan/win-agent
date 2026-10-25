@@ -4,7 +4,15 @@
 // Nothing here needs PowerShell or a model: the agent's system prompt is built in
 // its constructor, so the mode can be inspected without ever calling an LLM.
 import { Agent, guidanceFor, parseTextToolCall, sanitizeAssistantText, splitToolCalls } from "../src/agent.js";
-import { DEFAULTS, GUIDED_INSTRUCTIONS, normalizeAgentMode, toConfig } from "../src/settings.js";
+import {
+  DEFAULTS,
+  EXPERT_INSTRUCTIONS,
+  GUIDED_INSTRUCTIONS,
+  effectiveAgentMode,
+  modelSizeB,
+  normalizeAgentMode,
+  toConfig,
+} from "../src/settings.js";
 import { ToolRegistry } from "../src/tools/registry.js";
 import { parseToolArguments } from "../src/util/json.js";
 import { stripClixml } from "../src/util/ps.js";
@@ -77,6 +85,25 @@ section("agent mode: guided");
   check("guided says there is no shell in this mode", /no shell in this mode/.test(prompt));
 }
 
+section("agent mode: expert");
+{
+  const prompt = systemPromptOf("expert");
+  check("expert adds the efficiency procedure", prompt.includes("Expert mode (work efficiently)"));
+  check("expert does not nag about a checklist", /Do not create a todo list/.test(prompt));
+  check("expert allows batched calls", /Batch independent tool calls/.test(prompt));
+  check("expert keeps the user's own prompt", prompt.includes(DEFAULTS.systemPrompt));
+  check("expert catalogue is brief", !/action must be one of/.test(prompt) && !/arguments: /.test(prompt));
+  check("expert still names the tools", prompt.includes("- files:"));
+  check("expert has no guided procedure", !/Operating procedure/.test(prompt));
+}
+
+section("agent mode: expert in Chinese");
+{
+  const prompt = systemPromptOf("expert", "zh");
+  check("the expert procedure is translated", prompt.includes("专家模式（高效执行）"));
+  check("the no-checklist rule is translated", prompt.includes("不要建 todo"));
+}
+
 section("agent mode: guided in Chinese");
 {
   const prompt = systemPromptOf("guided", "zh");
@@ -112,6 +139,25 @@ section("agent mode: guidanceFor");
   check("guidanceFor(normal) is empty", guidanceFor("normal", "en") === "");
   check("guidanceFor(guided) is the procedure", guidanceFor("guided", "en") === GUIDED_INSTRUCTIONS.en);
   check("guidanceFor(guided, zh) is translated", guidanceFor("guided", "zh") === GUIDED_INSTRUCTIONS.zh);
+  check("guidanceFor(expert) is the fast procedure", guidanceFor("expert", "en") === EXPERT_INSTRUCTIONS.en);
+  check("guidanceFor(expert, zh) is translated", guidanceFor("expert", "zh") === EXPERT_INSTRUCTIONS.zh);
+}
+
+section("agent mode: auto resolution");
+{
+  const auto = { ...DEFAULTS, agentMode: "auto" };
+  const local = { ...auto, activeProfile: "local", model: "qwen2.5:7b" };
+  check("a local 7B stays guided", effectiveAgentMode(local) === "guided");
+  check("a cloud endpoint is expert", effectiveAgentMode({ ...auto, activeProfile: "cloud" }) === "expert");
+  check(
+    "a local 14B+ model is expert",
+    effectiveAgentMode({ ...local, model: "qwen3-coder-30b-a3b-instruct" }) === "expert",
+  );
+  check("an explicit mode wins over auto", effectiveAgentMode({ ...local, agentMode: "normal" }) === "normal");
+  check("modelSizeB reads 30b", modelSizeB("qwen3-coder-30b-a3b") === 30);
+  check("modelSizeB reads 7b", modelSizeB("qwen2.5:7b") === 7);
+  check("modelSizeB does not invent a size", modelSizeB("glm-4.7-flash") === null);
+  check("toConfig resolves auto", toConfig(local).agentMode === "guided");
 }
 
 section("agent mode: setting coercion");
@@ -121,8 +167,13 @@ section("agent mode: setting coercion");
   check("高监督 maps to guided", normalizeAgentMode("高监督") === "guided");
   check("normal is accepted", normalizeAgentMode("normal") === "normal");
   check("普通 maps to normal", normalizeAgentMode("普通") === "normal");
-  check("unknown values fall back to guided (the safer mode)", normalizeAgentMode("wat") === "guided");
-  check("the default mode exists in DEFAULTS", ["normal", "guided"].includes(DEFAULTS.agentMode));
+  check("expert is accepted", normalizeAgentMode("expert") === "expert");
+  check("fast maps to expert", normalizeAgentMode("fast") === "expert");
+  check("专家 maps to expert", normalizeAgentMode("专家") === "expert");
+  check("auto is accepted", normalizeAgentMode("auto") === "auto");
+  check("自动 maps to auto", normalizeAgentMode("自动") === "auto");
+  check("unknown values fall back to auto", normalizeAgentMode("wat") === "auto");
+  check("the default mode exists in DEFAULTS", ["auto", "normal", "guided", "expert"].includes(DEFAULTS.agentMode));
 }
 
 section("one tool per step");
@@ -133,6 +184,8 @@ section("one tool per step");
   ];
   const normal = splitToolCalls(calls, "normal");
   check("normal runs every call", normal.go.length === 2 && normal.extra.length === 0);
+  const expert = splitToolCalls(calls, "expert");
+  check("expert batches every call", expert.go.length === 2 && expert.extra.length === 0);
   const guided = splitToolCalls(calls, "guided");
   check("guided runs the first call", guided.go.length === 1 && guided.go[0].id === "a");
   check("guided skips the others", guided.extra.length === 1 && guided.extra[0].id === "b");
@@ -164,6 +217,11 @@ section("catalogue");
   check("verbose catalogue adds the argument list", verbose.includes("arguments: path (required), max"));
   check("a tool with only 'action' gets no argument line", !/system: System info\.\n\s+action must be one of: info\n\s+arguments:/.test(verbose));
   check("the text tool-call fallback is documented", verbose.includes('{"tool": "<tool name>"'));
+  const brief = registry.describe({ brief: true });
+  check("brief catalogue names every tool", brief.includes("- files:") && brief.includes("- system:"));
+  check("brief catalogue omits actions", !brief.includes("action must be one of"));
+  check("brief catalogue omits arguments", !brief.includes("arguments:"));
+  check("brief catalogue keeps a short description", brief.includes("Manage files"));
 }
 
 section("unknown tool names");

@@ -7,10 +7,12 @@ import { spawn } from "node:child_process";
 import { Agent } from "./agent.js";
 import {
   activeProfile,
+  effectiveAgentMode,
   effectiveContextLimit,
   findProfile,
   getSettings,
   loadSettings,
+  normalizeMcpServers,
   publicSettings,
   rememberContextLimits,
   rememberModels,
@@ -26,7 +28,7 @@ import { deleteSkill, ensureSkillsFolder, findSkill, listSkills, loadSkill, save
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { VERSION } from "./version.js";
 import { capabilityReport, capabilities as endpointCapabilities, discoverLocalModels, listModelsAt, localEndpointsFor, probeContextLimits } from "./providers.js";
-import { mcp, type McpServer } from "./mcp.js";
+import { mcp, parseMcpConfig, testMcpServer, type McpServer } from "./mcp.js";
 import { diagnose, formatDiagnosis } from "./diagnose.js";
 import { planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import { runCommand, type CommandHost } from "./commands.js";
@@ -334,14 +336,16 @@ try {
  * Connect to the enabled MCP servers and refresh the tool cache. Never throws:
  * a server that is down must not stop the agent from starting.
  */
-async function refreshMcp(announce = false): Promise<{ tools: number; errors: string[] }> {
+async function refreshMcp(announce = false, reconnect = false): Promise<{ tools: number; errors: string[] }> {
   const s = getSettings();
   if (!s.mcpEnabled || s.mcpServers.length === 0) {
     mcp.close();
     return { tools: 0, errors: [] };
   }
   try {
-    await mcp.refresh();
+    // A config change closes the old processes; a scheduled refresh only asks a
+    // live server to re-list (unless it told us its lists changed).
+    await mcp.refresh(reconnect);
   } catch (error) {
     return { tools: 0, errors: [(error as Error).message] };
   }
@@ -376,8 +380,24 @@ async function refreshMcp(announce = false): Promise<{ tools: number; errors: st
 function mcpSnapshot(): {
   enabled: boolean;
   ageMs: number;
+  refreshSeconds: number;
   totalTools: number;
-  servers: Array<McpServer & { connected: boolean; serverInfo: string; liveTools: string[]; error: string }>;
+  totalResources: number;
+  totalPrompts: number;
+  servers: Array<
+    McpServer & {
+      connected: boolean;
+      serverInfo: string;
+      liveTools: string[];
+      resources: string[];
+      prompts: string[];
+      capabilities: { tools: boolean; resources: boolean; prompts: boolean };
+      latencyMs: number;
+      stderr: string;
+      error: string;
+      nextRetryMs: number;
+    }
+  >;
 } {
   const s = getSettings();
   const live = new Map(mcp.status().map((x) => [x.id, x]));
@@ -388,13 +408,22 @@ function mcpSnapshot(): {
       connected: found?.connected ?? false,
       serverInfo: found?.serverInfo ?? "",
       liveTools: found?.tools ?? [],
+      resources: found?.resources ?? [],
+      prompts: found?.prompts ?? [],
+      capabilities: found?.capabilities ?? { tools: false, resources: false, prompts: false },
+      latencyMs: found?.latencyMs ?? 0,
+      stderr: found?.stderr ?? "",
       error: found?.error ?? "",
+      nextRetryMs: found?.nextRetryMs ?? 0,
     };
   });
   return {
     enabled: s.mcpEnabled,
     ageMs: mcp.age(),
+    refreshSeconds: s.mcpRefreshSeconds,
     totalTools: servers.reduce((sum, x) => sum + x.liveTools.length, 0),
+    totalResources: servers.reduce((sum, x) => sum + x.resources.length, 0),
+    totalPrompts: servers.reduce((sum, x) => sum + x.prompts.length, 0),
     servers,
   };
 }
@@ -446,7 +475,7 @@ function buildTools() {
     enabledTools: s.enabledTools,
     customTools: s.customTools,
     webSearchUrl: s.webSearchUrl,
-    agentMode: s.agentMode,
+    agentMode: effectiveAgentMode(s),
   });
 }
 
@@ -526,7 +555,7 @@ async function runAgent(message: string): Promise<void> {
   broadcast({ type: "status", running: true });
 
   // Pick up MCP servers added since the last turn (cached, so this is cheap).
-  await mcp.ensureFresh();
+  await mcp.ensureFresh(getSettings().mcpRefreshSeconds * 1000);
   const tools = buildTools();
   // This turn belongs to the conversation that is open right now; keep a direct
   // reference so nothing can be written into a different record mid-turn.
@@ -847,7 +876,7 @@ const server = http.createServer(async (req, res) => {
           enabledTools: null,
           customTools: s.customTools,
           webSearchUrl: s.webSearchUrl,
-          agentMode: s.agentMode,
+          agentMode: effectiveAgentMode(s),
         }).names();
         return json(res, 200, {
           version: VERSION,
@@ -856,7 +885,10 @@ const server = http.createServer(async (req, res) => {
           tools: tools.names(),
           allTools,
           withheld: tools.withheld(),
-          catalog: tools.describe({ verbose: s.agentMode === "guided" }),
+          catalog: tools.describe({
+            verbose: effectiveAgentMode(s) === "guided",
+            brief: effectiveAgentMode(s) === "expert",
+          }),
           settings: publicSettings(),
           history: conversation.messages.filter((m) => m.role !== "system"),
           turns: (conversation.turns ?? []).map(turnView),
@@ -988,29 +1020,64 @@ const server = http.createServer(async (req, res) => {
         const body = await readJsonBody(req);
         const action = typeof body.action === "string" ? body.action : "";
         const s = getSettings();
-        const build = (raw: unknown, id: string): McpServer => {
+        const build = (raw: unknown, id: string, prior?: McpServer): McpServer => {
           const item = (raw ?? {}) as Record<string, unknown>;
-          return {
+          const merged: Record<string, unknown> = {
+            ...((prior ?? {}) as unknown as Record<string, unknown>),
+            ...item,
             id,
-            name: String(item.name ?? id),
-            transport: item.transport === "http" ? "http" : "stdio",
-            command: String(item.command ?? ""),
-            args: Array.isArray(item.args)
-              ? item.args.map((a) => String(a))
-              : String(item.args ?? "").trim()
-                ? String(item.args).split(/\s+/)
-                : [],
-            env: (item.env ?? {}) as Record<string, string>,
-            url: String(item.url ?? ""),
-            enabled: item.enabled !== false,
-            autoApprove: item.autoApprove === true,
-            tools: [],
+            name: String(item.name ?? prior?.name ?? id),
+            transport: String(item.transport ?? prior?.transport ?? "stdio"),
+            command: String(item.command ?? prior?.command ?? ""),
+            args: item.args !== undefined ? item.args : (prior?.args ?? []),
+            env: item.env !== undefined ? item.env : (prior?.env ?? {}),
+            cwd: String(item.cwd ?? prior?.cwd ?? ""),
+            url: String(item.url ?? prior?.url ?? ""),
+            headers: item.headers !== undefined ? item.headers : (prior?.headers ?? {}),
+            enabled: item.enabled !== undefined ? item.enabled !== false : (prior?.enabled ?? true),
+            autoApprove: item.autoApprove !== undefined ? item.autoApprove === true : (prior?.autoApprove ?? false),
+            toolPolicies: item.toolPolicies !== undefined ? item.toolPolicies : (prior?.toolPolicies ?? {}),
+            tools: prior?.tools ?? [],
           };
+          if ("timeoutMs" in item) merged.timeoutMs = item.timeoutMs;
+          else if (prior?.timeoutMs !== undefined) merged.timeoutMs = prior.timeoutMs;
+          return normalizeMcpServers([merged])[0];
         };
 
         if (action === "refresh") {
-          const result = await refreshMcp(true);
+          const result = await refreshMcp(true, true);
           return json(res, 200, { ok: true, ...result, mcp: mcpSnapshot() });
+        }
+
+        if (action === "test") {
+          const id = String(body.id ?? "test").trim() || "test";
+          const prior = s.mcpServers.find((x) => x.id === id);
+          try {
+            const candidate = build(body.server ?? body, id, prior);
+            const test = await testMcpServer(candidate);
+            return json(res, 200, { ok: test.ok, test, server: candidate });
+          } catch (error) {
+            return json(res, 400, { error: (error as Error).message, ok: false });
+          }
+        }
+
+        if (action === "import") {
+          try {
+            const result = parseMcpConfig(body.config ?? body.json ?? body, s.mcpServers);
+            updateSettings({ mcpServers: result.servers });
+            saveSettings();
+            const outcome = await refreshMcp(true, true);
+            return json(res, 200, {
+              ok: true,
+              added: result.added,
+              updated: result.updated,
+              skipped: result.skipped,
+              ...outcome,
+              mcp: mcpSnapshot(),
+            });
+          } catch (error) {
+            return json(res, 400, { error: (error as Error).message, ok: false });
+          }
         }
 
         if (action === "add" || action === "update") {
@@ -1019,9 +1086,14 @@ const server = http.createServer(async (req, res) => {
             return json(res, 400, { error: "server id must be letters, digits, - or _ (max 32)" });
           }
           const existing = s.mcpServers.find((x) => x.id === id);
-          const next = build(body.server ?? existing ?? {}, id);
+          let next: McpServer;
+          try {
+            next = build(body.server ?? body, id, existing);
+          } catch (error) {
+            return json(res, 400, { error: (error as Error).message });
+          }
           const list = existing
-            ? s.mcpServers.map((x) => (x.id === id ? { ...next, tools: x.tools } : x))
+            ? s.mcpServers.map((x) => (x.id === id ? next : x))
             : [...s.mcpServers, next];
           try {
             updateSettings({ mcpServers: list });
@@ -1030,7 +1102,7 @@ const server = http.createServer(async (req, res) => {
           }
           saveSettings();
           mcp.drop(id);
-          const result = await refreshMcp(false);
+          const result = await refreshMcp(false, true);
           return json(res, 200, { ok: true, ...result, mcp: mcpSnapshot() });
         }
 
@@ -1039,7 +1111,7 @@ const server = http.createServer(async (req, res) => {
           updateSettings({ mcpServers: s.mcpServers.filter((x) => x.id !== id) });
           saveSettings();
           mcp.drop(id);
-          await refreshMcp(false);
+          await refreshMcp(false, true);
           return json(res, 200, { ok: true, mcp: mcpSnapshot() });
         }
 
@@ -1050,7 +1122,7 @@ const server = http.createServer(async (req, res) => {
           updateSettings({ mcpServers: list });
           saveSettings();
           mcp.drop(id);
-          await refreshMcp(false);
+          await refreshMcp(false, true);
           return json(res, 200, { ok: true, mcp: mcpSnapshot() });
         }
 
@@ -1171,7 +1243,7 @@ const server = http.createServer(async (req, res) => {
         if (getSettings().workdir !== before) setTerminalCwd(getSettings().workdir);
         // Changing the MCP switch or the server list takes effect at once.
         if (result.changed.includes("mcpEnabled") || result.changed.includes("mcpServers")) {
-          const outcome = await refreshMcp(true);
+          const outcome = await refreshMcp(true, true);
           notices.push(
             outcome.errors.length > 0
               ? `warning: MCP ${outcome.errors.join("; ")}`
@@ -1192,7 +1264,7 @@ const server = http.createServer(async (req, res) => {
       case "POST /api/settings/reload": {
         loadSettings();
         const notices = applySettings();
-        await refreshMcp(false);
+        await refreshMcp(false, true);
         broadcast({ type: "settings", settings: publicSettings(), changed: ["*"] });
         return json(res, 200, { settings: publicSettings(), notices, mcp: mcpSnapshot() });
       }
@@ -1279,7 +1351,8 @@ const server = http.createServer(async (req, res) => {
         const tools = buildTools();
         return json(res, 200, {
           version: VERSION,
-          agentMode: s.agentMode,
+          agentMode: effectiveAgentMode(s),
+          agentModeSetting: s.agentMode,
           dryRun: s.dryRun,
           contextLimit: effectiveContextLimit().limit,
           tools: tools.schemas().map((schema) => ({

@@ -17,14 +17,24 @@ import readline from "node:readline";
 import { configureAudit } from "./audit.js";
 import { capText } from "./context.js";
 import { configureErrorHints, configurePowerShell, configurePowerShellDiagnostics } from "./util/ps.js";
-import { ensureSkillsFolder } from "./skills.js";
-import { getSettings } from "./settings.js";
+import { ensureSkillsFolder, listSkills, loadSkill } from "./skills.js";
+import { effectiveAgentMode, getSettings } from "./settings.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { mcp } from "./mcp.js";
 import { VERSION } from "./version.js";
 
-/** What we answer when the client does not say which version it speaks. */
-const PROTOCOL_VERSION = "2024-11-05";
+/**
+ * Revisions this server understands, newest first. A client that asks for one of
+ * them gets that one back; anything else is answered with the newest, which is
+ * what the specification asks a server to do.
+ */
+const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
+
+/** A short brief shown by clients that support `instructions`. */
+const INSTRUCTIONS =
+  "win-agent drives this Windows machine. Read a file before overwriting it; use apply_patch for code; " +
+  "run the project's tests when they exist. Destructive actions (delete, move, services, registry, " +
+  "shutdown) may be refused when the server was started without mcpServeAutoApprove.";
 
 /** No tool result is allowed to be megabytes: the client has a window too. */
 const RESULT_LIMIT = 64_000;
@@ -82,13 +92,13 @@ export async function runMcpServer(): Promise<void> {
     return false;
   };
 
-  if (settings.mcpEnabled) await mcp.ensureFresh();
+  if (settings.mcpEnabled) await mcp.ensureFresh(settings.mcpRefreshSeconds * 1000);
   const tools = createWindowsTools(approve, {
     dryRun: settings.dryRun,
     enabledTools: settings.enabledTools,
     customTools: settings.customTools,
     webSearchUrl: settings.webSearchUrl,
-    agentMode: settings.agentMode,
+    agentMode: effectiveAgentMode(settings),
   });
 
   note(`ready: ${tools.names().length} tools, dry-run ${settings.dryRun ? "on" : "off"}`);
@@ -109,11 +119,20 @@ export async function runMcpServer(): Promise<void> {
     try {
       switch (method) {
         case "initialize": {
-          const asked = typeof params?.protocolVersion === "string" ? params.protocolVersion : PROTOCOL_VERSION;
+          const asked =
+            typeof params?.protocolVersion === "string" ? params.protocolVersion : PROTOCOL_VERSIONS[0];
+          const protocolVersion = PROTOCOL_VERSIONS.includes(asked) ? asked : PROTOCOL_VERSIONS[0];
+          const skills = listSkills().filter((skill) => !skill.problem);
           reply(id, {
-            protocolVersion: asked,
-            capabilities: { tools: { listChanged: false } },
+            protocolVersion,
+            capabilities: {
+              tools: { listChanged: false },
+              // Installed skills are exposed as prompts, so an IDE can insert one
+              // into a conversation without win-agent running a turn.
+              ...(skills.length > 0 ? { prompts: { listChanged: false } } : {}),
+            },
             serverInfo: { name: "win-agent", version: VERSION },
+            instructions: INSTRUCTIONS,
           });
           return;
         }
@@ -133,6 +152,42 @@ export async function runMcpServer(): Promise<void> {
             })),
           });
           return;
+        case "prompts/list": {
+          const skills = listSkills().filter((skill) => !skill.problem);
+          reply(id, {
+            prompts: skills.map((skill) => ({
+              name: skill.name,
+              description: skill.description || skill.name,
+              // Skills are self-contained instructions, not parameterised prompts.
+              arguments: [],
+            })),
+          });
+          return;
+        }
+        case "prompts/get": {
+          const name = typeof params?.name === "string" ? params.name : "";
+          if (!name) {
+            fail(id, -32602, "prompts/get needs a name");
+            return;
+          }
+          const loaded = loadSkill(name);
+          if (typeof loaded === "string") {
+            fail(id, -32602, loaded.replace(/^Error:\s*/, ""));
+            return;
+          }
+          const description =
+            loaded.skill.description || loaded.skill.when || loaded.skill.name;
+          reply(id, {
+            description,
+            messages: [
+              {
+                role: "user",
+                content: { type: "text", text: loaded.body },
+              },
+            ],
+          });
+          return;
+        }
         case "tools/call": {
           const name = typeof params?.name === "string" ? params.name : "";
           if (!name) {

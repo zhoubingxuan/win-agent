@@ -8,8 +8,7 @@ advertises becomes a tool the model can call, named `mcp__<server>__<tool>`.
 MCP is **off** until you switch it on, because a server is a program that runs with
 your rights.
 
-> All commands below were run against the code in this repository, and the first one
-> needs **nothing installed** — it uses the mock server that ships in
+> The first example needs **nothing installed** — it uses the mock server that ships in
 > [`scripts/fixtures/mock-mcp-server.mjs`](../scripts/fixtures/mock-mcp-server.mjs),
 > which the test suite uses too.
 
@@ -23,11 +22,12 @@ Start the agent (or keep it running) and add the fixture:
 PS D:\new> /mcp add demo stdio node D:\new\scripts\fixtures\mock-mcp-server.mjs
 updated: mcpServers, mcpEnabled
 MCP master switch: on (1 server(s) configured)
-  demo           stdio connected, 5 tool(s)
+  demo           stdio connected, 5 tool(s) +2R/1P
 ```
 
 The five tools it pretends to have are `echo`, `weird.name/x`, `fail`, `structured`
-and `sampling`. What the model sees:
+and `sampling`. It also advertises **two resources** and **one prompt**, which is how
+the 2.3 context path is exercised.
 
 ```
 PS D:\new> /mcp tools
@@ -41,7 +41,9 @@ MCP tools the model can call (5):
 
 Note the second name: `weird.name/x` is not a legal function name (dots and slashes
 are not allowed), so it is sanitized to `mcp__demo__weird_name_x`, the same name the
-model uses. The sidebar **Tools** chips show exactly the same names.
+model uses. Names are capped at 64 characters; if two servers produce the same name,
+the second gets a suffix instead of silently replacing the first. The sidebar **Tools**
+chips show exactly the same names.
 
 Call it from the chat:
 
@@ -57,6 +59,35 @@ The demo MCP tool echoed "banana".
 The call asks for approval because a server you just added is not trusted; flip
 **auto-approve** on that server (or set `autoApprove`) if you would rather not be
 asked. `dryRun` reports the call without making it.
+
+### Resources and prompts: one tool, not two hundred
+
+A server can offer documents (`resources`) and reusable prompt templates (`prompts`).
+Instead of turning each one into a separate function, win-agent registers one
+**`mcp_context`** tool — and only while a connected server actually has context:
+
+```
+you> list the context the demo MCP server offers
+  -> mcp_context {"action":"list"}
+  <- MCP servers:
+     - demo (mock-mcp 1.0.0): 5 tool(s), 2 resource(s), 1 prompt(s)
+
+     Resources (2):
+     - demo: mock://doc (Mock document) [text/plain]
+     - demo: mock://other (Other) [text/plain]
+
+     Prompts (1):
+     - demo: greet — Greet someone args: name*
+
+you> read mock://doc and render the greet prompt for Ada
+  -> mcp_context {"action":"read","uri":"mock://doc"}
+  <- resource body
+  -> mcp_context {"action":"prompt","name":"greet","arguments":{"name":"Ada"}}
+  <- hello Ada
+```
+
+`action: "read"` and `action: "prompt"` record what they read in the audit log. The
+`server` argument is only needed when two servers expose the same URI/name.
 
 Remove it again:
 
@@ -114,6 +145,16 @@ On Windows you write `npx`, not `npx.cmd`: the agent resolves the command throug
 The last argument (`D:\`) is the directory the server is *allowed* to touch — the
 server enforces it, and the agent only ever calls the tools the server advertises.
 
+A stdio server can also have:
+
+- **`cwd`** — the working directory it starts in (default: the agent's folder);
+- **`env`** — extra environment variables;
+- **`timeoutMs`** — one request's limit (default 20 s, clamped to 1–600 s).
+
+`${VAR}`, `${env:VAR}` and `%VAR%` are expanded in `command`, `args`, `env`, `cwd`,
+`url` and `headers`. A missing variable becomes an empty string, so an absent secret
+fails closed instead of sending the literal `${TOKEN}`.
+
 ---
 
 ## 3. A real HTTP server — Streamable HTTP
@@ -127,38 +168,89 @@ MCP master switch: on (2 server(s) configured)
   docs           http  connected, 3 tool(s)
 ```
 
-The same from the Settings tab: fill in an `id`, slide **stdio ↔ HTTP** to **HTTP**,
-paste the URL, press **Add server**.
+Headers are added in **Settings → MCP → Edit**, for example:
 
-The transport is *Streamable HTTP*: one POST per JSON-RPC message, and the reply may
-be `application/json` or an `text/event-stream` body. An old **SSE-only** server is not
-spoken to directly — put an HTTP bridge such as
-[`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) in front of it and add the
-bridge's URL.
+```json
+{ "Authorization": "Bearer ${DOCS_TOKEN}", "X-Client": "win-agent" }
+```
+
+They are sent with every POST (and with the SSE handshake for `sse`). The transport is
+*Streamable HTTP*: one POST per JSON-RPC message, and the reply may be
+`application/json` or an `text/event-stream` body.
+
+An old **SSE-only** server (one long-lived `GET` stream plus a POST endpoint) uses
+the `sse` transport directly — no bridge needed:
+
+```
+PS D:\new> /mcp add legacy sse http://127.0.0.1:3001/sse
+  legacy         sse   connected, 2 tool(s)
+```
+
+The command form is:
+
+```
+/mcp add <id> stdio <command> [args...]
+/mcp add <id> http|sse <url>
+```
 
 ---
 
-## 4. The same thing from the API / settings file
+## 4. The same thing from the settings UI, API or file
+
+**Settings → MCP** gives you a card per server with **Edit**, **Test**, **Reconnect**
+and **Remove**. *Test* starts the candidate, performs the handshake, lists its tools,
+resources and prompts, and stops it again without touching the live connection. The
+card also has one policy select per tool:
+
+| Policy | Effect |
+| --- | --- |
+| `allow` | run without asking |
+| `ask` | show Approve / Deny (the default unless the server is auto-approved) |
+| `deny` | do not offer this tool to the model at all |
+
+A tool policy overrides the server's auto-approve switch. For example, keep
+`write_file` and `delete` on `ask`, but let `read_file` run freely.
+
+The **import box** accepts an `mcpServers` object copied from Claude Desktop, Cursor,
+VS Code or another client:
+
+```json
+{
+  "mcpServers": {
+    "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:\\"] },
+    "remote": { "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer x" } }
+  }
+}
+```
+
+New ids are added; an existing id is updated in place (no `_2` duplicate). A URL that
+ends in `/sse` is imported as `sse`; anything else with a URL is `http`. The API action
+is `{"action":"import","config":{...}}`.
 
 ```powershell
 # add a stdio server
 Invoke-RestMethod -Method Post http://127.0.0.1:8787/api/mcp -ContentType application/json `
   -Body '{"action":"add","id":"fs","server":{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","D:\\"]}}'
 
-# add an HTTP server that runs without asking for approval
+# test a candidate without saving it
 Invoke-RestMethod -Method Post http://127.0.0.1:8787/api/mcp -ContentType application/json `
-  -Body '{"action":"add","id":"docs","server":{"transport":"http","url":"http://127.0.0.1:3001/mcp","autoApprove":true}}'
+  -Body '{"action":"test","id":"fs","server":{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","D:\\"]}}'
+
+# add an HTTP server with a header and a per-tool policy
+Invoke-RestMethod -Method Post http://127.0.0.1:8787/api/mcp -ContentType application/json `
+  -Body '{"action":"add","id":"docs","server":{"transport":"http","url":"http://127.0.0.1:3001/mcp","headers":{"Authorization":"Bearer ${DOCS_TOKEN}"},"toolPolicies":{"search":"allow","delete":"deny"}}}'
 
 # what is live right now?
 (Invoke-RestMethod http://127.0.0.1:8787/api/mcp).servers | Format-Table id, transport, connected, enabled
 ```
 
-In `data/settings.json` the same two servers look like this (see
+In `data/settings.json` a stdio server and an HTTP server look like this (see
 [settings.md](settings.md) for a full file):
 
 ```json
 {
   "mcpEnabled": true,
+  "mcpRefreshSeconds": 120,
   "mcpServers": [
     {
       "id": "fs",
@@ -167,9 +259,13 @@ In `data/settings.json` the same two servers look like this (see
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:\\"],
       "env": {},
+      "cwd": "D:\\work",
       "url": "",
+      "headers": {},
       "enabled": true,
       "autoApprove": false,
+      "toolPolicies": { "write_file": "ask", "read_file": "allow" },
+      "timeoutMs": 20000,
       "tools": []
     },
     {
@@ -180,17 +276,20 @@ In `data/settings.json` the same two servers look like this (see
       "args": [],
       "env": {},
       "url": "http://127.0.0.1:3001/mcp",
+      "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" },
       "enabled": true,
-      "autoApprove": true,
+      "autoApprove": false,
+      "toolPolicies": {},
+      "timeoutMs": 20000,
       "tools": []
     }
   ]
 }
 ```
 
-`env` is passed to a stdio server as environment variables, for example
-`{"GITHUB_TOKEN":"ghp_..."}`. It is stored in `data/settings.json` like your API key
-is — the file is local-only and never served to another machine.
+`env` and `headers` are stored in `data/settings.json` like your API key is — the
+file is local-only and never served to another machine. Prefer `${VAR}` references
+when you can, so the secret stays in the environment instead of the file.
 
 ---
 
@@ -198,19 +297,23 @@ is — the file is local-only and never served to another machine.
 
 | Command | What it does |
 | --- | --- |
-| `/mcp` | master switch, one line per server: transport, connection state, tool count, last error |
+| `/mcp` | master switch, one line per server: transport, connection, tool count, `+nR/nP` resources/prompts, last error |
 | `/mcp on` · `/mcp off` | the master switch; off stops every server and hides their tools from the model |
 | `/mcp tools` | every `mcp__server__tool` name the model can call |
-| `/mcp refresh` | reconnect and re-read the tool lists (the UI button is *Reconnect & refresh tools*) |
+| `/mcp refresh` | reconnect and re-read the lists (the UI button is *Reconnect & refresh tools*) |
 | `/mcp enable <id>` · `/mcp disable <id>` | one server on/off, without deleting it |
 | `/mcp add <id> stdio <command> [args...]` | add a stdio server |
-| `/mcp add <id> http <url>` | add an HTTP server |
+| `/mcp add <id> http\|sse <url>` | add a remote server |
 | `/mcp remove <id>` | delete a server |
 
-The tool list is refreshed at boot, whenever MCP settings change, before every turn
-(cached for two minutes) and on demand — so a server you start *later* is picked up
-without restarting the agent. If a server is down, `/mcp` says so and the agent keeps
-working with the tools it still has.
+The cache is refreshed at boot, whenever MCP settings change, and before a turn when
+it is older than `mcpRefreshSeconds` (default 120, range 10–3600). A server that sends
+`notifications/*/list_changed` marks its lists dirty, so the next turn re-reads them
+without reconnecting. **Reconnect & refresh tools** forces a fresh process now.
+
+If a server is down, `/mcp` says so and the agent keeps working with the tools it
+still has. A failed call reconnects once and retries; background retries wait 2 s,
+5 s, 15 s, 60 s, then every 5 minutes.
 
 ---
 
@@ -221,10 +324,12 @@ working with the tools it still has.
 | `not connected` + `spawn node ENOENT` | `node` is not on `PATH` for the agent's process; use `"%ProgramFiles%\nodejs\node.exe"` or fix `PATH` |
 | `not connected` + a message from the server | the server itself failed to start — its own stderr is quoted in the panel |
 | `no answer to initialize within 15s` | the command started but never spoke MCP; check you did not point at a plain script |
-| `no answer to tools/list within 15s` | the handshake worked but the server is stuck — try it by hand |
+| `no answer to tools/list within 20s` | the handshake worked but the server is stuck — try **Test** in the UI, or run it by hand |
 | `unknown MCP tool mcp__x__y` | the name is not in the last tool list: `/mcp refresh`, or `/mcp tools` to see the real names |
-| The tools never reach the model | master switch off, server off, or the tools are unchecked in *Enabled tools* |
+| The tools never reach the model | master switch off, server off, the tool is `deny`, or it is unchecked in *Enabled tools* |
+| A resource/prompt is missing | the server did not advertise `resources`/`prompts` in its handshake; refresh and check the card |
+| A header is empty although you set it | the `${VAR}` it references is not set in the agent's process, so it expands to an empty string |
 
 MCP is a *tool source*, not a security boundary: a server runs as your Windows user
-and can do whatever you can. Add only servers you trust, and leave
-**auto-approve** off unless you wrote it yourself.
+and can do whatever you can. Add only servers you trust, keep **auto-approve** off,
+and use `deny` for individual tools you do not want the model to reach.

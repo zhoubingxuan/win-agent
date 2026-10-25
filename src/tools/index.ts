@@ -77,6 +77,10 @@ export function createWindowsTools(approval: Approval, options: ToolOptions = {}
   // Tools offered by MCP servers (see src/mcp.ts). They are refreshed separately
   // - `mcp.ensureFresh()` - so building the tool set stays synchronous.
   for (const tool of mcp.tools(approval, options.dryRun ?? false)) registry.register(tool);
+  // One extra tool when a server offers resources or prompts: a small model does
+  // not need a tool per document, but it can list and read them on demand.
+  const context = mcp.contextTool();
+  if (context) registry.register(context);
 
   return registry.filter(options.enabledTools ?? null);
 }

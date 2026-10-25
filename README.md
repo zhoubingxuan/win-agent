@@ -14,9 +14,11 @@ translates that into correct, safely-quoted Windows commands.
 
 What that means in practice:
 
-- **Two agent modes** — `guided` (the default) supervises small local models with an
-  explicit operating procedure and one tool call per step; `normal` uses the plain
-  prompt. One slider in Settings, `/mode` in the terminal.
+- **Four agent modes, picked automatically** — `auto` (the default) inspects the
+  endpoint and model: cloud APIs and local models of 14B+ get the fast `expert`
+  workflow, small local models get `guided` supervision. `guided`, `normal` and
+  `expert` can also be pinned explicitly. One slider in Settings, `/mode` in the
+  terminal.
 - **Switchable endpoints** — flip between a local model server (LM Studio, Ollama,
   llama.cpp) and a cloud API; each keeps its own URL, key and model.
 - **Multi-model selection** — the model dropdown is filled from the endpoint's own
@@ -30,8 +32,11 @@ What that means in practice:
 - **Internet access** — a `web` tool searches, reads pages and calls APIs, so the
   agent is not blind to anything outside this machine.
 - **MCP support** — borrow tools from other programs (filesystem, git, a database,
-  your own service) over `stdio` or Streamable HTTP; they arrive as
-  `mcp__server__tool`, with their own schemas and an approval prompt.
+  your own service) over `stdio`, Streamable HTTP or legacy SSE; tools arrive as
+  `mcp__server__tool`, while resources and prompts are read through one condensed
+  `mcp_context` tool. Per-server headers, working directory, timeout, reconnect and
+  tool policies are all configurable, and an `mcpServers` block can be imported
+  straight from Claude Desktop, Cursor or VS Code.
 - **One model list for every local server** — ask LM Studio (port 1234) *and* Ollama
   (port 11434) what they can load, merged into one picker; picking a model from
   another server switches the endpoint with it.
@@ -112,7 +117,7 @@ No other runtime dependency: the web UI is plain HTML/CSS/JS served by `node:htt
 [`examples/`](examples/) has copy-paste material for everything:
 [one worked tool call per tool](examples/tool-calls.md),
 [ready-to-send tasks](examples/prompts.md) (English + 中文),
-[the two agent modes](examples/modes.md),
+[the four agent modes](examples/modes.md),
 [Windows compatibility notes](examples/windows.md),
 [custom commands](examples/custom-commands.md),
 [MCP servers](examples/mcp.md),
@@ -180,8 +185,8 @@ PS C:\Windows\Temp> /tools
 
 ### Settings
 A form for **every** setting, plus:
-- **Agent mode** — the local ↔ guided slider for small models (see
-  [Agent modes](#agent-modes--guided-vs-normal)).
+- **Agent mode** — the auto → guided → normal → expert slider, plus the mode `auto`
+  actually resolved to (see [Agent modes](#agent-modes--auto-guided-normal-expert)).
 - **Output detail** — how much of the process the chat log shows (see
   [Output detail](#output-detail)).
 - **Sandbox** — the folder fence and the command fence, on by default: file paths stay
@@ -192,8 +197,9 @@ A form for **every** setting, plus:
   from the list the endpoint actually reports.
 - **Local model sync** — one switch that merges the model lists of LM Studio and
   Ollama (see [below](#local-model-sync--lm-studio--ollama)).
-- **MCP** — a master switch, one switch per server, and a form to add more
-  (see [MCP](#mcp--tools-from-other-programs)).
+- **MCP** — a master switch, one card per server (edit, test, reconnect, remove),
+  per-tool allow/ask/deny policies, an import box for existing client configs, and a
+  cache slider (see [MCP](#mcp--tools-from-other-programs)).
 - **Windows** — which PowerShell is being driven, whether the agent is elevated, and
   the switch that keeps PowerShell errors in English.
 - **Memory** — keep the conversation across restarts.
@@ -212,19 +218,36 @@ see [Internal commands](#internal-commands--changing-things-from-the-web-termina
 
 ---
 
-## Agent modes — guided vs. normal
+## Agent modes — auto, guided, normal, expert
 
 A 7B model and a GPT-4-class model need different amounts of hand-holding, so the
-agent has **two modes**. One slider (normal ↔ guided) on the Settings tab, or
-`/mode guided` / `/mode normal` in the terminal, or the `agentMode` setting.
+agent has **four modes**. One slider (auto → guided → normal → expert) on the
+Settings tab, `/mode <name>` in the terminal, or the `agentMode` setting.
 
-| | `guided` (default) | `normal` |
-| --- | --- | --- |
-| System prompt | your prompt, the language rule, **plus a numbered operating procedure** | your prompt and the language rule |
-| Tool catalogue | every tool also lists its **required arguments** | tool names, actions and descriptions |
-| Tool calls per step | **exactly one** — extra calls are skipped and answered with a note | as many as the model emits |
-| Raw `powershell` tool | **not offered at all** — the model must use the structured actions | offered |
-| Best for | LM Studio / Ollama 3B–14B models | cloud models (GPT-4 class, Claude, DeepSeek) |
+| | `auto` (default) | `guided` | `normal` | `expert` |
+| --- | --- | --- | --- | --- |
+| What it does | resolves to `expert` or `guided` from the endpoint and model | supervises small models | plain prompt | short, batched workflow for capable models |
+| System prompt | — | numbered operating procedure | your prompt and the language rule | five efficiency rules |
+| Tool catalogue | — | required arguments spelled out | names, actions, descriptions | very brief one-line list |
+| Tool calls per step | — | **exactly one** | as many as the model emits | **batch independent calls** |
+| Raw `powershell` | — | **not offered** | offered | offered |
+| Best for | almost everyone | LM Studio / Ollama 3B–13B | a model you want unmanaged | cloud APIs and local models 14B+ |
+
+`auto` is a resolver, not a fifth behaviour. It chooses **`expert`** when the active
+profile has `kind: "api"`, or when the model name contains a size of at least
+**14B** (`qwen3-coder-30b` → expert). Everything else resolves to **`guided`**, so a
+7B model still gets the supervised procedure. The UI shows the resolved value
+(`auto → expert`), and `/status` prints it too. An explicit `guided`, `normal` or
+`expert` always wins.
+
+```powershell
+PS> /mode                 # current setting and what it resolves to
+PS> /mode auto            # follow the endpoint/model
+PS> /mode expert          # pin the fast workflow
+```
+
+Aliases are accepted in both languages: `自动`/`auto`, `监督`/`guided`,
+`普通`/`normal`, `专家`/`expert`. Unknown values fall back to `auto`.
 
 What the guided procedure actually says (English and Chinese versions ship in the
 box — the language follows the `language` setting):
@@ -260,15 +283,55 @@ free space with `Get-CimInstance` will write five broken scripts; asked for
 `system { action: "disk" }` it succeeds. For the same reason `processes start`
 refuses interpreters (`python`, `node`, `pwsh`, `cmd`, `bash`, …) in guided mode:
 a model that can run the script it just wrote is back to writing commands. `tests`
-is the sanctioned way to run a project's own suite; switch to `normal` for anything
-else. The shell comes back with the slider, `/mode normal`, the **Tools** panel note
-and `/tools` output.
+is the sanctioned way to run a project's own suite; switch to `normal` or `expert` for anything
+else. The shell comes back with the slider, `/mode normal` or `/mode expert`, the
+**Tools** panel note and `/tools` output.
 
-Switch to `normal` when you are driving a big model and want it to batch
-independent calls; nothing else changes — same tools, same approvals, same memory.
+Switch to `normal` when you are driving a capable model and want the plain prompt;
+`expert` is the better choice when you also want the short catalogue and batched calls.
+Nothing else changes — same tools, same approvals, same memory.
 
-`examples/modes.md` shows both prompts side by side and how to measure which one
-your model prefers.
+## What `expert` changes
+
+Expert mode exists because a capable model is slowed down by supervision it does not
+need. It keeps the user prompt and the language rule, then adds five rules:
+
+1. **No checklist for a one-step task.** `todo` is only for work with four or more
+   distinct steps; a finished plan is never restarted.
+2. **Batch independent calls.** Read three files in one reply when the API supports
+   it; only sequence calls whose arguments depend on an earlier result.
+3. **No running commentary.** Routine reads, writes and scans are not narrated.
+4. **Read before overwriting; patch code; run the project's tests.**
+5. **A short final answer** — what changed, where, and what the user must know.
+
+The catalogue sent with the prompt is deliberately **brief**: one line per tool,
+without repeating every action and argument that the JSON schema already carries. It
+keeps the context small and lets the model spend tokens on the job. Expert mode does
+**not** withhold the raw `powershell` tool and does **not** force one tool per step.
+
+Measured on the only model available here, the 30B coder, over the full 34-task suite:
+
+| Mode | Result | Time | Tokens |
+| --- | --- | --- | --- |
+| `guided` (2.2.0) | 33/34 | 2.4 min | 2 019 969 |
+| `expert` (2.3.0) | **34/34** | 3.2 min | **1 108 490** |
+
+Expert mode roughly **halved the tokens** and fixed the one failure. The wall-clock
+time was similar once the 29-second first-call model load is excluded; the extra time
+in the raw number is startup, not reasoning. That is the intended trade: less prompt
+and less narration, more work per request.
+
+## Which mode should I use?
+
+| Your model | Use | Why |
+| --- | --- | --- |
+| LM Studio / Ollama 3B–9B (`qwen2.5:7b`, `glm-4.7-flash`, …) | `auto` | resolves to `guided`: explicit rules and visible argument names remove the two commonest small-model failures: inventing a tool, and narrating success without calling anything |
+| Local 14B–30B (`qwen3-coder-30b`, …) | `auto` | resolves to `expert`: capable enough to batch calls, and the shorter prompt saves context |
+| GPT-4 class / Claude / DeepSeek via API | `auto` | resolves to `expert`; pin `normal` if you specifically want the plain prompt |
+| A model that ignores the expert rules | pin `guided` or `normal` | `auto` is a heuristic, not a guarantee; measure on your own tasks |
+
+`examples/modes.md` shows the prompts side by side and how to measure which one your
+model prefers.
 
 ---
 
@@ -683,27 +746,58 @@ internal HTTP service. win-agent is the **client** — you point it at servers.
 The feature is off until you switch it on (**Settings → MCP → master switch**, or
 `/mcp on`), because an MCP server is a program that runs with your rights.
 
-### Two transports
+### Three transports
 
 | Transport | What you give it | How it runs |
 | --- | --- | --- |
 | `stdio` | a command line, e.g. `npx -y @modelcontextprotocol/server-filesystem D:\` | the agent starts it as a child process and speaks newline-delimited JSON-RPC over its stdin/stdout |
 | `http` | a URL, e.g. `http://127.0.0.1:3001/mcp` | *Streamable HTTP*: one POST per request, and the answer may come back as JSON or as an `text/event-stream` body |
+| `sse` | a URL, e.g. `http://127.0.0.1:3001/sse` | the older HTTP+SSE transport: one long-lived event stream for answers, one POST endpoint for requests. Use it for servers that have not moved to Streamable HTTP |
 
 On Windows the command is resolved through `PATHEXT`, so `npx`, `uvx` and friends
 work without you writing `npx.cmd`; a `.cmd`/`.bat` server is started through
-`cmd.exe`. A legacy SSE-only server is not spoken to directly — put an HTTP bridge
-such as `mcp-proxy` in front of it and add that URL.
+`cmd.exe`. A stdio server can have its own `cwd` (the agent's folder by default).
 
-### Adding one
+Environment variables in `command`, `args`, `env`, `cwd`, `url` and `headers` are
+expanded from the agent's process: `${GITHUB_TOKEN}`, `${env:GITHUB_TOKEN}` and
+`%GITHUB_TOKEN%` all work. A missing variable becomes an empty string, so a secret
+that is not set fails closed instead of sending the literal text. `timeoutMs` sets
+one request's limit per server (default 20 s, clamped to 1 s–600 s).
 
-Settings → *MCP*: fill in an `id`, slide **stdio ↔ HTTP** to the transport you
-need, paste the command line or the URL, optionally flip **auto-approve**, press
-**Add server**. The same from the terminal:
+### Adding, testing and importing
+
+Settings → *MCP* shows one card per server. **Test** starts a candidate server,
+reads its handshake and lists, and stops it again without disturbing the live
+connection. **Edit** changes any field; **Reconnect & refresh tools** forces a
+fresh connection; the switch disables one server without deleting it.
+
+The import box accepts the `mcpServers` block from Claude Desktop, Cursor, VS Code
+or any client that uses the same shape:
+
+```json
+{
+  "mcpServers": {
+    "fs": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:\\"],
+      "env": { "LOG_LEVEL": "warn" }
+    },
+    "docs": {
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" }
+    }
+  }
+}
+```
+
+A new id is added, an existing id is updated in place (no `_2` duplicate), and a URL
+ending in `/sse` is recognised as the legacy transport. Invalid entries are skipped
+and reported, not silently guessed.
 
 ```
 PS D:\new> /mcp add fs stdio npx -y @modelcontextprotocol/server-filesystem D:\
 PS D:\new> /mcp add docs http http://127.0.0.1:3001/mcp
+PS D:\new> /mcp add legacy sse http://127.0.0.1:3001/sse
 PS D:\new> /mcp                     # master switch, servers, connection, tool counts
 PS D:\new> /mcp tools               # every MCP tool the model can call
 PS D:\new> /mcp refresh             # reconnect and re-read the tool lists
@@ -724,24 +818,52 @@ Every tool a server offers becomes a normal tool called
 }
 ```
 
-The name is sanitized to `[A-Za-z0-9_-]` and capped at 64 characters, which is what
-OpenAI-compatible endpoints accept. MCP tools show up in the model's catalog (the
-system prompt), in the **Tools** chips in the sidebar and in the *Enabled tools*
-grid, so `enabledTools` / the switches can hide them individually.
+Names are sanitized to `[A-Za-z0-9_-]` and capped at 64 characters, which is what
+OpenAI-compatible endpoints accept; if two tools would collide, the second gets a
+suffix instead of overwriting the first. Results are capped at 64 000 characters so
+one huge document cannot blow the context window.
 
-### Approval
+Resources and prompts do **not** become one tool each. They are exposed through a
+single condensed tool, registered only when a connected server offers them:
 
-MCP tools can do anything their server can, so every call asks for **Approve /
-Deny** unless that server is marked **auto-approve** (or the global `autoApprove`
-is on). With `dryRun` on they are never called at all.
+| Call | What it does |
+| --- | --- |
+| `mcp_context { action: "list" }` | every resource URI and prompt name, with descriptions |
+| `mcp_context { action: "read", uri }` | reads a `resources/read` result |
+| `mcp_context { action: "prompt", name, arguments }` | renders a `prompts/get` result |
 
-### When a server is down
+That keeps a server with 200 documents from adding 200 tools to the prompt. Tools,
+resources and prompts are all visible on the server card; MCP tools also appear in
+the **Tools** chips, the *Enabled tools* grid and `enabledTools`.
 
-The agent still starts. The *MCP* panel marks that server **not connected**, prints
-the reason, and keeps showing the tools it offered last time. The tool list is
-refreshed at boot, whenever MCP settings change, before every turn (cached for two
-minutes) and on **Reconnect & refresh tools** — so a server you start later is
-picked up without restarting the agent.
+### Approval — globally, per server, per tool
+
+MCP tools can do anything their server can, so the default is **Approve / Deny**.
+Three layers decide it, and the most specific wins:
+
+1. **Per-tool policy** on the server card: `allow`, `ask` or `deny`.
+   `deny` removes the tool from the catalogue and the schemas; `allow` skips the
+   prompt; `ask` always asks.
+2. **Server `autoApprove`**: the fallback for tools without their own policy.
+3. **Global `autoApprove`**: applies when the server does not override it.
+
+`dryRun` wins over all three: the call is described, never executed. A policy of
+`deny` is also a way to keep a dangerous tool (`write_file`, `delete`) out of the
+model's reach while still using the rest of that server.
+
+### Refresh, reconnect and failure
+
+The lists are refreshed at boot, whenever MCP settings change, and before a turn
+when the cache is older than **`mcpRefreshSeconds`** (default 120 s, range
+10–3600). A server that sends `notifications/*/list_changed` marks its lists dirty,
+so the next turn re-reads them without a reconnect. **Reconnect & refresh tools**
+forces a new connection immediately.
+
+If a server dies during a call, the agent reconnects once and retries that call. If
+the server itself is down, the agent still starts: the card marks it **not
+connected**, shows its stderr tail and the reason, keeps the last known tool list,
+and retries in the background after 2 s, 5 s, 15 s, 60 s, then every 5 minutes.
+A cached list is never silently treated as live.
 
 ---
 
@@ -771,9 +893,11 @@ What the client can do:
 
 | Request | Answer |
 | --- | --- |
-| `initialize` | echoes the protocol version the client asked for, announces the `tools` capability, and names itself `win-agent` with its version |
-| `tools/list` | every tool the model would get here (`files`, `system`, `processes`, `services`, `network`, `registry`, `scheduled_tasks`, `ui`, `skills`, `powershell`, custom commands, MCP tools), with the same JSON Schema |
+| `initialize` | negotiates `2025-06-18`, `2025-03-26` or `2024-11-05`, announces the `tools` capability (plus `prompts` when skills are installed), sends short instructions, and names itself `win-agent` with its version |
+| `tools/list` | every tool the model would get here (`files`, `apply_patch`, `git`, `tests`, `system`, `processes`, `services`, `network`, `registry`, `scheduled_tasks`, `ui`, `skills`, `todo`, `web`, `powershell`, custom commands, MCP tools), with the same JSON Schema |
 | `tools/call` | runs the tool and returns its text; a tool error comes back as `isError: true`, not a broken connection |
+| `prompts/list` | every installed skill, with the same name/description/when metadata the chat shows |
+| `prompts/get` | the skill's body as a user message, so an IDE can insert a procedure into a conversation without starting a win-agent turn |
 | `ping` | `{}` |
 
 Two rules make it safe to hand to another agent:
@@ -1142,7 +1266,7 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/prompt <text>` | the system prompt | next turn |
 | `/workdir <path>` | working directory (`chdir` + terminal cwd) | immediately |
 | `/powershell <exe>` | `powershell.exe` or `pwsh.exe` | next command |
-| `/mode <guided\|normal>` · `/mode` | supervision level for the model; bare `/mode` prints the current one | next turn |
+| `/mode <auto\|guided\|normal\|expert>` · `/mode` | supervision level for the model; bare `/mode` prints the current one and what `auto` resolves to | next turn |
 | `/verbosity <answer\|thinking\|full>` · `/verbosity` | how much of the process the chat shows; bare `/verbosity` prints the current level | immediately + saved |
 | `/enable <name...>` · `/disable <name...>` · `/enable all` | which tools the model may use | immediately |
 | `/custom add <name> <ps>` | adds a custom command | immediately |
@@ -1250,7 +1374,7 @@ with a message and nothing changes.
 | `temperature` | number | `0` | 0–2 |
 | `loopGuard` | boolean | `true` | refuse a third identical call that already returned the same answer twice (see [Staying on the rails](#staying-on-the-rails)) |
 | `todoCheck` | boolean | `true` | refuse to end a turn while the model's own checklist still has open items, twice (see [The checklist](#the-checklist--what-the-model-owes-you)) |
-| `agentMode` | `"guided"` \| `"normal"` | `guided` | supervision for small local models (see [Agent modes](#agent-modes--guided-vs-normal)) |
+| `agentMode` | `"auto"` \| `"guided"` \| `"normal"` \| `"expert"` | `auto` | how much the model is supervised; `auto` resolves to `expert` for cloud endpoints and local models 14B+ (see [Agent modes](#agent-modes--auto-guided-normal-expert)) |
 | `verbosity` | `"answer"` \| `"thinking"` \| `"full"` | `answer` | how much of the process the chat log shows (see [Output detail](#output-detail)) |
 | `auditLog` | boolean | `true` | append every change to `data/audit.jsonl` and keep the undo stack (see [Audit log and undo](#audit-log-and-undo)) |
 | `undoRetentionDays` | number | `7` | how long the copies in `data/undo/` are kept, 1–365 (see [Audit log and undo](#audit-log-and-undo)) |
@@ -1273,7 +1397,8 @@ with a message and nothing changes.
 | `webSearchUrl` | string | `https://www.bing.com/search?q={q}` | search page for the `web` tool; `{q}` = the query |
 | `syncLocalModels` | boolean | `true` | also ask LM Studio (1234) and Ollama (11434) for their models and merge them into the model picker |
 | `mcpEnabled` | boolean | `false` | the MCP master switch; while off no MCP server is started and no MCP tool is offered |
-| `mcpServers` | object[] | `[]` | MCP servers: `id`, `name`, `transport` (`stdio`\|`http`), `command`, `args`, `env`, `url`, `enabled`, `autoApprove`, `tools` |
+| `mcpServers` | object[] | `[]` | MCP servers: `id`, `name`, `transport` (`stdio`\|`http`\|`sse`), `command`, `args`, `env`, `cwd`, `url`, `headers`, `timeoutMs`, `toolPolicies`, `enabled`, `autoApprove`, `tools` |
+| `mcpRefreshSeconds` | number | `120` | how long the MCP tool/resource cache is reused before a turn re-lists it (10–3600) |
 | `mcpServeAutoApprove` | boolean | `false` | MCP **server** mode only: answer destructive actions on another agent's behalf instead of refusing them (see [MCP server mode](#mcp-server-mode--win-agent-as-the-toolset)) |
 | `recentWorkdirs` | string[] | `[]` | the working directories offered by the chat picker (last 10) |
 | `enabledTools` | string[] \| `null` | `null` | `null` = all tools enabled |
@@ -1302,7 +1427,7 @@ on. Every variable is the upper-case setting name with an `AGENT_` prefix:
 | `AGENT_SYSTEM_PROMPT` | `systemPrompt` | |
 | `AGENT_WORKDIR` | `workdir` | |
 | `AGENT_POWERSHELL` | `powershell` | `pwsh.exe` for PowerShell 7 |
-| `AGENT_MODE` | `agentMode` | `guided` / `normal` |
+| `AGENT_MODE` | `agentMode` | `auto` / `guided` / `normal` / `expert` |
 | `AGENT_SANDBOX` | `sandbox` | `true` / `false` |
 | `AGENT_VERBOSITY` | `verbosity` | `answer` / `thinking` / `full` |
 | `AGENT_AUDIT_LOG` | `auditLog` | `true` / `false` |
@@ -1519,8 +1644,8 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `POST` | `/api/settings` | partial update; returns `{ settings, changed, notices }` |
 | `POST` | `/api/settings/reload` | reload from disk |
 | `GET` | `/api/models` | `?profile=<id>` — ask that endpoint which models it serves (remembers the list **and** the context lengths it reports). With `syncLocalModels` on, the answer also carries `endpoints` (every local server, with its route and error), `merged` (all models, each with its `endpointId`) and `context` |
-| `GET` | `/api/mcp` | the MCP master switch and every server, with connection state, self-reported name and live tool list |
-| `POST` | `/api/mcp` | `{ action: "refresh" }` · `{ action: "add", id, server }` · `{ action: "update", id, server }` · `{ action: "remove", id }` · `{ action: "toggle", id, enabled }` |
+| `GET` | `/api/mcp` | the MCP master switch, cache TTL and every server, with transport, connection state, self-reported name, tools, resources, prompts, capabilities, latency, stderr and retry delay |
+| `POST` | `/api/mcp` | `{ action: "refresh" }` (force reconnect) · `{ action: "test", id, server }` · `{ action: "import", config }` · `{ action: "add", id, server }` · `{ action: "update", id, server }` · `{ action: "remove", id }` · `{ action: "toggle", id, enabled }` |
 | `GET` | `/api/skills` | `{ dir, skills }` — every skill in the folder (name, description, when, files, problem); `?name=<id>` returns that one with its `body` |
 | `POST` | `/api/skills` | `{ name, description, when, body }` — create or replace a skill; 400 with the reason when the name or the body is missing |
 | `POST` | `/api/skills/delete` | `{ name }` — remove the skill folder (404 when it does not exist) |
@@ -1832,11 +1957,12 @@ through the **real** HTTP server, the real tools and the real prompts, then chec
 **looking at the disk** — never at what the model said it did.
 
 ```powershell
-npm run eval                                  # the model in settings.json, all 34
+npm run eval                                  # the model in settings.json, all 34; auto picks the mode
 npm run eval -- --model qwen/qwen3.8-27b      # a specific one
 npm run eval -- --suite code                  # the 8 coder tasks only
 npm run eval -- --only write_exact,multi_mixed --verbose
-npm run eval -- --mode normal                 # full toolset instead of guided
+npm run eval -- --mode expert                 # pin the fast workflow
+npm run eval -- --mode auto                   # let the endpoint/model decide
 ```
 
 Each task gets a fresh conversation and its own folder inside a temp workdir; the
@@ -1857,20 +1983,24 @@ defines it, make `npm test` pass without editing the test, repair a module-expor
 mismatch, and fix two bugs in one file. The checks run the result with Node, and the
 oracle lives in `eval.mjs` — not in a helper file the model is free to edit.
 
-Baseline, guided mode (`data/eval/*.json` keeps every result):
+Baseline (`data/eval/*.json` keeps every result):
 
-| Model | Suite | Result | Time | Tokens |
-| --- | --- | --- | --- | --- |
-| `qwen/qwen3.8-27b` (2.1.0) | files (26) | **26/26** | 2.4 min | 721 018 |
-| `qwen3.6-35b-a3b` | files (26) | 24/26 | 3.8 min | 570 729 |
-| `qwen3-coder-30b-a3b-instruct-ud` (2.2.0) | **all (34)** | **33/34** | 2.4 min | 2 019 969 |
+| Model | Mode | Suite | Result | Time | Tokens |
+| --- | --- | --- | --- | --- | --- |
+| `qwen/qwen3.8-27b` (2.1.0) | guided | files (26) | **26/26** | 2.4 min | 721 018 |
+| `qwen3.6-35b-a3b` | guided | files (26) | 24/26 | 3.8 min | 570 729 |
+| `qwen3-coder-30b-a3b-instruct-ud` (2.2.0) | guided | **all (34)** | 33/34 | 2.4 min | 2 019 969 |
+| `qwen3-coder-30b-a3b-instruct-ud` (2.3.0) | expert | **all (34)** | **34/34** | 3.2 min | **1 108 490** |
 
-In that full run the coder passed **26/26** files tasks (1 030 130 tokens) and **7/8**
-code tasks (989 839 tokens). The one miss is `code_import_error`: it changed
+In the guided full run the coder passed **26/26** files tasks (1 030 130 tokens) and
+**7/8** code tasks (989 839 tokens). The one miss is `code_import_error`: it changed
 `export default square` to `module.exports = square` while `main.js` still destructures
 `{ square }`, then reported success without running `node main.js`. The zip task that
 timed out at 127 calls in 2.1 now passes in 10 — the write guard is what changed it.
-Re-run before believing a number: a local model is not deterministic.
+Under expert mode the same model passed all **34/34** and fixed that import task. It
+used **45% fewer tokens**; the first task took 29.3 s because the model had to load,
+and once that outlier is excluded the wall-clock time was comparable to guided. Re-run
+before believing a number: a local model is not deterministic.
 
 The same `qwen/qwen3.8-27b` run **after the checklist landed** (2.1.0) still passes
 **26/26** — 2.4 min and 721 018 tokens (85 → 113 calls). The extra calls are the plan

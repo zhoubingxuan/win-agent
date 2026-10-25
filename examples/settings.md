@@ -71,24 +71,29 @@ the agent sets per request.
 `qwen2.5:7b` is the smallest model that reliably drives the tools; anything bigger is
 better. Context length comes from `/api/show`.
 
-## Small local model: guided mode (the default)
+## Agent mode: auto by default
 
-`agentMode` decides how much the agent supervises the model. For a 3B–14B local model
-keep the default:
+`agentMode` decides how much the agent supervises the model. `auto` is the default:
 
 ```json
 {
-  "agentMode": "guided",
-  "maxSteps": 16,
+  "agentMode": "auto",
+  "maxSteps": 0,
   "temperature": 0
 }
 ```
 
-The model gets a numbered operating procedure, sees each tool's required argument
-names, and may call only one tool per step. Switch to `"normal"` for a GPT-4-class
-endpoint, where batching independent calls is faster. Everything else — tools,
-approval prompts, memory, context budget — is identical. See
-[modes.md](modes.md).
+`auto` resolves to `expert` for a cloud profile (`kind: "api"`) or a local model of
+14B or more, and to `guided` for smaller local models. The resolved value is what the
+prompt and catalogue use; `GET /api/settings` exposes it as `agentModeEffective`, and
+the UI shows `auto → expert`.
+
+For a 3B–13B local model, keep `auto` (or pin `"guided"`): it gets a numbered
+operating procedure, sees each tool's required argument names, may call only one tool
+per step, and cannot use the raw shell. For a capable model, keep `auto` (or pin
+`"expert"`): a short prompt, a brief catalogue and batched calls. `"normal"` is the
+plain prompt without the expert efficiency rules. Everything else — tools, approval
+prompts, memory, context budget — is identical. See [modes.md](modes.md).
 
 ## The chat log, quiet or loud
 
@@ -120,7 +125,7 @@ Japanese, …) Windows, whatever the model or the hints expect:
 
 ```json
 {
-  "agentMode": "guided",
+  "agentMode": "auto",
   "psEnglishErrors": true,
   "powershell": "powershell.exe"
 }
@@ -200,11 +205,12 @@ the active endpoint alone — a cloud API, for instance.
 ## With MCP servers
 
 MCP is off by default. This enables it and adds two servers: a filesystem server started
-as a child process, and an HTTP server that is trusted enough not to ask for approval.
+as a child process, and an HTTP server with a header and a per-tool policy.
 
 ```json
 {
   "mcpEnabled": true,
+  "mcpRefreshSeconds": 120,
   "mcpServers": [
     {
       "id": "fs",
@@ -213,9 +219,13 @@ as a child process, and an HTTP server that is trusted enough not to ask for app
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:\\new"],
       "env": {},
+      "cwd": "D:\\new",
       "url": "",
+      "headers": {},
       "enabled": true,
       "autoApprove": false,
+      "toolPolicies": { "read_file": "allow", "write_file": "ask", "delete": "deny" },
+      "timeoutMs": 20000,
       "tools": []
     },
     {
@@ -226,13 +236,25 @@ as a child process, and an HTTP server that is trusted enough not to ask for app
       "args": [],
       "env": {},
       "url": "http://127.0.0.1:3001/mcp",
+      "headers": { "Authorization": "Bearer ${DOCS_TOKEN}" },
       "enabled": true,
-      "autoApprove": true,
+      "autoApprove": false,
+      "toolPolicies": { "search": "allow", "delete": "deny" },
+      "timeoutMs": 20000,
       "tools": []
     }
   ]
 }
 ```
+
+`timeoutMs` is one request's limit (1 000–600 000 ms; default 20 000). `toolPolicies`
+is the most specific approval rule: `allow`, `ask` or `deny`; `deny` removes the tool
+from the model's catalogue entirely. `mcpRefreshSeconds` sets how long the lists are
+cached (10–3600; default 120). `cwd` applies to stdio servers; `headers` to `http` and
+`sse`. An SSE-only server uses `"transport": "sse"` and its `/sse` URL.
+
+`${VAR}`, `${env:VAR}` and `%VAR%` are expanded in `command`, `args`, `env`, `cwd`,
+`url` and `headers`; an unset variable becomes an empty string.
 
 Their tools reach the model as `mcp__fs__read_file`, `mcp__docs__search`, ... — so
 `enabledTools` can allow or hide them one by one:

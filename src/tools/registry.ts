@@ -159,8 +159,15 @@ export class ToolRegistry {
     return [...this.tools.values()].filter((tool) => !this.hidden.has(tool.schema.function.name));
   }
 
-  /** Markdown-ish catalog injected into the system prompt to guide small models. */
-  describe(options: { verbose?: boolean } = {}): string {
+  /**
+   * Markdown-ish catalog injected into the system prompt.
+   *
+   * `verbose` spells out every argument (for small models, which cannot read a
+   * JSON schema reliably). `brief` keeps one short line per tool: a capable
+   * model already has the schemas in the request, and duplicating them costs
+   * prompt tokens on every single step.
+   */
+  describe(options: { verbose?: boolean; brief?: boolean } = {}): string {
     const lines: string[] = ["Available tools (call them exactly by name):"];
     for (const tool of this.offered()) {
       const fn = tool.schema.function;
@@ -168,6 +175,12 @@ export class ToolRegistry {
         properties?: Record<string, { enum?: string[]; description?: string }>;
         required?: string[];
       };
+      if (options.brief) {
+        const first = String(fn.description ?? "").split(/[.!?。！？]/)[0] ?? "";
+        const text = first.length > 110 ? `${first.slice(0, 107)}...` : first;
+        lines.push(`- ${fn.name}: ${text}`);
+        continue;
+      }
       const actions = params.properties?.action?.enum;
       lines.push(`- ${fn.name}: ${fn.description}`);
       if (actions) lines.push(`    action must be one of: ${actions.join(", ")}`);

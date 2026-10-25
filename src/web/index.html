@@ -271,17 +271,20 @@
 
             <h4 data-i18n="settings.mode">Agent mode — how closely the model is supervised</h4>
             <p class="muted" data-i18n="settings.modeHint">
-              Guided mode is for small local models: the agent adds a numbered operating procedure to
-              the prompt, lists the required argument of every tool, and lets the model call only one
-              tool per step. Normal mode is the plain prompt, which is enough for a large model.
+              Auto is the default: a local model below 14B gets the guided procedure, while a cloud
+              endpoint or a local 14B+ model gets the expert fast path. Guided adds a numbered
+              procedure, spells out every argument, allows one tool per step and withholds the raw
+              shell. Normal is the plain prompt. Expert keeps the prompt short, does not nag about a
+              checklist and lets the model batch independent tool calls.
             </p>
-            <div class="twoway" title="normal ↔ guided">
-              <span data-i18n="settings.modeNormal">normal</span>
-              <label class="switch">
-                <input type="checkbox" id="s-guided" />
-                <span class="slider" aria-hidden="true"></span>
-              </label>
-              <span data-i18n="settings.modeGuided">guided</span>
+            <div class="levels">
+              <input type="range" id="s-mode" min="0" max="3" step="1" value="0" />
+              <div class="levels-labels">
+                <span data-i18n="settings.modeAuto">auto</span>
+                <span data-i18n="settings.modeGuided">guided</span>
+                <span data-i18n="settings.modeNormal">normal</span>
+                <span data-i18n="settings.modeExpert">expert</span>
+              </div>
             </div>
             <p class="muted" id="s-modeState">…</p>
 
@@ -395,23 +398,87 @@
               it with --mcp-server and uses these Windows tools. Nobody can press Approve
               there, so destructive actions are refused unless the switch above is on.
             </p>
-            <div id="mcp-list" class="mcp-list"></div>
-            <div class="mcp-add">
-              <input id="m-id" type="text" data-i18n-placeholder="settings.mcpId" placeholder="id (a-z, 0-9, _)" />
-              <div class="twoway" title="stdio ↔ HTTP">
-                <span data-i18n="settings.mcpStdio">stdio</span>
-                <label class="switch">
-                  <input type="checkbox" id="m-http" />
-                  <span class="slider" aria-hidden="true"></span>
-                </label>
-                <span data-i18n="settings.mcpHttp">HTTP</span>
+
+            <h4 data-i18n="settings.mcpCache">MCP cache</h4>
+            <div class="levels">
+              <input type="range" id="s-mcpRefreshSeconds" min="10" max="3600" step="10" value="120" />
+              <div class="levels-labels">
+                <span>10s</span><span>1m</span><span>10m</span><span>1h</span>
               </div>
-              <input id="m-target" type="text" data-i18n-placeholder="settings.mcpCommand"
-                placeholder="npx -y @modelcontextprotocol/server-filesystem D:\" />
-              <label class="switch" title="Run this server's tools without asking"><input type="checkbox" id="m-auto" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpAuto">auto-approve</span></label>
-              <button type="button" id="m-add" class="ghost" data-i18n="settings.mcpAdd">Add server</button>
             </div>
+            <p class="muted" id="s-mcpRefreshState">…</p>
+
+            <div id="mcp-list" class="mcp-list"></div>
+
+            <h4 data-i18n="settings.mcpServer">Server</h4>
+            <div class="mcp-form">
+              <div class="mcp-form-row">
+                <label><span data-i18n="settings.mcpId">id (a-z, 0-9, _)</span>
+                  <input id="m-id" type="text" placeholder="id (a-z, 0-9, _)" />
+                </label>
+                <label><span data-i18n="settings.mcpName">name</span>
+                  <input id="m-name" type="text" placeholder="optional display name" />
+                </label>
+                <label class="grow"><span data-i18n="settings.mcpTransport">transport</span>
+                  <div class="levels compact">
+                    <input type="range" id="m-transport" min="0" max="2" step="1" value="0" />
+                    <div class="levels-labels">
+                      <span data-i18n="settings.mcpStdio">stdio</span>
+                      <span data-i18n="settings.mcpHttp">HTTP</span>
+                      <span data-i18n="settings.mcpSse">SSE</span>
+                    </div>
+                  </div>
+                </label>
+              </div>
+              <p class="muted" id="m-transportState">…</p>
+
+              <div class="mcp-form-row">
+                <label class="grow"><span data-i18n="settings.mcpCommandLabel">command</span>
+                  <input id="m-command" type="text" placeholder="npx" />
+                </label>
+                <label class="grow"><span data-i18n="settings.mcpArgs">arguments</span>
+                  <input id="m-args" type="text" placeholder="-y @modelcontextprotocol/server-filesystem D:\" />
+                </label>
+              </div>
+              <div class="mcp-form-row">
+                <label class="grow"><span data-i18n="settings.mcpCwd">working directory (optional)</span>
+                  <input id="m-cwd" type="text" placeholder="D:\projects" />
+                </label>
+                <label><span data-i18n="settings.mcpTimeout">timeout (ms)</span>
+                  <input id="m-timeout" type="number" min="1000" max="600000" step="1000" placeholder="20000" />
+                </label>
+              </div>
+              <label><span data-i18n="settings.mcpUrl">URL (HTTP / SSE)</span>
+                <input id="m-url" type="text" placeholder="https://example.com/mcp" />
+              </label>
+              <div class="mcp-form-row">
+                <label class="grow"><span data-i18n="settings.mcpEnv">environment (KEY=value per line, or JSON)</span>
+                  <textarea id="m-env" rows="2" placeholder="TOKEN=abc"></textarea>
+                </label>
+                <label class="grow"><span data-i18n="settings.mcpHeaders">headers (KEY=value per line, or JSON)</span>
+                  <textarea id="m-headers" rows="2" placeholder="Authorization=Bearer ..."></textarea>
+                </label>
+              </div>
+              <div class="row-toggles">
+                <label class="switch" title="Run this server's tools without asking"><input type="checkbox" id="m-auto" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpAuto">auto-approve</span></label>
+              </div>
+              <div class="actions">
+                <button type="button" id="m-save" class="primary" data-i18n="settings.mcpAdd">Add server</button>
+                <button type="button" id="m-test" class="ghost" data-i18n="settings.mcpTest">Test</button>
+                <button type="button" id="m-cancel" class="ghost" data-i18n="settings.mcpCancel" hidden>Cancel</button>
+                <span id="m-test-result" class="muted"></span>
+              </div>
+              <div id="m-policies" class="mcp-policies"></div>
+            </div>
+
+            <h4 data-i18n="settings.mcpImport">Import from another client</h4>
+            <p class="muted" data-i18n="settings.mcpImportHint">
+              Paste a Claude Desktop / Cursor / VS Code <code>mcpServers</code> block, or a plain
+              name-to-server map. Existing ids are updated; new ones are added.
+            </p>
+            <textarea id="m-import" rows="3" placeholder='{"mcpServers": {"fs": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "D:\\"]}}}'></textarea>
             <div class="actions">
+              <button type="button" id="m-import-run" class="ghost" data-i18n="settings.mcpImportRun">Import servers</button>
               <button type="button" id="m-refresh" class="ghost" data-i18n="settings.mcpRefresh">Reconnect &amp; refresh tools</button>
               <span id="m-msg" class="muted"></span>
             </div>

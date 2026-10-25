@@ -77,11 +77,15 @@ const I18N = {
     "settings.webSearchUrl": "Web search page",
     "settings.mode": "Agent mode — how closely the model is supervised",
     "settings.modeHint":
-      "Guided mode is built for small local models: the prompt gets a numbered operating procedure, every tool lists its required arguments, the model may call only one tool per step (so it cannot guess ahead), and the raw powershell tool is not offered at all - the model has to use the structured actions. Normal mode is the plain prompt plus the shell, enough for a large model.",
+      "Auto is the default: a local model below 14B gets the guided procedure, while a cloud endpoint or a local 14B+ model gets the expert fast path. Guided adds a numbered procedure, spells out every argument, allows one tool per step and withholds the raw shell. Normal is the plain prompt. Expert keeps the prompt short, does not nag about a checklist and lets the model batch independent tool calls.",
+    "settings.modeAuto": "auto",
     "settings.modeGuided": "guided",
     "settings.modeNormal": "normal",
+    "settings.modeExpert": "expert",
+    "settings.modeStateAuto": "now: auto → {0}",
     "settings.modeStateGuided": "now: guided — one tool per step, explicit procedure, no raw shell",
     "settings.modeStateNormal": "now: normal — plain prompt, parallel tool calls allowed",
+    "settings.modeStateExpert": "now: expert — short prompt, compact tool catalogue, batched calls, no checklist nagging",
     "settings.verbosity": "Output detail — how much of the process the chat shows",
     "settings.verbosityHint":
       "A view setting, nothing else: the agent does exactly the same work, and the whole record is written to the data folder either way. Answer only shows your message and the model's reply; + thinking adds the model's reasoning in a block you can fold; + tools & usage is the machine room — every tool call with its arguments and result, step markers and token counts.",
@@ -289,9 +293,57 @@ const I18N = {
     "settings.mcpAdd": "Add server",
     "settings.mcpRefresh": "Reconnect & refresh tools",
     "settings.mcpNone": "(no MCP servers yet — add one below)",
-    "settings.mcpState": "{0} server(s) switched on · {1} tool(s) offered · refreshed {2}",
+    "settings.mcpState": "{0} server(s) switched on · {1} tool(s) · {2} resource(s) · {3} prompt(s) · refreshed {4}",
     "settings.mcpOffState": "MCP is off: no server is started and no MCP tool is offered.",
     "settings.mcpNever": "never",
+    "settings.mcpCache": "MCP cache — how often the lists are re-read",
+    "settings.mcpRefreshState": "now: refresh at most every {0}",
+    "settings.mcpServer": "Server — add or edit one",
+    "settings.mcpName": "name",
+    "settings.mcpTransport": "transport",
+    "settings.mcpArgs": "arguments",
+    "settings.mcpCommandLabel": "command",
+    "settings.mcpCwd": "working directory (optional)",
+    "settings.mcpTimeout": "timeout (ms)",
+    "settings.mcpUrl": "URL (HTTP / SSE)",
+    "settings.mcpEnv": "environment (KEY=value per line, or JSON)",
+    "settings.mcpHeaders": "headers (KEY=value per line, or JSON)",
+    "settings.mcpSse": "SSE",
+    "settings.mcpTest": "Test",
+    "settings.mcpCancel": "Cancel",
+    "settings.mcpEdit": "Edit",
+    "settings.mcpImport": "Import from another client",
+    "settings.mcpImportHint":
+      "Paste a Claude Desktop / Cursor / VS Code mcpServers block, or a plain name-to-server map. Existing ids are updated; new ones are added.",
+    "settings.mcpImportRun": "Import servers",
+    "settings.mcpTestOk": "test passed",
+    "settings.mcpTestFail": "test failed",
+    "settings.mcpTestSummary": "{0} · {1} tool(s) · {2} resource(s) · {3} prompt(s) · {4}ms",
+    "settings.mcpResources": "{0} resource(s)",
+    "settings.mcpPrompts": "{0} prompt(s)",
+    "settings.mcpStderr": "server log",
+    "settings.mcpNoTools": "test or refresh the server to see its tools",
+    "settings.mcpPolicy": "tool rules",
+    "settings.mcpPolicyAllow": "allow",
+    "settings.mcpPolicyAsk": "ask",
+    "settings.mcpPolicyDeny": "deny",
+    "settings.mcpRetry": "retry in {0}",
+    "settings.mcpLatency": "{0}ms",
+    "settings.mcpServerInfo": "server",
+    "settings.mcpKeyValue": "{0} must be KEY=value lines or a JSON object",
+    "settings.mcpInvalidNumber": "timeout must be a number of milliseconds",
+    "settings.mcpUrlRequired": "an HTTP/SSE server needs a URL",
+    "settings.mcpCommandRequired": "a stdio server needs a command",
+    "settings.mcpImported": "imported: {0} added, {1} updated{2}",
+    "settings.mcpImportSkipped": ", {0} skipped",
+    "settings.mcpNeedsId": "the id must be letters, digits, - or _ (max 32)",
+    "settings.mcpCounts": "{0} tool(s) · {1} resource(s) · {2} prompt(s)",
+    "settings.mcpSave": "Save server",
+    "settings.mcpTransportStdio": "stdio: start a local process and talk to its stdin/stdout.",
+    "settings.mcpTransportHttp": "HTTP: a Streamable HTTP endpoint (POST, JSON or SSE answers).",
+    "settings.mcpTransportSse": "SSE: the older HTTP+SSE transport, for servers that still use it.",
+    "settings.mcpImportEmpty": "paste a config first",
+    "notice.mcpSaved": "MCP server {0} saved",
     "mcp.connected": "connected",
     "mcp.disconnected": "not connected",
     "mcp.on": "connected, {0} tool(s)",
@@ -380,11 +432,15 @@ const I18N = {
     "settings.webSearchUrl": "网页搜索地址",
     "settings.mode": "智能体模式 —— 对模型的监督程度",
     "settings.modeHint":
-      "高监督模式是给本地小模型用的：提示词里会附加一份编号操作规范，每个工具都会列出必填参数，模型每一步只能调用一个工具（防止它瞎猜着一次做一堆），而且完全不提供原始 powershell 工具 —— 模型只能用结构化的动作。普通模式是原始提示词加 shell，大模型够用。",
+      "默认是自动：14B 以下的本地模型走高监督，云端接口或 14B 以上的本地模型走专家快速档。高监督会附加编号操作规范、列出每个工具的必填参数、每步只允许一个工具，并且不提供原始 shell。普通是原始提示词。专家档提示词更短，不催清单，允许模型一次批量调用多个互不依赖的工具。",
+    "settings.modeAuto": "自动",
     "settings.modeGuided": "高监督",
     "settings.modeNormal": "普通",
+    "settings.modeExpert": "专家",
+    "settings.modeStateAuto": "当前：自动 → {0}",
     "settings.modeStateGuided": "当前：高监督 —— 每步只调用一个工具，附操作规范，不提供原始 shell",
     "settings.modeStateNormal": "当前：普通 —— 原始提示词，允许一次调用多个工具",
+    "settings.modeStateExpert": "当前：专家 —— 短提示词、精简工具目录、批量调用、不催清单",
     "settings.verbosity": "输出详细程度 —— 对话区显示多少过程",
     "settings.verbosityHint":
       "这只是显示设置，agent 做的事情完全一样，完整记录也照样写进数据文件夹。「只显示回答」只有你的消息和模型的回答；「+ 思考过程」会把模型的思考放进一个可折叠的区块；「+ 工具与用量」是机房全开：每次工具调用及其参数和结果、步骤标记、token 用量。",
@@ -585,9 +641,57 @@ const I18N = {
     "settings.mcpAdd": "添加服务器",
     "settings.mcpRefresh": "重新连接并刷新工具",
     "settings.mcpNone": "（还没有 MCP 服务器 —— 在下面添加一个）",
-    "settings.mcpState": "已打开 {0} 个服务器 · 提供 {1} 个工具 · 刷新于 {2}",
+    "settings.mcpState": "已打开 {0} 个服务器 · {1} 个工具 · {2} 个资源 · {3} 个提示词 · 刷新于 {4}",
     "settings.mcpOffState": "MCP 已关闭：不会启动任何服务器，也不会向模型提供 MCP 工具。",
     "settings.mcpNever": "从未",
+    "settings.mcpCache": "MCP 缓存 —— 多久重读一次列表",
+    "settings.mcpRefreshState": "当前：最多每 {0} 刷新一次",
+    "settings.mcpServer": "服务器 —— 添加或编辑",
+    "settings.mcpName": "名称",
+    "settings.mcpTransport": "传输方式",
+    "settings.mcpArgs": "参数",
+    "settings.mcpCommandLabel": "命令",
+    "settings.mcpCwd": "工作目录（可选）",
+    "settings.mcpTimeout": "超时（毫秒）",
+    "settings.mcpUrl": "网址（HTTP / SSE）",
+    "settings.mcpEnv": "环境变量（每行 KEY=value，或 JSON）",
+    "settings.mcpHeaders": "请求头（每行 KEY=value，或 JSON）",
+    "settings.mcpSse": "SSE",
+    "settings.mcpTest": "测试",
+    "settings.mcpCancel": "取消",
+    "settings.mcpEdit": "编辑",
+    "settings.mcpImport": "从其他客户端导入",
+    "settings.mcpImportHint":
+      "粘贴 Claude Desktop / Cursor / VS Code 的 mcpServers 配置，或直接是“名称 → 服务器”的对象。相同 id 会更新，新 id 会添加。",
+    "settings.mcpImportRun": "导入服务器",
+    "settings.mcpTestOk": "测试通过",
+    "settings.mcpTestFail": "测试失败",
+    "settings.mcpTestSummary": "{0} · {1} 个工具 · {2} 个资源 · {3} 个提示词 · {4}ms",
+    "settings.mcpResources": "{0} 个资源",
+    "settings.mcpPrompts": "{0} 个提示词",
+    "settings.mcpStderr": "服务器日志",
+    "settings.mcpNoTools": "先测试或刷新服务器，才能看到它的工具",
+    "settings.mcpPolicy": "工具规则",
+    "settings.mcpPolicyAllow": "允许",
+    "settings.mcpPolicyAsk": "询问",
+    "settings.mcpPolicyDeny": "禁止",
+    "settings.mcpRetry": "{0} 后重试",
+    "settings.mcpLatency": "{0}ms",
+    "settings.mcpServerInfo": "服务端",
+    "settings.mcpKeyValue": "{0} 必须是每行 KEY=value，或一个 JSON 对象",
+    "settings.mcpInvalidNumber": "超时必须是毫秒数",
+    "settings.mcpUrlRequired": "HTTP/SSE 服务器必须填网址",
+    "settings.mcpCommandRequired": "stdio 服务器必须填命令",
+    "settings.mcpImported": "已导入：新增 {0} 个，更新 {1} 个{2}",
+    "settings.mcpImportSkipped": "，跳过 {0} 个",
+    "settings.mcpNeedsId": "id 只能是字母、数字、- 或 _（最多 32 位）",
+    "settings.mcpCounts": "{0} 个工具 · {1} 个资源 · {2} 个提示词",
+    "settings.mcpSave": "保存服务器",
+    "settings.mcpTransportStdio": "stdio：启动本地进程，通过它的 stdin/stdout 通信。",
+    "settings.mcpTransportHttp": "HTTP：Streamable HTTP 接口（POST，返回 JSON 或 SSE）。",
+    "settings.mcpTransportSse": "SSE：较旧的 HTTP+SSE 传输，兼容仍在使用它的服务器。",
+    "settings.mcpImportEmpty": "请先粘贴配置",
+    "notice.mcpSaved": "已保存 MCP 服务器 {0}",
     "mcp.connected": "已连接",
     "mcp.disconnected": "未连接",
     "mcp.on": "已连接，{0} 个工具",
@@ -663,6 +767,8 @@ let thinkingClosed = false;
 
 /** The three levels, mirroring VERBOSITY_LEVELS in src/settings.ts. */
 const LEVELS = ["answer", "thinking", "full"];
+const MODE_SETTINGS = ["auto", "guided", "normal", "expert"];
+const MCP_TRANSPORTS = ["stdio", "http", "sse"];
 
 /** How much of the process the chat draws right now. */
 function verbosity() {
@@ -1661,11 +1767,20 @@ function mcpSnapshot() {
   return {
     enabled: !!s.mcpEnabled,
     totalTools: 0,
+    totalResources: 0,
+    totalPrompts: 0,
     ageMs: -1,
+    refreshSeconds: s.mcpRefreshSeconds ?? 120,
     servers: (s.mcpServers ?? []).map((server) => ({
       ...server,
       connected: false,
       liveTools: [],
+      resources: [],
+      prompts: [],
+      capabilities: { tools: false, resources: false, prompts: false },
+      latencyMs: 0,
+      stderr: "",
+      nextRetryMs: 0,
       error: "",
     })),
   };
@@ -1676,6 +1791,13 @@ function ageText(ms) {
   if (ms < 5000) return `${Math.round(ms / 1000)}s`;
   if (ms < 60000) return `${Math.round(ms / 1000)}s`;
   return `${Math.round(ms / 60000)}m`;
+}
+
+function refreshText(seconds) {
+  const value = Math.max(10, Number(seconds) || 120);
+  if (value < 60) return `${value}s`;
+  if (value < 3600) return `${Math.round(value / 60)}m`;
+  return `${(value / 3600).toFixed(1)}h`;
 }
 
 function switchControl(checked, title, onChange, label) {
@@ -1698,6 +1820,20 @@ function switchControl(checked, title, onChange, label) {
   return wrap;
 }
 
+function mcpButton(label, className, onclick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  setText(button, label);
+  button.onclick = onclick;
+  return button;
+}
+
+function renderMcpRefreshState() {
+  const seconds = Number(el("s-mcpRefreshSeconds")?.value) || 120;
+  setText(el("s-mcpRefreshState"), t("settings.mcpRefreshState", refreshText(seconds)));
+}
+
 function renderMcp() {
   const box = el("mcp-list");
   if (!box) return;
@@ -1707,9 +1843,21 @@ function renderMcp() {
   setText(
     el("mcp-state"),
     mcp.enabled
-      ? t("settings.mcpState", on, mcp.totalTools, ageText(mcp.ageMs))
+      ? t(
+          "settings.mcpState",
+          on,
+          mcp.totalTools ?? 0,
+          mcp.totalResources ?? 0,
+          mcp.totalPrompts ?? 0,
+          ageText(mcp.ageMs),
+        )
       : t("settings.mcpOffState"),
   );
+  const refresh = el("s-mcpRefreshSeconds");
+  if (refresh && document.activeElement !== refresh) {
+    refresh.value = String(mcp.refreshSeconds ?? state.settings?.mcpRefreshSeconds ?? 120);
+  }
+  if (refresh) renderMcpRefreshState();
 
   box.innerHTML = "";
   if (mcp.servers.length === 0) {
@@ -1719,80 +1867,341 @@ function renderMcp() {
     box.appendChild(row);
     return;
   }
+  for (const server of mcp.servers) box.appendChild(renderMcpCard(server));
+}
 
-  for (const server of mcp.servers) {
+function renderMcpCard(server) {
+  const card = document.createElement("div");
+  card.className = "mcp-item mcp-card";
+
+  const head = document.createElement("div");
+  head.className = "mcp-head";
+  head.append(
+    switchControl(
+      server.enabled,
+      t("settings.mcpEnabled"),
+      (value) => mcpAction({ action: "toggle", id: server.id, enabled: value }),
+    ),
+  );
+
+  const name = document.createElement("span");
+  name.className = "name";
+  setText(name, server.name && server.name !== server.id ? `${server.name} (${server.id})` : server.id);
+  const meta = document.createElement("span");
+  meta.className = "meta";
+  const tools = server.liveTools?.length ? server.liveTools : server.tools ?? [];
+  const resources = server.resources ?? [];
+  const prompts = server.prompts ?? [];
+  const state =
+    !server.enabled
+      ? t("mcp.disabled")
+      : server.connected
+        ? t("mcp.on", tools.length)
+        : t("mcp.disconnected");
+  const where =
+    server.transport === "stdio" ? [server.command, ...(server.args ?? [])].join(" ") : server.url;
+  const bits = [server.transport, where, state];
+  if (server.connected && server.latencyMs) bits.push(t("settings.mcpLatency", server.latencyMs));
+  if (server.connected && server.serverInfo) bits.push(server.serverInfo);
+  if (server.error) bits.push(server.error);
+  if (server.nextRetryMs > 0) bits.push(t("settings.mcpRetry", ageText(server.nextRetryMs)));
+  setText(meta, bits.filter(Boolean).join(" · "));
+  meta.title = bits.filter(Boolean).join("\n");
+  head.append(name, meta);
+  card.appendChild(head);
+
+  const actions = document.createElement("div");
+  actions.className = "mcp-actions";
+  actions.append(
+    mcpButton(t("settings.mcpEdit"), "mcp-act mcp-edit", () => editMcp(server)),
+    mcpButton(t("settings.mcpTest"), "mcp-act mcp-test", () => testSavedServer(server)),
+    mcpButton(t("mcp.remove"), "mcp-act mcp-remove", () => mcpAction({ action: "remove", id: server.id })),
+  );
+  card.appendChild(actions);
+
+  const counts = document.createElement("div");
+  counts.className = "mcp-counts";
+  setText(counts, t("settings.mcpCounts", tools.length, resources.length, prompts.length));
+  card.appendChild(counts);
+
+  if (tools.length > 0) {
+    const details = document.createElement("details");
+    details.className = "mcp-tools";
+    const summary = document.createElement("summary");
+    setText(summary, t("mcp.tools", tools.length, tools.join(", ")));
+    details.appendChild(summary);
+    const policies = document.createElement("div");
+    policies.className = "mcp-policies";
+    renderMcpPolicies(policies, tools, server.toolPolicies ?? {}, server.autoApprove, (tool, value) =>
+      mcpAction({
+        action: "update",
+        id: server.id,
+        server: { ...server, toolPolicies: { ...(server.toolPolicies ?? {}), [tool]: value } },
+      }),
+    );
+    details.appendChild(policies);
+    card.appendChild(details);
+  }
+
+  if (resources.length > 0) {
+    const details = document.createElement("details");
+    details.className = "mcp-context-list";
+    const summary = document.createElement("summary");
+    setText(summary, t("settings.mcpResources", resources.length));
+    const pre = document.createElement("pre");
+    pre.textContent = resources.join("\n");
+    details.append(summary, pre);
+    card.appendChild(details);
+  }
+  if (prompts.length > 0) {
+    const details = document.createElement("details");
+    details.className = "mcp-context-list";
+    const summary = document.createElement("summary");
+    setText(summary, t("settings.mcpPrompts", prompts.length));
+    const pre = document.createElement("pre");
+    pre.textContent = prompts.join("\n");
+    details.append(summary, pre);
+    card.appendChild(details);
+  }
+  if (server.stderr) {
+    const details = document.createElement("details");
+    details.className = "mcp-log";
+    const summary = document.createElement("summary");
+    setText(summary, t("settings.mcpStderr"));
+    const pre = document.createElement("pre");
+    pre.textContent = server.stderr;
+    details.append(summary, pre);
+    card.appendChild(details);
+  }
+  return card;
+}
+
+function renderMcpPolicies(container, tools, policies, autoApprove, onChange) {
+  if (!container) return;
+  container.innerHTML = "";
+  if (!tools || tools.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    setText(empty, t("settings.mcpNoTools"));
+    container.appendChild(empty);
+    return;
+  }
+  for (const tool of tools) {
     const row = document.createElement("div");
-    row.className = "mcp-item";
-
-    row.append(
-      switchControl(
-        server.enabled,
-        t("settings.mcpEnabled"),
-        (value) => mcpAction({ action: "toggle", id: server.id, enabled: value }),
-      ),
-    );
-
-    const name = document.createElement("span");
-    name.className = "name";
-    setText(name, server.id);
-
-    const state =
-      !server.enabled
-        ? t("mcp.disabled")
-        : server.connected
-          ? t("mcp.on", (server.liveTools ?? []).length)
-          : t("mcp.disconnected");
-    const meta = document.createElement("span");
-    meta.className = "meta";
-    const where = server.transport === "http" ? server.url : [server.command, ...(server.args ?? [])].join(" ");
-    const who = server.connected && server.serverInfo ? ` · ${server.serverInfo}` : "";
-    setText(meta, `${server.transport} · ${where} · ${state}${who}${server.error ? ` — ${server.error}` : ""}`);
-    meta.title = `${where}${who}`;
-
-    row.append(
-      name,
-      meta,
-      switchControl(server.autoApprove, t("settings.mcpAuto"), (value) =>
-        mcpAction({
-          action: "update",
-          id: server.id,
-          server: { ...server, autoApprove: value, args: server.args, env: server.env },
-        }),
-      ),
-    );
-
-    const remove = document.createElement("button");
-    remove.type = "button";
-    setText(remove, t("mcp.remove"));
-    remove.onclick = () => mcpAction({ action: "remove", id: server.id });
-    row.appendChild(remove);
-
-    const tools = document.createElement("span");
-    tools.className = "tools";
-    const list = server.liveTools?.length ? server.liveTools : server.tools ?? [];
-    if (list.length > 0) setText(tools, t("mcp.tools", list.length, list.join(", ")));
-    row.appendChild(tools);
-
-    box.appendChild(row);
+    row.className = "mcp-policy";
+    const label = document.createElement("span");
+    label.textContent = tool;
+    const select = document.createElement("select");
+    select.dataset.tool = tool;
+    for (const [value, key] of [
+      ["allow", "settings.mcpPolicyAllow"],
+      ["ask", "settings.mcpPolicyAsk"],
+      ["deny", "settings.mcpPolicyDeny"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      setText(option, t(key));
+      select.appendChild(option);
+    }
+    select.value = ["allow", "ask", "deny"].includes(policies?.[tool])
+      ? policies[tool]
+      : autoApprove
+        ? "allow"
+        : "ask";
+    if (onChange) select.onchange = () => onChange(tool, select.value);
+    row.append(label, select);
+    container.appendChild(row);
   }
 }
 
-async function mcpAction(body) {
+function editMcp(server) {
+  editingMcpId = server.id;
+  editingMcpEnabled = server.enabled !== false;
+  editingMcpTools = (server.liveTools?.length ? server.liveTools : server.tools ?? []).slice();
+  el("m-id").value = server.id;
+  el("m-name").value = server.name ?? server.id;
+  el("m-command").value = server.command ?? "";
+  const quote = (arg) => (/[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg);
+  el("m-args").value = (server.args ?? []).map(quote).join(" ");
+  el("m-cwd").value = server.cwd ?? "";
+  el("m-url").value = server.url ?? "";
+  el("m-timeout").value = server.timeoutMs ? String(server.timeoutMs) : "";
+  el("m-env").value = Object.entries(server.env ?? {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  el("m-headers").value = Object.entries(server.headers ?? {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  el("m-auto").checked = !!server.autoApprove;
+  el("m-transport").value = String(Math.max(0, MCP_TRANSPORTS.indexOf(server.transport ?? "stdio")));
+  renderMcpTransport();
+  renderMcpPolicies(el("m-policies"), editingMcpTools, server.toolPolicies ?? {}, server.autoApprove);
+  setText(el("m-save"), t("settings.mcpSave"));
+  el("m-cancel").hidden = false;
+  setText(el("m-test-result"), "");
+  el("m-id").scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function resetMcpForm() {
+  editingMcpId = "";
+  editingMcpEnabled = true;
+  editingMcpTools = [];
+  for (const id of ["m-id", "m-name", "m-command", "m-args", "m-cwd", "m-url", "m-timeout", "m-env", "m-headers"]) {
+    el(id).value = "";
+  }
+  el("m-auto").checked = false;
+  el("m-transport").value = "0";
+  el("m-policies").innerHTML = "";
+  setText(el("m-save"), t("settings.mcpAdd"));
+  el("m-cancel").hidden = true;
+  setText(el("m-test-result"), "");
+  renderMcpTransport();
+}
+
+function renderMcpTransport() {
+  const kind = MCP_TRANSPORTS[Number(el("m-transport").value)] ?? "stdio";
+  const key =
+    kind === "http"
+      ? "settings.mcpTransportHttp"
+      : kind === "sse"
+        ? "settings.mcpTransportSse"
+        : "settings.mcpTransportStdio";
+  setText(el("m-transportState"), t(key));
+}
+
+function parseMcpKeyValues(text, labelKey) {
+  const raw = String(text ?? "").trim();
+  if (!raw) return {};
+  if (raw.startsWith("{")) {
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      throw new Error(`${t("settings.mcpKeyValue", t(labelKey))}: ${error.message}`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(t("settings.mcpKeyValue", t(labelKey)));
+    }
+    const out = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (key) out[key] = String(value ?? "");
+    }
+    return out;
+  }
+  const out = {};
+  for (const line of raw.split(/\r?\n/)) {
+    const entry = line.trim();
+    if (!entry || entry.startsWith("#")) continue;
+    const at = entry.indexOf("=");
+    if (at < 1) throw new Error(t("settings.mcpKeyValue", t(labelKey)));
+    out[entry.slice(0, at).trim()] = entry.slice(at + 1).trim();
+  }
+  return out;
+}
+
+function mcpFormServer() {
+  const id = el("m-id").value.trim();
+  if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) throw new Error(t("settings.mcpNeedsId"));
+  const transport = MCP_TRANSPORTS[Number(el("m-transport").value)] ?? "stdio";
+  const command = el("m-command").value.trim();
+  const args = splitCommandLine(el("m-args").value.trim());
+  const url = el("m-url").value.trim();
+  if (transport === "stdio" && !command) throw new Error(t("settings.mcpCommandRequired"));
+  if (transport !== "stdio" && !url) throw new Error(t("settings.mcpUrlRequired"));
+  const timeoutRaw = el("m-timeout").value.trim();
+  let timeoutMs;
+  if (timeoutRaw) {
+    const value = Number(timeoutRaw);
+    if (!Number.isFinite(value) || value <= 0) throw new Error(t("settings.mcpInvalidNumber"));
+    timeoutMs = Math.round(value);
+  }
+  const toolPolicies = {};
+  for (const select of el("m-policies").querySelectorAll("select[data-tool]")) {
+    toolPolicies[select.dataset.tool] = select.value;
+  }
+  return {
+    id,
+    name: el("m-name").value.trim() || id,
+    transport,
+    command,
+    args,
+    env: parseMcpKeyValues(el("m-env").value, "settings.mcpEnv"),
+    cwd: el("m-cwd").value.trim(),
+    url,
+    headers: parseMcpKeyValues(el("m-headers").value, "settings.mcpHeaders"),
+    enabled: editingMcpId ? editingMcpEnabled : true,
+    autoApprove: el("m-auto").checked,
+    toolPolicies,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    tools: editingMcpTools,
+  };
+}
+
+async function mcpCall(body) {
   const message = el("m-msg");
   if (message) setText(message, "…");
   const result = await api("/api/mcp", "POST", body);
-  if (result.error) {
-    if (message) setText(message, `${t("error.prefix")}${result.error}`);
-    return null;
+  if (message) {
+    setText(message, result.error ? `${t("error.prefix")}${result.error}` : "");
   }
+  return result;
+}
+
+async function mcpAction(body) {
+  const result = await mcpCall(body);
+  if (result.error) return null;
   if (result.mcp) state.mcp = result.mcp;
   renderMcp();
   await refreshState();
   if (result.tools !== undefined) {
-    showNotice(t("notice.mcpRefreshed", result.tools, mcpSnapshot().servers.filter((s) => s.connected).length));
+    const message = t(
+      "notice.mcpRefreshed",
+      result.tools,
+      mcpSnapshot().servers.filter((server) => server.connected).length,
+    );
+    if (el("m-msg")) setText(el("m-msg"), message);
+    showNotice(message);
   }
-  if (message) setText(message, t("notice.mcpRefreshed", mcpSnapshot().totalTools, mcpSnapshot().servers.filter((s) => s.connected).length));
   return result;
+}
+
+async function testMcpForm() {
+  const target = el("m-test-result");
+  let server;
+  try {
+    server = mcpFormServer();
+  } catch (error) {
+    setText(target, `${t("error.prefix")}${error.message}`);
+    return null;
+  }
+  setText(target, "…");
+  const result = await mcpCall({ action: "test", id: server.id, server });
+  if (result.error) {
+    setText(target, `${t("error.prefix")}${result.error}`);
+    return null;
+  }
+  const test = result.test ?? {};
+  const ok = !!test.ok;
+  const summary = t(
+    "settings.mcpTestSummary",
+    t(ok ? "settings.mcpTestOk" : "settings.mcpTestFail"),
+    test.tools?.length ?? 0,
+    test.resources?.length ?? 0,
+    test.prompts?.length ?? 0,
+    test.latencyMs ?? 0,
+  );
+  setText(target, `${summary}${test.error ? ` — ${test.error}` : ""}`);
+  target.title = test.stderr ?? "";
+  if (Array.isArray(test.tools)) {
+    editingMcpTools = test.tools;
+    renderMcpPolicies(el("m-policies"), test.tools, server.toolPolicies ?? {}, server.autoApprove);
+  }
+  return result;
+}
+
+async function testSavedServer(server) {
+  editMcp(server);
+  await testMcpForm();
 }
 
 /** Split a command line into program + arguments, honouring quotes. */
@@ -1921,7 +2330,9 @@ function fillSettingsForm(s) {
   el("s-stream").checked = s.stream !== false;
   el("s-remember").checked = !!s.remember;
   el("s-syncLocalModels").checked = s.syncLocalModels !== false;
-  el("s-guided").checked = (s.agentMode ?? "guided") === "guided";
+  const modeIndex = Math.max(0, MODE_SETTINGS.indexOf(s.agentMode ?? "auto"));
+  el("s-mode").value = String(modeIndex);
+  el("s-mode").dataset.effective = s.agentModeEffective ?? "";
   el("s-psEnglishErrors").checked = s.psEnglishErrors !== false;
   el("s-auditLog").checked = s.auditLog !== false;
   el("s-undoRetentionDays").value = s.undoRetentionDays ?? 7;
@@ -1937,10 +2348,22 @@ function fillSettingsForm(s) {
   renderFleet();
 }
 
-/** What the mode switch currently means, spelled out under it. */
+/** What the mode slider currently means, spelled out under it. */
 function renderModeState() {
-  const guided = el("s-guided").checked;
-  setText(el("s-modeState"), t(guided ? "settings.modeStateGuided" : "settings.modeStateNormal"));
+  const mode = MODE_SETTINGS[Number(el("s-mode").value)] ?? "auto";
+  if (mode !== "auto") {
+    setText(el("s-modeState"), t(`settings.modeState${mode[0].toUpperCase()}${mode.slice(1)}`));
+    return;
+  }
+  const effective = el("s-mode").dataset.effective || "guided";
+  const name = t(
+    effective === "expert"
+      ? "settings.modeExpert"
+      : effective === "normal"
+        ? "settings.modeNormal"
+        : "settings.modeGuided",
+  );
+  setText(el("s-modeState"), t("settings.modeStateAuto", name));
 }
 
 /** The detail level as words: the "now:" line in Settings, the label in the chatbar. */
@@ -2190,7 +2613,7 @@ async function saveSettings() {
     stream: el("s-stream").checked,
     remember: el("s-remember").checked,
     syncLocalModels: el("s-syncLocalModels").checked,
-    agentMode: el("s-guided").checked ? "guided" : "normal",
+    agentMode: MODE_SETTINGS[Number(el("s-mode").value)] ?? "auto",
     verbosity: LEVELS[Number(el("s-verbosity").value)] ?? "answer",
     psEnglishErrors: el("s-psEnglishErrors").checked,
     auditLog: el("s-auditLog").checked,
@@ -2786,40 +3209,50 @@ el("s-syncLocalModels").addEventListener("change", async () => {
 
 el("m-refresh").addEventListener("click", () => mcpAction({ action: "refresh" }));
 
-el("m-add").addEventListener("click", async () => {
-  const id = el("m-id").value.trim();
-  const target = el("m-target").value.trim();
-  const message = el("m-msg");
-  if (!/^[a-zA-Z0-9_-]{1,32}$/.test(id)) {
-    setText(message, `${t("error.prefix")}${t("settings.mcpId")}`);
+el("m-save").addEventListener("click", async () => {
+  let server;
+  try {
+    server = mcpFormServer();
+  } catch (error) {
+    setText(el("m-msg"), `${t("error.prefix")}${error.message}`);
     return;
   }
-  if (!target) {
-    setText(message, `${t("error.prefix")}${t("settings.mcpCommand")}`);
-    return;
-  }
-  const http = el("m-http").checked;
-  const parts = http ? [] : splitCommandLine(target);
   const result = await mcpAction({
-    action: "add",
-    id,
-    server: {
-      id,
-      name: id,
-      transport: http ? "http" : "stdio",
-      command: parts[0] ?? "",
-      args: parts.slice(1),
-      url: http ? target : "",
-      env: {},
-      enabled: true,
-      autoApprove: el("m-auto").checked,
-    },
+    action: editingMcpId ? "update" : "add",
+    id: server.id,
+    server,
   });
   if (result) {
-    el("m-id").value = "";
-    el("m-target").value = "";
-    showNotice(t("notice.mcpAdded", id));
+    showNotice(t("notice.mcpSaved", server.id));
+    resetMcpForm();
   }
+});
+
+el("m-test").addEventListener("click", () => testMcpForm());
+el("m-cancel").addEventListener("click", () => resetMcpForm());
+el("m-transport").addEventListener("input", renderMcpTransport);
+
+el("m-import-run").addEventListener("click", async () => {
+  const raw = el("m-import").value.trim();
+  if (!raw) {
+    setText(el("m-msg"), t("settings.mcpImportEmpty"));
+    return;
+  }
+  const result = await mcpAction({ action: "import", config: raw });
+  if (result) {
+    el("m-import").value = "";
+    const skipped = result.skipped?.length ? t("settings.mcpImportSkipped", result.skipped.length) : "";
+    showNotice(t("settings.mcpImported", result.added ?? 0, result.updated ?? 0, skipped));
+  }
+});
+
+el("s-mcpRefreshSeconds").addEventListener("input", renderMcpRefreshState);
+el("s-mcpRefreshSeconds").addEventListener("change", async () => {
+  const seconds = Number(el("s-mcpRefreshSeconds").value) || 120;
+  const result = await api("/api/settings", "POST", { mcpRefreshSeconds: seconds });
+  if (result.settings) state.settings = result.settings;
+  if (result.notices?.length) showNotice(result.notices.join("; "), 8000);
+  await refreshState();
 });
 
 el("s-profile").addEventListener("change", (event) => useProfile(event.target.value, el("p-msg")));
@@ -2930,8 +3363,9 @@ el("sandbox").addEventListener("change", async () => {
   if (!result.error) await refreshState();
 });
 
-// The mode switch explains itself immediately; "Save settings" persists it.
-el("s-guided").addEventListener("change", renderModeState);
+// The mode slider explains itself immediately; "Save settings" persists it.
+el("s-mode").addEventListener("input", renderModeState);
+el("s-mode").addEventListener("change", renderModeState);
 
 // The detail slider lives in the chat toolbar as well as in Settings. Both apply
 // at once - it is a view setting, and the toolbar is where you reach for it.

@@ -803,6 +803,127 @@ dialog::backdrop {
   width: auto;
 }
 
+.mcp-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.mcp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mcp-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mcp-item button.mcp-edit,
+.mcp-item button.mcp-test {
+  color: var(--accent);
+}
+
+.mcp-item button.mcp-remove {
+  color: var(--red);
+}
+
+.mcp-counts {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.mcp-tools summary,
+.mcp-context-list summary,
+.mcp-log summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.mcp-policies {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.mcp-policy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.mcp-policy select {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 2px 6px;
+}
+
+.mcp-log pre,
+.mcp-context-list pre {
+  max-height: 140px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.mcp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 10px 0 18px;
+}
+
+.mcp-form-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mcp-form-row > label {
+  flex: 1 1 220px;
+}
+
+.mcp-form .grow {
+  flex: 1 1 320px;
+}
+
+.mcp-form input[type="text"],
+.mcp-form input[type="number"],
+.mcp-form textarea {
+  width: 100%;
+}
+
+.mcp-form .levels.compact input[type="range"] {
+  width: 160px;
+}
+
+#m-import {
+  width: 100%;
+}
+
+#m-test-result {
+  flex: 1 1 260px;
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
 /* Toggle switches (sliders) instead of native checkboxes -------------------- */
 
 .switch input[type="checkbox"],

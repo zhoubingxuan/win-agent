@@ -126,6 +126,16 @@ const textOf = (message) => message?.result?.content?.map((part) => part.text ??
 
 /* -------------------------------------------------------------------------- */
 
+// A skill doubles as an MCP prompt: an IDE can insert it into a conversation
+// without starting a win-agent turn.
+const skillDir = path.join(dataDir, "skills", "deploy");
+fs.mkdirSync(skillDir, { recursive: true });
+fs.writeFileSync(
+  path.join(skillDir, "SKILL.md"),
+  "---\ndescription: Deploy safely\nwhen: the user asks to ship to production\n---\nUse the deploy checklist.\n",
+  "utf8",
+);
+
 writeSettings();
 const server = start();
 
@@ -143,6 +153,12 @@ section("the handshake");
     JSON.stringify(init.result),
   );
   check("tools are announced", Object.prototype.hasOwnProperty.call(init.result?.capabilities ?? {}, "tools"), JSON.stringify(init.result?.capabilities));
+  check(
+    "installed skills are announced as prompts",
+    Object.prototype.hasOwnProperty.call(init.result?.capabilities ?? {}, "prompts"),
+    JSON.stringify(init.result?.capabilities),
+  );
+  check("the server sends instructions", /win-agent/.test(String(init.result?.instructions ?? "")), init.result?.instructions);
   check("the server names itself", init.result?.serverInfo?.name === "win-agent", JSON.stringify(init.result?.serverInfo));
   check("and its version", /^\d+\.\d+\.\d+$/.test(String(init.result?.serverInfo?.version ?? "")), JSON.stringify(init.result?.serverInfo));
 
@@ -165,6 +181,22 @@ let listed = { tools: [] };
     JSON.stringify(listed.tools.find((tool) => !tool.inputSchema)?.name),
   );
   check("the schemas still name their arguments", JSON.stringify(listed.tools.find((tool) => tool.name === "files")?.inputSchema).includes('"action"'));
+}
+
+section("prompts: installed skills");
+{
+  const list = await server.request("prompts/list", {});
+  check("prompts/list is answered", !list.error, JSON.stringify(list));
+  check("the skill is listed", (list.result?.prompts ?? []).some((prompt) => prompt.name === "deploy"), JSON.stringify(list.result));
+  const got = await server.request("prompts/get", { name: "deploy" });
+  check("prompts/get is answered", !got.error, JSON.stringify(got));
+  check(
+    "it returns the skill body",
+    /deploy checklist/.test(JSON.stringify(got.result?.messages ?? [])),
+    JSON.stringify(got.result),
+  );
+  const missing = await server.request("prompts/get", { name: "definitely-not-installed" });
+  check("an unknown prompt is an error", missing.error?.code === -32602, JSON.stringify(missing));
 }
 
 section("calling a tool");

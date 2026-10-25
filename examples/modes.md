@@ -1,47 +1,70 @@
-# Agent modes — `guided` vs. `normal` / 智能体模式
+# Agent modes — auto, guided, normal, expert / 智能体模式
 
-win-agent drives a 3B–14B model well *and* a cloud model well, and those two need
+win-agent drives a 3B model and a GPT-4-class model with the same tools, but they need
 different amounts of hand-holding. `agentMode` is that one switch.
 
 | Mode | Default for | What the model is given |
 | --- | --- | --- |
-| `guided` | **small local models** | prompt + numbered operating procedure, required arguments spelled out, one tool call per step, **no raw shell tool** |
-| `normal` | large / cloud models | prompt + tool catalogue (shell included), any number of tool calls per step |
+| `auto` | **almost everyone** | resolves to `guided` or `expert` from the endpoint and model name |
+| `guided` | small local models | prompt + numbered operating procedure, required arguments spelled out, one tool call per step, **no raw shell tool** |
+| `normal` | a model you want unmanaged | prompt + full catalogue, any number of tool calls per step, shell included |
+| `expert` | cloud APIs and local models 14B+ | short prompt + brief catalogue, batched calls encouraged, shell included |
+
+`auto` is a resolver, not a fifth behaviour:
+
+- a profile with `kind: "api"` → **`expert`**;
+- a local model whose name contains a size of at least **14B**
+  (`qwen3-coder-30b-a3b` → 30B) → **`expert`**;
+- everything else → **`guided`**.
+
+The UI shows both values (`auto → expert`), `/status` prints the resolved mode, and
+`GET /api/settings` exposes `agentModeEffective`. An explicit `guided`, `normal` or
+`expert` always wins over the resolver.
 
 ## Switching / 切换
 
-Three identical ways — all three write the same setting to `data/settings.json`:
+Four identical ways — all write the same setting to `data/settings.json`:
 
 ```powershell
-# 1. Settings tab -> "Agent mode": the normal <-> guided slider
+# 1. Settings tab -> "Agent mode": the auto -> guided -> normal -> expert slider
 # 2. terminal:
-PS> /mode                 # print the current mode
+PS> /mode                 # print the setting and what it resolves to
+PS> /mode auto            # follow the endpoint/model
 PS> /mode guided          # high supervision
 PS> /mode normal          # plain prompt
+PS> /mode expert          # fast workflow for capable models
 # 3. any setting surface:
-PS> /set agentMode guided
-PS> /unset agentMode      # back to the default (guided)
+PS> /set agentMode auto
+PS> /unset agentMode      # back to the default (auto)
 ```
 
 ```jsonc
 // data/settings.json
-{ "agentMode": "guided" }
+{ "agentMode": "auto" }
 ```
 
 ```powershell
 # or per shell, no file change:
-$env:AGENT_MODE = "normal"; npm run web
+$env:AGENT_MODE = "auto"; npm run web
 ```
 
-`normalizeAgentMode` accepts aliases: `guided`, `guide`, `supervised`,
-`supervision`, `strict`, `监督`, `高监督`, `严格` → `guided`; `normal`, `plain`,
-`standard`, `off`, `普通`, `正常` → `normal`. Anything else, or no `agentMode` at
-all, means `guided`.
+`normalizeAgentMode` accepts aliases in both languages:
 
-## What `guided` actually adds to the prompt
+- `guided`, `guide`, `supervised`, `supervision`, `strict`, `监督`, `高监督`, `严格`
+  → `guided`;
+- `normal`, `plain`, `standard`, `off`, `普通`, `正常` → `normal`;
+- `expert`, `fast`, `efficient`, `专家`, `快速` → `expert`;
+- `auto`, `automatic`, `自动` → `auto`;
+- anything else, or no `agentMode` at all, → `auto`.
 
-Appended *after* your `systemPrompt`, in the configured `language` (this is the
-English version; a Chinese one ships too):
+`agentMode` is the *setting*. Internally the agent stores the **resolved** mode in
+`Config.agentMode`, so the prompt, catalogue and per-step policy never see `"auto"` as
+a behaviour they have to interpret.
+
+## What `guided` adds to the prompt
+
+Appended *after* your `systemPrompt`, in the configured `language` (English version;
+a Chinese one ships too):
 
 ```
 Operating procedure (follow it exactly):
@@ -52,8 +75,10 @@ Operating procedure (follow it exactly):
 5. If a result starts with 'Error:' or 'Refused:', fix the arguments and call the SAME tool again. After two failures, explain the problem in plain text and stop.
 6. Write paths exactly as the user gave them (C:\Users\Name\file.txt); never guess a path.
 7. Before a destructive step (delete, move, kill, stop a service, change the registry, shut down), say in one short sentence what you are about to do.
-8. When the task is done, answer in plain text with a short summary of what you did, and do not call a tool.
-9. There is no shell in this mode: never write command lines, scripts or registry paths. Every step is one of the tool actions listed above.
+8. If the request has two or more parts, call todo with action "set" first (one item per part), then mark each item "done" as you finish it.
+9. To change code, read the file first, then use apply_patch with a unified diff; afterwards run the tests tool if the project has tests. Never overwrite a file you have not read. For a .zip use files action zip/unzip, not a script.
+10. When the task is done, answer in plain text with a short summary of what you did, and do not call a tool.
+11. There is no shell in this mode: never write command lines, scripts or registry paths. Every step is one of the tool actions listed above.
 ```
 
 ## The raw shell is withheld in `guided` mode
@@ -87,15 +112,15 @@ Every action a small model needs already exists as a structured tool:
 
 Your own `custom` commands (see [custom-commands.md](custom-commands.md)) and the
 terminal (`/exec`, the Terminal tab) are *not* affected — they are yours, not the
-model's. Switch to `normal` (`/mode normal`) when a large model should have the shell
+model's. Switch to `normal` or `expert` when a capable model should have the shell
 back; nothing else changes.
 
 ## What `guided` adds to the tool catalogue
 
-The catalogue in the system prompt is the same list of tools in both modes; in
-`guided` mode every tool **also** lists its argument names, and marks the required
-ones. A small model copies a name it can see far more reliably than one it has to
-dig out of a JSON schema it never reads.
+The catalogue in the system prompt is the same list of tools in every mode. In
+`guided` mode every tool **also** lists its argument names and marks the required
+ones. A small model copies a name it can see far more reliably than one it has to dig
+out of a JSON schema it never reads.
 
 ```
 # normal
@@ -106,17 +131,6 @@ dig out of a JSON schema it never reads.
 - registry: Read or modify the Windows registry. actions: get (values of a key), list (subkeys), ...
     action must be one of: get, list, set, delete
     arguments: path (required), name, value, type
-```
-
-```
-# normal
-- services: Manage Windows services without remembering sc.exe syntax. actions: list, status, ...
-    action must be one of: list, status, start, stop, restart, enable, disable
-
-# guided
-- services: Manage Windows services without remembering sc.exe syntax. actions: list, status, ...
-    action must be one of: list, status, start, stop, restart, enable, disable
-    arguments: name, filter
 ```
 
 It costs about 600 characters for the whole catalogue (3.4 KB → 4.0 KB on a default
@@ -136,38 +150,59 @@ That keeps every step anchored to a real result. The model is never told a call 
 when it did not, and it is never allowed to plan four steps off a guess. Nothing is
 lost: it can simply call the same tool on the next step.
 
+`normal` runs every call. `expert` runs every call **and asks the model to batch
+independent ones**, so three reads become one round trip instead of three.
+
+## What `expert` changes
+
+Expert mode keeps your prompt and the language rule, then adds five efficiency rules:
+
+```
+Expert mode (work efficiently):
+1. Do not create a todo list for a one-step task. Use it only when the job has four or more distinct steps, and never restart a plan that is already done.
+2. Batch independent tool calls in one reply when the API supports it; read their results together. Only sequence calls that depend on an earlier result.
+3. Do not narrate routine reads, writes or scans. Skip the running commentary and spend the turn on the work.
+4. Read a file before overwriting it. For code changes use apply_patch, then run the project's tests when they exist.
+5. Keep the final answer short: what changed, where, and anything the user must know. Do not repeat tool output.
+```
+
+The catalogue is deliberately **brief** — one line per tool, without repeating actions
+and arguments that the JSON schema already carries. That is where the token saving
+comes from. The shell stays available; the checklist is not forced for small jobs;
+batching is encouraged.
+
 ## Which mode should I use?
 
 | Your model | Use | Why |
 | --- | --- | --- |
-| LM Studio / Ollama 3B–9B (`qwen2.5:7b`, `glm-4.7-flash`, …) | `guided` | the explicit rules and the visible argument names remove the two commonest small-model failures: inventing a tool, and narrating success without calling anything |
-| 14B local models | `guided`, try `normal` on your tasks | at 14B the argument list matters less; measure on your own workflow |
-| GPT-4 class / Claude / DeepSeek via API | `normal` | capable models batch independent calls (read three files at once) and plan ahead correctly; the procedure only slows them down |
+| LM Studio / Ollama 3B–9B (`qwen2.5:7b`, `glm-4.7-flash`, …) | `auto` | resolves to `guided`: explicit rules and visible argument names remove the two commonest small-model failures — inventing a tool, and narrating success without calling anything |
+| Local 14B–30B (`qwen3-coder-30b`, …) | `auto` | resolves to `expert`: the model can batch calls, and the shorter prompt saves context |
+| GPT-4 class / Claude / DeepSeek via API | `auto` | resolves to `expert`; pin `normal` if you want the plain prompt instead |
+| A model that ignores the expert rules | pin `guided` or `normal` | `auto` is a heuristic, not a guarantee; measure on your own tasks |
 
-The mode touches nothing else — same tools (minus the withheld shell), same approval
-prompts, same memory, same budget. You can switch mid-conversation.
+The mode touches nothing else — same tools (minus the withheld shell in `guided`),
+same approval prompts, same memory, same budget. You can switch mid-conversation.
 
 ## Checking which mode is live
 
 ```powershell
-PS> /status
-...
-shell      : C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe 5.1.26100.9444
-mode       : guided (one tool call per step, explicit procedure)
-...
+PS> /mode
+mode = auto -> expert  (auto | guided | normal | expert)
 PS> /config agentMode
-agentMode = guided
+agentMode = auto
 ```
 
-`GET /api/state` reports it too, and its `catalog` field returns the **verbose**
-catalogue when guided mode is on — so a custom front end can show the model exactly
-what it was told.
+`GET /api/state` reports the resolved mode, and its `catalog` field returns the
+catalogue the model actually received: verbose in `guided`, brief in `expert`, the
+plain one in `normal`. `GET /api/settings` adds `agentModeEffective`, so a custom
+front end can show the same `auto → expert` line.
 
 ## The checklist / 清单
 
-Both modes get the same tool, and `guided` adds rule 8 to the prompt: *if the request
-has two or more parts, call `todo` with action `set` first, then mark each item
-`done`*.
+All modes share the `todo` tool. `guided` adds rule 8: *if the request has two or more
+parts, call `todo` with action `set` first, then mark each item `done`*. `expert`
+asks for a list only when there are four or more distinct steps, so a one-line task
+does not pay for a plan.
 
 ```text
 you> 读一下 notes.txt，把端口改成 9090，然后汇报

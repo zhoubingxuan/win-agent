@@ -8,7 +8,17 @@ import http from "node:http";
 import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { McpManager, safeName, resolveCommand, isUsable } from "../src/mcp.js";
+import {
+  McpManager,
+  expandEnv,
+  isUsable,
+  parseMcpConfig,
+  resolveCommand,
+  safeName,
+  testMcpServer,
+  toolPolicyFor,
+} from "../src/mcp.js";
+import { normalizeMcpServers } from "../src/settings.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MOCK = path.join(HERE, "fixtures", "mock-mcp-server.mjs");
@@ -182,6 +192,154 @@ console.log("stdio: connect, list tools, call them");
   manager.close();
 }
 
+console.log("stdio: resources, prompts and mcp_context");
+{
+  const { manager } = makeManager([stdioServer()]);
+  await manager.refresh();
+  const status = manager.status()[0];
+  check("resources are listed", status.resources.includes("mock://doc"), status.resources.join(", "));
+  check("prompts are listed", status.prompts.includes("greet"), status.prompts.join(", "));
+  check(
+    "the capabilities say what the server supports",
+    status.capabilities.tools && status.capabilities.resources && status.capabilities.prompts,
+  );
+  check("a resource can be read", (await manager.readResource("mock://doc")) === "resource body");
+  check("a prompt can be rendered", (await manager.getPrompt("greet", { name: "Ada" })).includes("hello Ada"));
+
+  const context = manager.contextTool();
+  check("one context tool replaces a tool per document", context !== null);
+  const list = await context.run({ action: "list" }, ctxOf(always));
+  check("the catalogue names the resource", list.includes("mock://doc"), list);
+  check("the catalogue names the prompt", list.includes("greet"), list);
+  check("the context tool can read", (await context.run({ action: "read", uri: "mock://doc" }, ctxOf(always))) === "resource body");
+  check(
+    "the context tool can render a prompt",
+    (await context.run({ action: "prompt", name: "greet", arguments: { name: "Bob" } }, ctxOf(always))).includes(
+      "hello Bob",
+    ),
+  );
+  manager.close();
+}
+
+console.log("stdio: tool policies and environment expansion");
+{
+  const { manager } = makeManager([
+    stdioServer({ toolPolicies: { echo: "deny", fail: "allow", structured: "ask" } }),
+  ]);
+  await manager.refresh();
+  const names = manager.tools(always, false).map((tool) => tool.schema.function.name);
+  check("a denied tool is not offered", !names.includes("mcp__mock__echo"), names.join(", "));
+  check("an allowed tool is offered", names.includes("mcp__mock__fail"));
+  check("an ask tool is offered", names.includes("mcp__mock__structured"));
+  check("the policy is readable", toolPolicyFor(stdioServer({ toolPolicies: { echo: "deny" } }), "echo") === "deny");
+  check("autoApprove is the fallback", toolPolicyFor(stdioServer({ autoApprove: true }), "echo") === "allow");
+  const fail = manager.tools(never, false).find((tool) => tool.schema.function.name === "mcp__mock__fail");
+  check("allow skips the prompt", (await fail.run({}, ctxOf(never))).startsWith("Error: the mock tool failed"));
+  manager.close();
+}
+
+console.log("environment expansion");
+{
+  process.env.WIN_AGENT_MCP_TOKEN = "token-42";
+  check("${NAME} is expanded", expandEnv("Bearer ${WIN_AGENT_MCP_TOKEN}") === "Bearer token-42");
+  check("${env:NAME} is expanded", expandEnv("${env:WIN_AGENT_MCP_TOKEN}") === "token-42");
+  check("%NAME% is expanded", expandEnv("%WIN_AGENT_MCP_TOKEN%") === "token-42");
+  check("an unknown name becomes empty", expandEnv("x${WIN_AGENT_MCP_MISSING}y") === "xy");
+  delete process.env.WIN_AGENT_MCP_TOKEN;
+}
+
+console.log("testMcpServer() reads a server without touching the manager");
+{
+  const result = await testMcpServer(stdioServer());
+  check("the test passes", result.ok === true, result.error);
+  check("it names the protocol", result.protocolVersion === "2025-06-18", result.protocolVersion);
+  check("it reports tools", result.tools.includes("echo"), result.tools.join(", "));
+  check("it reports resources", result.resources.includes("mock://doc"), result.resources.join(", "));
+  check("it reports prompts", result.prompts.includes("greet"), result.prompts.join(", "));
+}
+
+console.log("config import: Claude Desktop / Cursor / VS Code");
+{
+  const existing = [stdioServer({ id: "keep", name: "Keep me" })];
+  const imported = parseMcpConfig(
+    {
+      mcpServers: {
+        fs: { command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "D:\\"], env: { A: "1" } },
+        remote: { url: "https://example.com/mcp", headers: { Authorization: "Bearer x" } },
+        legacy: { url: "https://example.com/sse" },
+        keep: { command: "node", args: ["server.mjs"] },
+      },
+    },
+    existing,
+  );
+  check("new servers are added", imported.added === 3, JSON.stringify(imported));
+  check("an existing id is updated, not duplicated", imported.updated === 1, JSON.stringify(imported));
+  check("the existing server survives once", imported.servers.filter((s) => s.id === "keep").length === 1);
+  const fs = imported.servers.find((s) => s.id === "fs");
+  check("a command becomes stdio", fs.transport === "stdio" && fs.command === "npx");
+  check("arguments are kept", fs.args[1] === "@modelcontextprotocol/server-filesystem");
+  check("env is kept", fs.env.A === "1");
+  check("a URL defaults to HTTP", imported.servers.find((s) => s.id === "remote").transport === "http");
+  check("a URL ending in /sse is SSE", imported.servers.find((s) => s.id === "legacy").transport === "sse");
+  check("headers are kept", imported.servers.find((s) => s.id === "remote").headers.Authorization === "Bearer x");
+
+  const again = parseMcpConfig(
+    { mcpServers: { fs: { command: "npx", args: ["-y", "other"] } } },
+    imported.servers,
+  );
+  check("re-importing updates in place", again.updated === 1 && again.servers.length === imported.servers.length);
+  check("the new argument took effect", again.servers.find((s) => s.id === "fs").args[1] === "other");
+  check("the display name of another server is untouched", again.servers.find((s) => s.id === "keep").name === "Keep me");
+
+  const partial = parseMcpConfig({ mcpServers: { fs: { env: { B: "2" } } } }, again.servers);
+  const kept = partial.servers.find((s) => s.id === "fs");
+  check("a partial import keeps the command", kept.command === "npx", kept.command);
+  check("a partial import keeps the arguments", kept.args[1] === "other", kept.args.join(", "));
+  check("a partial import keeps unrelated env", kept.env.A === "1", JSON.stringify(kept.env));
+  check("a partial import adds the new env", kept.env.B === "2", JSON.stringify(kept.env));
+}
+
+console.log("settings validation for the new MCP fields");
+{
+  const [server] = normalizeMcpServers([
+    {
+      id: "x",
+      transport: "sse",
+      url: "https://example.com/sse",
+      args: "-y one two",
+      headers: { Authorization: "Bearer t" },
+      toolPolicies: { echo: "deny" },
+      timeoutMs: 500,
+      cwd: "D:\\workspace",
+    },
+  ]);
+  check("SSE is accepted", server.transport === "sse");
+  check("a command line string becomes arguments", server.args.length === 3);
+  check("headers survive", server.headers.Authorization === "Bearer t");
+  check("tool policies survive", server.toolPolicies.echo === "deny");
+  check("a short timeout is clamped", server.timeoutMs === 1_000);
+  check("cwd survives", server.cwd === "D:\\workspace");
+
+  let duplicate = "";
+  try {
+    normalizeMcpServers([
+      { id: "same", command: "node" },
+      { id: "same", command: "node" },
+    ]);
+  } catch (error) {
+    duplicate = error.message;
+  }
+  check("duplicate ids are rejected", /used twice/.test(duplicate), duplicate);
+
+  let badPolicy = "";
+  try {
+    normalizeMcpServers([{ id: "p", command: "node", toolPolicies: { echo: "maybe" } }]);
+  } catch (error) {
+    badPolicy = error.message;
+  }
+  check("an unknown tool policy is rejected", /must be allow, ask or deny/.test(badPolicy), badPolicy);
+}
+
 console.log("stdio: autoApprove skips the prompt");
 {
   const { manager } = makeManager([stdioServer({ autoApprove: true })]);
@@ -294,7 +452,7 @@ console.log("http: Streamable HTTP transport (JSON and SSE answers)");
     req.on("data", (chunk) => (raw += chunk));
     req.on("end", () => {
       const message = JSON.parse(raw);
-      requests.push({ message, session: req.headers["mcp-session-id"] ?? null });
+      requests.push({ message, session: req.headers["mcp-session-id"] ?? null, headers: req.headers });
       if (message.method === "initialize") {
         res.setHeader("Mcp-Session-Id", "sess-42");
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -335,18 +493,99 @@ console.log("http: Streamable HTTP transport (JSON and SSE answers)");
   await new Promise((resolve) => server.listen(httpPort, "127.0.0.1", resolve));
 
   const { manager } = makeManager([
-    stdioServer({ id: "httpmock", name: "httpmock", transport: "http", command: "", args: [], url: `http://127.0.0.1:${httpPort}/mcp` }),
+    stdioServer({
+      id: "httpmock",
+      name: "httpmock",
+      transport: "http",
+      command: "",
+      args: [],
+      url: `http://127.0.0.1:${httpPort}/mcp`,
+      headers: { Authorization: "Bearer token", "X-Mock": "1" },
+    }),
   ]);
   await manager.refresh();
   check("the http server is connected", manager.status()[0].connected === true, manager.status()[0].error);
   check("its tool is exposed", manager.tools(always, false).map((t) => t.schema.function.name).includes("mcp__httpmock__ping"));
   check("the session id is remembered", requests.some((r) => r.session === "sess-42"));
+  check("custom headers are sent", requests.every((r) => r.headers.authorization === "Bearer token"));
+  check("extra headers are sent", requests.every((r) => r.headers["x-mock"] === "1"));
+  check(
+    "the protocol version is sent",
+    requests.every((r) => r.headers["mcp-protocol-version"] === "2025-06-18"),
+    requests[0]?.headers["mcp-protocol-version"],
+  );
 
   sse = true;
   await manager.refresh();
   check("an SSE answer is parsed too", manager.status()[0].tools.includes("ping"));
   manager.close();
   server.close();
+}
+
+console.log("sse: the older HTTP+SSE transport");
+{
+  const [ssePort] = await freePorts(1);
+  const clients = new Set();
+  const sseServer = http.createServer((req, res) => {
+    if (req.method === "GET" && req.url.startsWith("/sse")) {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      res.write("event: endpoint\ndata: /messages?session=abc\n\n");
+      clients.add(res);
+      req.on("close", () => clients.delete(res));
+      return;
+    }
+    if (req.method === "POST" && req.url.startsWith("/messages")) {
+      let raw = "";
+      req.on("data", (chunk) => (raw += chunk));
+      req.on("end", () => {
+        const message = JSON.parse(raw);
+        res.writeHead(202).end();
+        if (message.id === undefined) return;
+        let result = {};
+        if (message.method === "initialize") {
+          result = {
+            protocolVersion: "2024-11-05",
+            capabilities: { tools: {} },
+            serverInfo: { name: "sse-mock", version: "1" },
+          };
+        } else if (message.method === "tools/list") {
+          result = { tools: [{ name: "ping", description: "pong", inputSchema: { type: "object", properties: {} } }] };
+        } else if (message.method === "tools/call") {
+          result = { content: [{ type: "text", text: "sse pong" }] };
+        }
+        const payload = { jsonrpc: "2.0", id: message.id, result };
+        for (const client of clients) {
+          client.write(`event: message\ndata: ${JSON.stringify(payload)}\n\n`);
+        }
+      });
+      return;
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((resolve) => sseServer.listen(ssePort, "127.0.0.1", resolve));
+  const { manager } = makeManager([
+    stdioServer({
+      id: "legacy",
+      name: "legacy",
+      transport: "sse",
+      command: "",
+      args: [],
+      url: `http://127.0.0.1:${ssePort}/sse`,
+    }),
+  ]);
+  await manager.refresh();
+  const status = manager.status()[0];
+  check("the SSE server is connected", status.connected === true, status.error);
+  const tool = manager.tools(always, false).find((t) => t.schema.function.name === "mcp__legacy__ping");
+  check("its tool is exposed", !!tool);
+  check("the tool can be called over SSE", (await tool.run({}, ctxOf(always))) === "sse pong");
+  manager.close();
+  for (const client of clients) client.end();
+  sseServer.close();
 }
 
 console.log("http: an unreachable endpoint is reported");

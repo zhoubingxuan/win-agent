@@ -116,7 +116,7 @@ export const processesTool: Tool = {
         if (ctx.guided && SCRIPT_HOSTS.has(host)) {
           return (
             `Error: guided mode does not run interpreters or scripts (${name}). ` +
-            "Use the tests tool for a project's tests; switch to normal mode for the raw shell."
+            "Use the tests tool for a project's tests; switch to normal or expert mode for the raw shell."
           );
         }
         const cwdRaw = argOpt(args, "cwd")?.trim();

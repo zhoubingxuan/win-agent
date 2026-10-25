@@ -106,7 +106,10 @@ Invoke-RestMethod -Method Post "$base/api/profiles" -ContentType application/jso
 ## MCP servers / MCP 服务器
 
 `POST /api/mcp` manages the servers the same way the Settings tab does. Every action
-returns the fresh `mcp` snapshot (`enabled`, `totalTools`, `servers[]{connected, liveTools, error}`).
+returns the fresh `mcp` snapshot: `enabled`, `ageMs`, `refreshSeconds`, `totalTools`,
+`totalResources`, `totalPrompts`, and `servers[]` with `connected`, `serverInfo`,
+`liveTools`, `resources`, `prompts`, `capabilities`, `latencyMs`, `stderr`, `error`
+and `nextRetryMs`.
 
 ```powershell
 $base = "http://127.0.0.1:8787"
@@ -119,10 +122,27 @@ Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Bo
   "action":"add","id":"fs",
   "server":{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","D:\\new"]}}'
 
-# add a Streamable-HTTP server that does not ask for approval
+# add a Streamable-HTTP server with a header and a per-tool policy
 Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
   "action":"add","id":"docs",
-  "server":{"transport":"http","url":"http://127.0.0.1:3001/mcp","autoApprove":true}}'
+  "server":{"transport":"http","url":"http://127.0.0.1:3001/mcp",
+            "headers":{"Authorization":"Bearer ${DOCS_TOKEN}"},
+            "toolPolicies":{"search":"allow","delete":"deny"}}}'
+
+# add an SSE-only server
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
+  "action":"add","id":"legacy",
+  "server":{"transport":"sse","url":"http://127.0.0.1:3001/sse"}}'
+
+# test a candidate without saving it
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
+  "action":"test","id":"fs",
+  "server":{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","D:\\new"]}}'
+
+# import a Claude Desktop / Cursor / VS Code mcpServers block
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
+  "action":"import",
+  "config":{"mcpServers":{"git":{"command":"uvx","args":["mcp-server-git"]}}}}'
 
 # reconnect and re-read the tool lists
 Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{"action":"refresh"}'

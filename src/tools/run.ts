@@ -98,7 +98,8 @@ function quoteCmdArg(value: string): string {
   return /[\s"&|<>^()]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
-function killTree(child: { pid?: number; kill(signal?: NodeJS.Signals): boolean }): void {  try {
+export function killTree(child: { pid?: number; kill(signal?: NodeJS.Signals): boolean }): void {
+  try {
     if (process.platform === "win32" && child.pid) {
       spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
     } else {

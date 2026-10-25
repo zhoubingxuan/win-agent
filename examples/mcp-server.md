@@ -12,7 +12,7 @@ That command speaks newline-delimited JSON-RPC 2.0 on stdin/stdout. It prints
 nothing else there — human messages go to stderr:
 
 ```
-win-agent mcp: ready: 10 tools, dry-run off
+win-agent mcp: ready: 15 tools, dry-run off
 ```
 
 ## Wiring it into a client
@@ -60,14 +60,46 @@ path outside the allowed roots is refused with the same message.
 | --- | --- |
 | `system` | `action: "info"`, `"disk"`, `"memory"`, `"whoami"` — no approval needed |
 | `files` | list, tree, read, search, write, edit, copy, move, delete (delete asks for approval) |
+| `apply_patch` | apply or preview a unified diff; all-or-nothing, backed up |
+| `git` | status, diff, log, add, commit (commit asks first; no push/reset) |
+| `tests` | detect and run the project's own npm/pytest/cargo/go/dotnet command |
 | `processes` | what is eating the CPU/memory, kill by name or id |
 | `services` | status/start/stop without remembering `sc.exe` syntax |
 | `network` | adapters, DNS, ping, ports |
 | `registry` | read a key, list values |
 | `scheduled_tasks` | list, create, delete |
 | `ui` | open a file/URL, clipboard, notification |
+| `web` | search and read pages |
 | `skills` | `list` / `load` / `read` the procedures in `data/skills/` |
+| `todo` | the model's own checklist (does not change the machine) |
 | `powershell` | the raw shell — **not offered in guided mode** |
+
+The MCP server follows the `agentMode` setting of the copy that starts it. `guided`
+withholds `powershell`; `normal` and `expert` offer it. `apply_patch`, `git` and
+`tests` are structured tools in every mode, so a client can do a coder turn without
+writing a script.
+
+## Skills are prompts too
+
+Installed skills appear in two places. The model can call the `skills` tool, and an
+MCP client can ask for them as reusable prompts:
+
+| Request | Answer |
+| --- | --- |
+| `prompts/list` | every skill in `data/skills/`, with its name, description and when-to-use line |
+| `prompts/get` | the skill's body as a user message, so an IDE can insert a procedure into a conversation without starting a win-agent turn |
+
+If no skills are installed, the `prompts` capability is not advertised. A missing
+prompt name is `-32602`, not an empty answer.
+
+## Protocol and instructions
+
+`initialize` negotiates one of `2025-06-18`, `2025-03-26` or `2024-11-05` — the newest
+version the client asked for that this server also speaks — and echoes it back. It
+also returns short `instructions` explaining that these are Windows tools, that
+destructive calls may be refused, and that approval can be enabled with
+`AGENT_MCP_SERVE_AUTO_APPROVE`. The client can show that text without a separate
+documentation lookup.
 
 ## Approval: nobody is there to press the button
 
@@ -115,7 +147,7 @@ change it.
 | Symptom | What it means |
 | --- | --- |
 | the client lists no tools | the process failed to start — run the same command in a terminal and read stderr |
-| “unknown tool `powershell`” | guided mode withholds the raw shell; switch the mode in Settings, or use the structured tools |
+| “unknown tool `powershell`” | guided mode withholds the raw shell; switch to `normal` or `expert` in Settings, or use the structured tools |
 | every action says `Cancelled by user.` | approval is needed and `mcpServeAutoApprove` is off (this is the safe default) |
 | a path is refused | it is outside the working directory / sandbox roots |
 | the client shows a parse error | something printed to stdout — that is a bug; the test suite checks it never happens |

@@ -13,6 +13,94 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-10-25
+
+2.2 gave the agent a coder workflow. 2.3 makes it **faster on capable models** and
+**connected to the rest of the tool ecosystem**: an automatic expert mode, a real MCP
+client for stdio / HTTP / SSE, resources and prompts, per-tool policies, config import,
+and an MCP server that can hand its installed skills to another agent.
+
+### Added
+
+- **Four agent modes: `auto`, `guided`, `normal`, `expert`.** `auto` is now the default.
+  It resolves to `expert` when the active profile is a cloud API (`kind: "api"`) or a
+  local model whose name is 14B or larger, and to `guided` otherwise. The Settings
+  slider shows both values (`auto → expert`), `/mode` accepts all four names and their
+  bilingual aliases, `/status` prints the resolved mode, and `publicSettings()` exposes
+  `agentModeEffective` for a custom front end. An explicit mode always wins.
+- **`expert` workflow.** A five-rule prompt (no checklist for one-step jobs, batch
+  independent calls, no routine narration, read-before-overwrite/patch/test, short
+  final answer), a **brief tool catalogue** (one line per tool) and batched calls. On
+  the 30B coder the full 34-task eval went from 33/34 and 2 019 969 tokens in guided
+  mode to **34/34 and 1 108 490 tokens** in expert mode.
+- **MCP transports `http` (Streamable HTTP) and legacy `sse`.** Stdio remains the
+  default. HTTP and SSE servers can carry arbitrary request `headers`; stdio servers
+  can have a `cwd`; every server has a per-request `timeoutMs` (default 20 s, clamped
+  1–600 s). `${VAR}`, `${env:VAR}` and `%VAR%` are expanded in `command`, `args`,
+  `env`, `cwd`, `url` and `headers`.
+- **Resources and prompts through one `mcp_context` tool.** `action: "list"` shows
+  every resource URI and prompt; `read` fetches a resource and `prompt` renders a
+  prompt with arguments. The tool is registered only while a connected server offers
+  context, so a server with 200 documents does not add 200 functions to the prompt.
+- **Per-tool MCP policies (`allow` / `ask` / `deny`).** A tool rule overrides the
+  server's `autoApprove`; `deny` removes the tool from the catalogue and the schemas
+  entirely. The Settings card offers one select per discovered tool.
+- **MCP reconnect and cache control.** A server that sends
+  `notifications/*/list_changed` marks its lists dirty. Failed connections retry after
+  2 s, 5 s, 15 s, 60 s, then every 5 minutes. A failed call reconnects once and retries
+  that call. `mcpRefreshSeconds` (default 120, range 10–3600) controls how long a list
+  is reused before a turn.
+- **MCP config import.** Paste the `mcpServers` object from Claude Desktop, Cursor or
+  VS Code; new ids are added, existing ids are updated in place, a `/sse` URL selects
+  the legacy transport, invalid entries are reported. Also available as
+  `{"action":"import","config":...}`.
+- **MCP connection test.** Settings → MCP → **Test**, or
+  `{"action":"test","id","server"}`, starts a candidate, performs the handshake and
+  reads its lists, then stops it without touching the live connection.
+- **MCP server mode exposes skills as prompts.** `prompts/list` / `prompts/get` serve
+  every installed skill; `initialize` negotiates `2025-06-18`, `2025-03-26` or
+  `2024-11-05`, advertises the `prompts` capability when skills exist, and returns
+  short `instructions` for the client.
+- **Unique MCP tool names.** Sanitized names are capped at 64 characters as before;
+  when two servers (or two long names) collide, the second gets a suffix instead of
+  silently replacing the first. Results are capped at 64 000 characters.
+
+### Changed
+
+- `DEFAULTS.agentMode` is now `auto`; unknown aliases normalize to `auto`. A settings
+  file that already pins `guided` or `normal` keeps doing exactly that — nothing is
+  migrated silently.
+- The guided catalogue still spells out required arguments; `expert` uses the new
+  brief catalogue and does not receive the checklist reminder for small jobs.
+- The MCP settings panel is now card-based: edit, test, reconnect, remove, import,
+  transport slider, command/args/cwd/url/env/headers/timeout, per-tool policy selects,
+  resource/prompt lists and the server's stderr tail.
+- `/mcp` reports resources and prompts as `+nR/nP`; `/mcp add` accepts `http|sse`;
+  the usage text documents both.
+
+### Fixed
+
+- Importing a client config updates an existing id instead of creating `id_2`, and a
+  re-import preserves fields the pasted block omits (`name`, `cwd`, `env`, `headers`,
+  `command`, `args`, `toolPolicies`, `timeoutMs`).
+- A pasted `args` array is no longer ignored; a command string and separate arguments
+  can be used together.
+- An unset `${VAR}` expands to an empty string rather than being sent literally.
+- `testMcpServer()` reports the protocol version the server actually negotiated.
+
+### Tests
+
+- `test:mcp`: **105 checks** — stdio, Streamable HTTP with custom headers, legacy SSE,
+  resources/prompts/`mcp_context`, tool policies, environment expansion, direct server
+  testing, config import/update, settings validation, pagination, timeouts, crash and
+  reconnect paths.
+- `test:mcp-server`: **36 checks** — skills as `prompts/list` + `prompts/get`,
+  instructions, tools/list, approval refusal, stdout cleanliness.
+- `test:mode`: **114 checks** — all four modes, auto resolution, expert prompt and
+  brief catalogue, bilingual aliases, one-tool-per-step.
+- Docs and examples updated for the new mode slider, MCP transports, resources,
+  prompts, policies, import and cache TTL.
+
 ## [2.2.0] — 2026-10-23
 
 The agent could change a line; it could not change a program and prove it still

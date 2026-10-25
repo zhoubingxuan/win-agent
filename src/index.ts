@@ -3,7 +3,7 @@ import readline from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import fs from "node:fs";
 import { Agent } from "./agent.js";
-import { getSettings, loadSettings, settingsFile, toConfig } from "./settings.js";
+import { effectiveAgentMode, getSettings, loadSettings, settingsFile, toConfig } from "./settings.js";
 import { configureErrorHints, configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
 import { createWindowsTools, type Approval } from "./tools/index.js";
 import { mcp } from "./mcp.js";
@@ -114,7 +114,11 @@ async function main(): Promise<void> {
         enabledTools: settings.enabledTools,
         customTools: settings.customTools,
         webSearchUrl: settings.webSearchUrl,
-      }).describe(),
+        agentMode: effectiveAgentMode(settings),
+      }).describe({
+        verbose: effectiveAgentMode(settings) === "guided",
+        brief: effectiveAgentMode(settings) === "expert",
+      }),
     );
     mcp.close();
     return;
@@ -149,6 +153,7 @@ async function main(): Promise<void> {
     enabledTools: settings.enabledTools,
     customTools: settings.customTools,
     webSearchUrl: settings.webSearchUrl,
+    agentMode: effectiveAgentMode(settings),
   });
 
   // The chat's detail level, in the terminal's terms: the process lines below are
@@ -195,7 +200,10 @@ async function main(): Promise<void> {
   console.log(`  model : ${settings.model}`);
   console.log(`  api   : ${settings.baseUrl}`);
   console.log(`  tools : ${tools.names().join(", ")}`);
-  console.log(`  mode  : ${settings.agentMode}${settings.agentMode === "guided" ? " (one tool per step, explicit procedure)" : ""}`);
+  const mode = effectiveAgentMode(settings);
+  const modeNote =
+    settings.agentMode === "auto" ? ` (auto -> ${mode})` : mode === "guided" ? " (one tool per step, explicit procedure)" : "";
+  console.log(`  mode  : ${settings.agentMode}${modeNote}`);
   console.log(`  detail: ${settings.verbosity}${settings.verbosity === "full" ? "" : " (set verbosity=full to watch the tool calls)"}`);
   const info = await powerShellInfo();
   console.log(

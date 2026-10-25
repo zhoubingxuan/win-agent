@@ -1,6 +1,7 @@
 import {
   DEFAULTS,
   activeProfile,
+  effectiveAgentMode,
   findProfile,
   getSettings,
   loadSettings,
@@ -21,7 +22,7 @@ import { powerShellInfo, psQuote } from "./util/ps.js";
 import { listSkills, loadSkill, skillsDir } from "./skills.js";
 import type { AuditEntry } from "./audit.js";
 import { VERSION } from "./version.js";
-import { MCP_SERVER_ID, mcp, safeName, upsertServer, type McpServer } from "./mcp.js";
+import { MCP_SERVER_ID, mcp, upsertServer, type McpServer } from "./mcp.js";
 import type { ContextStats } from "./context.js";
 import type {
   ConversationSummary,
@@ -169,8 +170,10 @@ interface Messages {
   contextSource: string;
   sourceSettings: string;
   sourceModel: string;
+  modeAuto: string;
   modeGuided: string;
   modeNormal: string;
+  modeExpert: string;
   modeInvalid: string;
   adminYes: string;
   adminNo: string;
@@ -280,7 +283,7 @@ MCP servers (Model Context Protocol - tools from other programs):
   /mcp refresh               reconnect and re-read the tool lists
   /mcp tools                 every MCP tool the model can call
   /mcp add <id> stdio <cmd> [args...]    e.g. npx -y @modelcontextprotocol/server-filesystem D:\\
-  /mcp add <id> http <url>               a remote / proxied MCP endpoint
+  /mcp add <id> http|sse <url>           a remote / proxied MCP endpoint
   /mcp enable | disable <id> switch one server
   /mcp remove <id>           forget a server
 
@@ -357,9 +360,11 @@ current directory.`,
     contextSource: "  window {0} tokens, from {1}",
     sourceSettings: "the settings",
     sourceModel: "the endpoint",
+    modeAuto: "auto (resolved from the endpoint)",
     modeGuided: "guided (one tool call per step, explicit procedure)",
     modeNormal: "normal (plain prompt)",
-    modeInvalid: 'mode must be "guided" or "normal"',
+    modeExpert: "expert (batch calls, no checklist nagging)",
+    modeInvalid: 'mode must be "auto", "guided", "normal" or "expert"',
     adminYes: "yes",
     adminNo: "no — service, firewall and machine-wide changes will be refused",
     adminUnknown: "unknown",
@@ -382,10 +387,10 @@ current directory.`,
   /mcp refresh         reconnect and re-read the tool lists
   /mcp tools           every MCP tool
   /mcp add <id> stdio <command> [args...]
-  /mcp add <id> http <url>
+  /mcp add <id> http|sse <url>
   /mcp enable | disable <id>
   /mcp remove <id>`,
-    mcpAddUsage: "usage: /mcp add <id> <stdio <command> [args...] | http <url>>",
+    mcpAddUsage: "usage: /mcp add <id> <stdio <command> [args...] | http|sse <url>>",
     mcpIdInvalid: "server id must be letters, digits, - or _ (max 32)",
     mcpUnknown: 'no MCP server "{0}". Try /mcp',
     mcpEnableUsage: "usage: /mcp {0} <id>",
@@ -472,7 +477,7 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
   /mcp refresh               重新连接并重读工具列表
   /mcp tools                 列出模型可调用的全部 MCP 工具
   /mcp add <id> stdio <命令> [参数...]   例如 npx -y @modelcontextprotocol/server-filesystem D:\\
-  /mcp add <id> http <网址>              远程或经代理的 MCP 接口
+  /mcp add <id> http|sse <网址>          远程或经代理的 MCP 接口
   /mcp enable | disable <id> 单独开关某个服务器
   /mcp remove <id>           删除一个服务器
 
@@ -548,9 +553,11 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
     contextSource: "  窗口 {0} tokens，来源：{1}",
     sourceSettings: "设置",
     sourceModel: "接口",
+    modeAuto: "自动（按端点判断）",
     modeGuided: "高监督（每步只调用一个工具，附操作规范）",
     modeNormal: "普通（原始提示词）",
-    modeInvalid: '模式必须是 "guided" 或 "normal"',
+    modeExpert: "专家（批量调用，不催清单）",
+    modeInvalid: '模式必须是 "auto"、"guided"、"normal" 或 "expert"',
     adminYes: "是",
     adminNo: "否 —— 服务、防火墙、系统级修改都会被拒绝",
     adminUnknown: "未知",
@@ -573,10 +580,10 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
   /mcp refresh         重新连接并重读工具列表
   /mcp tools           列出全部 MCP 工具
   /mcp add <id> stdio <命令> [参数...]
-  /mcp add <id> http <网址>
+  /mcp add <id> http|sse <网址>
   /mcp enable | disable <id>
   /mcp remove <id>`,
-    mcpAddUsage: "用法：/mcp add <id> <stdio <命令> [参数...] | http <网址>>",
+    mcpAddUsage: "用法：/mcp add <id> <stdio <命令> [参数...] | http|sse <网址>>",
     mcpIdInvalid: "服务器 id 只能是字母、数字、- 或 _（最多 32 位）",
     mcpUnknown: "没有名为 “{0}” 的 MCP 服务器，试试 /mcp",
     mcpEnableUsage: "用法：/mcp {0} <id>",
@@ -696,6 +703,14 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
       const admin =
         info.elevated === true ? m().adminYes : info.elevated === false ? m().adminNo : m().adminUnknown;
       const withheld = host.withheld();
+      const modeLabel =
+        s.agentMode === "auto"
+          ? `${m().modeAuto} -> ${effectiveAgentMode(s) === "guided" ? m().modeGuided : m().modeExpert}`
+          : s.agentMode === "guided"
+            ? m().modeGuided
+            : s.agentMode === "expert"
+              ? m().modeExpert
+              : m().modeNormal;
       return [
         `version    : ${VERSION}`,
         `model      : ${s.model}`,
@@ -711,7 +726,7 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         `shell      : ${info.exe}${info.version ? ` ${info.version}` : ""}${info.note ? `  (${info.note})` : ""}`,
         `admin      : ${admin}`,
         `psErrors   : ${s.psEnglishErrors ? m().onWord : m().offWord}`,
-        `mode       : ${s.agentMode === "guided" ? m().modeGuided : m().modeNormal}`,
+        `mode       : ${modeLabel}`,
         `webPort    : ${s.webPort}`,
         `dryRun     : ${s.dryRun}`,
         `autoApprove: ${s.autoApprove}`,
@@ -836,9 +851,11 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
       // High supervision for small local models vs. the plain prompt.
       const value = rest.trim().toLowerCase();
       if (!value) {
-        return `mode = ${getSettings().agentMode}  (guided | normal)`;
+        const s = getSettings();
+        const resolved = s.agentMode === "auto" ? ` -> ${effectiveAgentMode(s)}` : "";
+        return `mode = ${s.agentMode}${resolved}  (auto | guided | normal | expert)`;
       }
-      if (!/^(guided|supervised|supervision|strict|normal|plain|standard)$/.test(value)) {
+      if (!/^(auto|automatic|guided|supervised|supervision|strict|normal|plain|standard|expert|fast|large|cloud)$/.test(value)) {
         throw new Error(m().modeInvalid);
       }
       return setKeys(host, { agentMode: normalizeAgentMode(value) });
@@ -1056,8 +1073,11 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
             : found?.connected
               ? format(m().mcpStateOn, found.tools.length)
               : m().mcpStateDead;
+          const context = found && (found.resources.length > 0 || found.prompts.length > 0)
+            ? ` +${found.resources.length}R/${found.prompts.length}P`
+            : "";
           const error = found?.error ? ` - ${found.error}` : "";
-          lines.push(`  ${server.id.padEnd(14)} ${server.transport.padEnd(5)} ${state}${error}`);
+          lines.push(`  ${server.id.padEnd(14)} ${server.transport.padEnd(5)} ${state}${context}${error}`);
         }
         return lines.join("\n");
       };
@@ -1067,21 +1087,20 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
       if (sub === "on" || sub === "off") {
         const on = sub === "on";
         const out = await setKeys(host, { mcpEnabled: on });
-        if (on) await mcp.refresh();
+        if (on) await mcp.refresh(true);
         else mcp.close();
         return `${out}\n${report()}`;
       }
 
       if (sub === "refresh" || sub === "reload") {
-        await mcp.refresh();
+        await mcp.refresh(true);
         return report();
       }
 
       if (sub === "tools") {
-        // The names the model actually calls, not the server's own names.
-        const names = mcp
-          .status()
-          .flatMap((server) => server.tools.map((tool) => safeName(server.id, tool)));
+        // The names the model actually calls, not the server's own names. The
+        // manager has already de-duplicated them across servers.
+        const names = mcp.names();
         if (names.length === 0) return m().mcpNoTools;
         return [format(m().mcpToolsHeader, names.length), ...names.map((name) => `- ${name}`)].join("\n");
       }
@@ -1096,24 +1115,26 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
           ),
         });
         mcp.drop(id);
-        await mcp.refresh();
+        await mcp.refresh(true);
         return `${out}\n${report()}`;
       }
 
-      // /mcp add <id> stdio <command> [args...]   or   /mcp add <id> http <url>
+      // /mcp add <id> stdio <command> [args...]   or   /mcp add <id> http|sse <url>
       if (sub === "add") {
         const [id, transport, target, ...args] = parts;
         if (!id || !transport || !target) throw new Error(m().mcpAddUsage);
         if (!MCP_SERVER_ID.test(id)) throw new Error(m().mcpIdInvalid);
-        const http = transport.toLowerCase() === "http";
+        const kind = transport.toLowerCase();
+        if (kind !== "stdio" && kind !== "http" && kind !== "sse") throw new Error(m().mcpAddUsage);
+        const remote = kind === "http" || kind === "sse";
         const next: McpServer = {
           id,
           name: id,
-          transport: http ? "http" : "stdio",
-          command: http ? "" : target,
-          args: http ? [] : args,
+          transport: remote ? (kind as "http" | "sse") : "stdio",
+          command: remote ? "" : target,
+          args: remote ? [] : args,
           env: {},
-          url: http ? target : "",
+          url: remote ? target : "",
           enabled: true,
           autoApprove: false,
           tools: [],
@@ -1123,7 +1144,7 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
           mcpServers: upsertServer(servers(), next),
           mcpEnabled: true,
         });
-        await mcp.refresh();
+        await mcp.refresh(true);
         return `${out}\n${report()}`;
       }
 
@@ -1134,7 +1155,7 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         const out = await setKeys(host, {
           mcpServers: servers().filter((server) => server.id !== id),
         });
-        await mcp.refresh();
+        await mcp.refresh(true);
         return `${out}\n${report()}`;
       }
 
