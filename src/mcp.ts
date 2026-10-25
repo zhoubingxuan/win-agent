@@ -36,6 +36,8 @@ import { getSettings } from "./settings.js";
 import { resolveCommand } from "./util/exec.js";
 import { killTree } from "./tools/run.js";
 import type { Approval, Tool } from "./tools/registry.js";
+import { McpAuthRequiredError, oauthConfigured, oauthHeader } from "./mcp-auth.js";
+import { resolveSecretRefs } from "./secrets.js";
 
 /** The newest protocol revision this client speaks. */
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
@@ -68,8 +70,30 @@ export interface McpServer {
   toolPolicies?: Record<string, McpToolPolicy>;
   /** How long one request may take, in milliseconds. */
   timeoutMs?: number;
+  /**
+   * The user has seen what this server is and allowed it to start. A new server
+   * defaults to false, so adding one never runs code or sends a token before an
+   * explicit confirmation. Servers saved before 2.5 have no field and stay
+   * trusted, so an update does not disable an existing install.
+   */
+  trusted?: boolean;
+  /** Remote servers: OAuth 2.1 discovery, PKCE and refresh. */
+  oauth?: McpOAuthConfig;
   /** Tool names this server offered the last time it answered. */
   tools: string[];
+}
+
+export interface McpOAuthConfig {
+  /** Scopes to request; empty means "whatever discovery suggests". */
+  scopes?: string[];
+  /** Pre-registered client. Omit to use dynamic client registration. */
+  clientId?: string;
+  /** Override the authorization server from the protected-resource metadata. */
+  authorizationServer?: string;
+  /** RFC 8707 resource indicator; defaults to the MCP URL. */
+  resource?: string;
+  /** Fixed loopback callback port; 0/undefined picks a free port. */
+  callbackPort?: number;
 }
 
 /** An MCP tool as the server describes it. */
@@ -169,7 +193,7 @@ function quoteForCmd(value: string): string {
 
 /** Expand `${NAME}`, `${env:NAME}` and `%NAME%` from the agent's environment. */
 export function expandEnv(value: string): string {
-  return String(value ?? "").replace(
+  return resolveSecretRefs(String(value ?? "")).replace(
     /\$\{env:([^}]+)\}|\$\{([^}]+)\}|%([^%]+)%/g,
     (whole, envName, plainName, percentName) => {
       const name = String(envName ?? plainName ?? percentName ?? "");
@@ -1119,6 +1143,25 @@ export function isUsable(server: McpServer): boolean {
 }
 
 /**
+ * Add the OAuth bearer token at the last moment, on a copy. The configured
+ * server (and therefore settings.json and the UI) never contains the token.
+ */
+async function withOAuth(server: McpServer): Promise<McpServer> {
+  if (!oauthConfigured(server)) return server;
+  const header = await oauthHeader(server);
+  if (!header) return server;
+  return { ...server, headers: { ...(server.headers ?? {}), Authorization: header } };
+}
+
+/** Does this failure mean "get a fresh OAuth token and try once more"? */
+function isAuthProblem(server: McpServer, error: unknown): boolean {
+  return (
+    error instanceof McpAuthRequiredError ||
+    (oauthConfigured(server) && /\b401\b|unauthori[sz]ed|authorization required/i.test((error as Error).message))
+  );
+}
+
+/**
  * Holds the live connections and the lists they advertise.
  *
  * The lists are refreshed on demand (startup, "Refresh" in the UI, before a
@@ -1268,7 +1311,7 @@ export class McpManager {
         capabilities: { tools: false, resources: false, prompts: false },
         latencyMs: 0,
         stderr: "",
-        error: "",
+        error: server.trusted === false ? "not trusted yet - review the server and press Trust and connect" : "",
         nextRetryMs: 0,
       };
     });
@@ -1303,7 +1346,7 @@ export class McpManager {
   }
 
   private async doRefresh(reconnect: boolean): Promise<void> {
-    const wanted = this.servers().filter((s) => s.enabled && isUsable(s));
+    const wanted = this.servers().filter((s) => s.enabled && isUsable(s) && s.trusted !== false);
     // Drop connections to servers that were removed or switched off.
     for (const [id, session] of [...this.sessions]) {
       if (!wanted.some((s) => s.id === id) || reconnect) {
@@ -1328,8 +1371,22 @@ export class McpManager {
         let session = prior;
         try {
           if (!session) {
-            session = new McpSession(server, this.timeoutMs, (method) => this.onServerNotification(server.id, method));
-            await session.start();
+            const open = async () => {
+              const prepared = await withOAuth(server);
+              return new McpSession(prepared, this.timeoutMs, (method) => this.onServerNotification(server.id, method));
+            };
+            session = await open();
+            try {
+              await session.start();
+            } catch (error) {
+              // A token can be revoked before its stated expiry. Refresh once and
+              // retry the handshake, then let the normal error path report it.
+              if (!isAuthProblem(server, error)) throw error;
+              session.close();
+              await oauthHeader(server, true);
+              session = await open();
+              await session.start();
+            }
             this.sessions.set(server.id, session);
           } else if (this.dirty.has(server.id)) {
             await session.refreshLists();
@@ -1452,6 +1509,16 @@ export class McpManager {
     try {
       return await session.call(entry.tool.name, args);
     } catch (error) {
+      if (isAuthProblem(entry.server, error)) {
+        // A 401 can mean the token was revoked before its stated expiry. Ask for
+        // a refresh explicitly, then reconnect once with the new header.
+        await oauthHeader(entry.server, true);
+        await this.reconnect(entry.server.id);
+        const again = this.entries.find((e) => e.fullName === fullName);
+        const live = again ? this.sessions.get(again.server.id) : null;
+        if (!again || !live) throw error;
+        return live.call(again.tool.name, args);
+      }
       if (!looksDisconnected(error)) throw error;
       await this.reconnect(entry.server.id);
       const again = this.entries.find((e) => e.fullName === fullName);
@@ -1636,8 +1703,9 @@ export interface McpTestResult {
 /** Start a server once, read its lists, and stop it. Does not touch the live manager. */
 export async function testMcpServer(server: McpServer, timeoutMs = MCP_TIMEOUT_MS): Promise<McpTestResult> {
   const started = Date.now();
-  const session = new McpSession(server, timeoutMs, () => undefined);
+  let session = new McpSession(server, timeoutMs, () => undefined);
   try {
+    session = new McpSession(await withOAuth(server), timeoutMs, () => undefined);
     await session.start();
     return {
       ok: true,
@@ -1771,16 +1839,26 @@ export function parseMcpConfig(raw: unknown, existing: McpServer[] = []): McpImp
                 ? "sse"
                 : "http"
               : (prior?.transport ?? "stdio");
+    const changedEndpoint =
+      !prior ||
+      url !== prior.url ||
+      command !== prior.command ||
+      JSON.stringify(args) !== JSON.stringify(prior.args);
+    // Arguments can change on the same program, and that should not discard the
+    // environment it needs. Moving to another URL or program does.
+    const sameTarget = Boolean(prior) && url === prior?.url && command === prior?.command;
+    const envBase = sameTarget ? (prior?.env ?? {}) : {};
     const env: Record<string, string> = {};
     for (const [name, rawValue] of Object.entries({
-      ...(prior?.env ?? {}),
+      ...envBase,
       ...(item.env !== undefined ? asObject(item.env) : {}),
     })) {
       if (name) env[String(name)] = String(rawValue);
     }
+    const headerBase = sameTarget ? (prior?.headers ?? {}) : {};
     const headers: Record<string, string> = {};
     for (const [name, rawValue] of Object.entries({
-      ...(prior?.headers ?? {}),
+      ...headerBase,
       ...(item.headers !== undefined ? asObject(item.headers) : {}),
     })) {
       if (name) headers[String(name)] = String(rawValue);
@@ -1803,6 +1881,11 @@ export function parseMcpConfig(raw: unknown, existing: McpServer[] = []): McpImp
       enabled: item.enabled !== undefined ? item.enabled !== false : (prior?.enabled ?? true),
       autoApprove: item.autoApprove !== undefined ? item.autoApprove === true : (prior?.autoApprove ?? false),
       toolPolicies: Object.keys(policies).length > 0 ? policies : (prior?.toolPolicies ?? {}),
+      // Imported servers are new code, so they wait for the same explicit trust
+      // as one added by hand. Re-importing an existing *unchanged* server keeps
+      // its answer; a changed command or URL is a new endpoint and asks again.
+      trusted: prior && !changedEndpoint ? prior.trusted !== false : false,
+      ...(prior?.oauth ? { oauth: prior.oauth } : {}),
       timeoutMs:
         Number.isFinite(timeout) && timeout > 0
           ? Math.min(600_000, Math.max(1_000, Math.round(timeout)))

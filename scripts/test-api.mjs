@@ -742,6 +742,25 @@ try {
     const mcpBad = await api("/api/mcp", "POST", { action: "nonsense" });
     check("an unknown MCP action is refused", mcpBad.status === 400, JSON.stringify(mcpBad.data));
 
+    const mcpTrustMissing = await api("/api/mcp", "POST", { action: "trust", id: "missing" });
+    check("trusting an unknown server is a 404", mcpTrustMissing.status === 404, JSON.stringify(mcpTrustMissing.data));
+    const mcpAuthMissing = await api("/api/mcp", "POST", { action: "authorize", id: "missing" });
+    check("authorizing an unknown server is a 404", mcpAuthMissing.status === 404, JSON.stringify(mcpAuthMissing.data));
+    const mcpSignoutMissing = await api("/api/mcp", "POST", { action: "signout", id: "missing" });
+    check("signing out an unknown server is a 404", mcpSignoutMissing.status === 404, JSON.stringify(mcpSignoutMissing.data));
+
+    const secretsBefore = await api("/api/secrets");
+    check("GET /api/secrets lists names without values", secretsBefore.status === 200 && Array.isArray(secretsBefore.data.names));
+    const secretSet = await api("/api/secrets", "POST", { action: "set", name: "test.header", value: "not-returned" });
+    check("a secret can be saved", secretSet.status === 200 && secretSet.data.names?.includes("test.header"));
+    check("the saved value is not echoed", !JSON.stringify(secretSet.data).includes("not-returned"));
+    const secretBadName = await api("/api/secrets", "POST", { action: "set", name: "../bad", value: "x" });
+    check("an invalid secret name is refused", secretBadName.status === 400, JSON.stringify(secretBadName.data));
+    const secretDelete = await api("/api/secrets", "POST", { action: "delete", name: "test.header" });
+    check("a secret can be deleted", secretDelete.status === 200 && secretDelete.data.removed === true);
+    const secretBadAction = await api("/api/secrets", "POST", { action: "nonsense", name: "test.header" });
+    check("an unknown secret action is refused", secretBadAction.status === 400, JSON.stringify(secretBadAction.data));
+
     const modelProfiles = await api("/api/model-profiles");
     check(
       "GET /api/model-profiles reports an empty store",

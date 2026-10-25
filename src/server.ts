@@ -30,6 +30,8 @@ import { createWindowsTools, type Approval } from "./tools/index.js";
 import { VERSION } from "./version.js";
 import { capabilityReport, capabilities as endpointCapabilities, discoverLocalModels, listModelsAt, localEndpointsFor, probeContextLimits } from "./providers.js";
 import { mcp, parseMcpConfig, testMcpServer, type McpServer } from "./mcp.js";
+import { clearOAuth, oauthStatusFor, startAuthorization, type OAuthTokenSet } from "./mcp-auth.js";
+import { deleteSecret, listSecretNames, setSecret } from "./secrets.js";
 import { diagnose, formatDiagnosis } from "./diagnose.js";
 import {
   MODEL_PROFILE_VERSION,
@@ -419,6 +421,75 @@ function broadcastMcp(): void {
   broadcast({ type: "mcp", mcp: mcpSnapshot() });
 }
 
+interface PendingAuth {
+  url: string;
+  startedAt: number;
+  cancel: () => void;
+}
+const mcpAuthPending = new Map<string, PendingAuth>();
+const mcpAuthError = new Map<string, string>();
+
+function openExternal(url: string): void {
+  try {
+    const target = new URL(url);
+    if (target.protocol !== "http:" && target.protocol !== "https:") return;
+    // rundll32 takes the URL as one argument; unlike "cmd /c start" it has no
+    // command parser that could treat & or | inside the URL as syntax.
+    spawn("rundll32", ["url.dll,FileProtocolHandler", target.href], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    }).unref();
+  } catch {
+    // The URL is also returned to the caller, so the user can paste it.
+  }
+}
+
+/**
+ * Start the browser flow in the background. The HTTP request only waits for
+ * discovery + dynamic registration (usually under a second), not for the user.
+ */
+async function beginMcpAuth(server: McpServer): Promise<{ authUrl: string }> {
+  const existing = mcpAuthPending.get(server.id);
+  if (existing) return { authUrl: existing.url };
+  mcpAuthError.delete(server.id);
+  const flow = await startAuthorization(server, openExternal);
+  mcpAuthPending.set(server.id, { url: flow.authUrl, startedAt: Date.now(), cancel: flow.cancel });
+  broadcastMcp();
+  flow.done
+    .then((_tokens: OAuthTokenSet) => {
+      mcpAuthPending.delete(server.id);
+      mcpAuthError.delete(server.id);
+      mcp.drop(server.id);
+      void refreshMcp(true, true).then(() => broadcastMcp());
+    })
+    .catch((error: Error) => {
+      mcpAuthPending.delete(server.id);
+      if (!/cancel/i.test(error.message)) mcpAuthError.set(server.id, error.message);
+      broadcastMcp();
+    });
+  return { authUrl: flow.authUrl };
+}
+
+/** Same MCP target and OAuth resource, so an existing token is still valid. */
+function sameMcpEndpoint(a: McpServer, b: McpServer): boolean {
+  return (
+    a.transport === b.transport &&
+    a.command === b.command &&
+    a.url === b.url &&
+    JSON.stringify(a.args ?? []) === JSON.stringify(b.args ?? []) &&
+    (a.oauth?.resource ?? "") === (b.oauth?.resource ?? "")
+  );
+}
+
+/** A changed target must not inherit a pending flow, tokens or registration. */
+function forgetMcpAuth(id: string, server?: McpServer): void {
+  mcpAuthPending.get(id)?.cancel();
+  mcpAuthPending.delete(id);
+  mcpAuthError.delete(id);
+  if (server) clearOAuth(server);
+}
+
 function mcpSnapshot(): {
   enabled: boolean;
   ageMs: number;
@@ -438,6 +509,10 @@ function mcpSnapshot(): {
       stderr: string;
       error: string;
       nextRetryMs: number;
+      needsTrust: boolean;
+      authPending: boolean;
+      authError: string;
+      auth: ReturnType<typeof oauthStatusFor>;
     }
   >;
 } {
@@ -455,8 +530,12 @@ function mcpSnapshot(): {
       capabilities: found?.capabilities ?? { tools: false, resources: false, prompts: false },
       latencyMs: found?.latencyMs ?? 0,
       stderr: found?.stderr ?? "",
-      error: found?.error ?? "",
+      error: found?.error ?? mcpAuthError.get(server.id) ?? "",
       nextRetryMs: found?.nextRetryMs ?? 0,
+      needsTrust: server.trusted === false,
+      authPending: mcpAuthPending.has(server.id),
+      authError: mcpAuthError.get(server.id) ?? "",
+      auth: oauthStatusFor(server),
     };
   });
   return {
@@ -1297,6 +1376,31 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: `unknown action "${action}"` });
       }
 
+      case "GET /api/secrets":
+        return json(res, 200, { names: listSecretNames() });
+
+      case "POST /api/secrets": {
+        const body = await readJsonBody(req);
+        const action = String(body.action ?? "set");
+        const name = String(body.name ?? "").trim();
+        if (!name) return json(res, 400, { error: "name is required" });
+        if (action === "set") {
+          const value = String(body.value ?? "");
+          if (value.length > 16_384) return json(res, 400, { error: "a secret is limited to 16 KiB" });
+          try {
+            setSecret(name, value);
+          } catch (error) {
+            return json(res, 400, { error: (error as Error).message });
+          }
+          return json(res, 200, { ok: true, names: listSecretNames() });
+        }
+        if (action === "delete") {
+          const removed = deleteSecret(name);
+          return json(res, 200, { ok: true, removed, names: listSecretNames() });
+        }
+        return json(res, 400, { error: `unknown action "${action}"` });
+      }
+
       case "GET /api/mcp":
         return json(res, 200, mcpSnapshot());
 
@@ -1306,22 +1410,43 @@ const server = http.createServer(async (req, res) => {
         const s = getSettings();
         const build = (raw: unknown, id: string, prior?: McpServer): McpServer => {
           const item = (raw ?? {}) as Record<string, unknown>;
+          const nextUrl = String(item.url ?? prior?.url ?? "");
+          const nextCommand = String(item.command ?? prior?.command ?? "");
+          const nextArgs = item.args !== undefined ? item.args : (prior?.args ?? []);
+          const changedEndpoint =
+            !prior ||
+            nextUrl !== prior.url ||
+            nextCommand !== prior.command ||
+            JSON.stringify(nextArgs) !== JSON.stringify(prior.args);
+          // Changing arguments keeps the same program and may still need its
+          // environment; a new URL or program must not inherit static secrets.
+          const changedTarget = !prior || nextUrl !== prior.url || nextCommand !== prior.command;
           const merged: Record<string, unknown> = {
             ...((prior ?? {}) as unknown as Record<string, unknown>),
             ...item,
             id,
             name: String(item.name ?? prior?.name ?? id),
             transport: String(item.transport ?? prior?.transport ?? "stdio"),
-            command: String(item.command ?? prior?.command ?? ""),
-            args: item.args !== undefined ? item.args : (prior?.args ?? []),
-            env: item.env !== undefined ? item.env : (prior?.env ?? {}),
+            command: nextCommand,
+            args: nextArgs,
+            // An endpoint change must not inherit the old server's static
+            // secrets. A partial API update supplies them again if it wants to.
+            env: item.env !== undefined ? item.env : (changedTarget ? {} : (prior?.env ?? {})),
             cwd: String(item.cwd ?? prior?.cwd ?? ""),
-            url: String(item.url ?? prior?.url ?? ""),
-            headers: item.headers !== undefined ? item.headers : (prior?.headers ?? {}),
+            url: nextUrl,
+            headers:
+              item.headers !== undefined ? item.headers : (changedTarget ? {} : (prior?.headers ?? {})),
             enabled: item.enabled !== undefined ? item.enabled !== false : (prior?.enabled ?? true),
             autoApprove: item.autoApprove !== undefined ? item.autoApprove === true : (prior?.autoApprove ?? false),
             toolPolicies: item.toolPolicies !== undefined ? item.toolPolicies : (prior?.toolPolicies ?? {}),
-            tools: prior?.tools ?? [],
+            trusted:
+              item.trusted !== undefined
+                ? item.trusted !== false
+                : prior && !changedEndpoint
+                  ? prior.trusted !== false
+                  : false,
+            oauth: item.oauth !== undefined ? item.oauth : (prior?.oauth ?? undefined),
+            tools: item.tools !== undefined ? item.tools : (prior?.tools ?? []),
           };
           if ("timeoutMs" in item) merged.timeoutMs = item.timeoutMs;
           else if (prior?.timeoutMs !== undefined) merged.timeoutMs = prior.timeoutMs;
@@ -1349,6 +1474,10 @@ const server = http.createServer(async (req, res) => {
         if (action === "import") {
           try {
             const result = parseMcpConfig(body.config ?? body.json ?? body, s.mcpServers);
+            for (const candidate of result.servers) {
+              const prior = s.mcpServers.find((x) => x.id === candidate.id);
+              if (prior && !sameMcpEndpoint(prior, candidate)) forgetMcpAuth(candidate.id, prior);
+            }
             updateSettings({ mcpServers: result.servers });
             saveSettings();
             const outcome = await refreshMcp(true, true);
@@ -1378,6 +1507,7 @@ const server = http.createServer(async (req, res) => {
           } catch (error) {
             return json(res, 400, { error: (error as Error).message });
           }
+          if (existing && !sameMcpEndpoint(existing, next)) forgetMcpAuth(id, existing);
           const list = existing
             ? s.mcpServers.map((x) => (x.id === id ? next : x))
             : [...s.mcpServers, next];
@@ -1395,6 +1525,8 @@ const server = http.createServer(async (req, res) => {
 
         if (action === "remove") {
           const id = String(body.id ?? "");
+          const removed = s.mcpServers.find((x) => x.id === id);
+          forgetMcpAuth(id, removed);
           updateSettings({ mcpServers: s.mcpServers.filter((x) => x.id !== id) });
           saveSettings();
           mcp.drop(id);
@@ -1407,12 +1539,69 @@ const server = http.createServer(async (req, res) => {
           const id = String(body.id ?? "");
           const list = s.mcpServers.map((x) => (x.id === id ? { ...x, enabled: body.enabled !== false } : x));
           if (!list.some((x) => x.id === id)) return json(res, 404, { error: `no MCP server "${id}"` });
+          if (body.enabled === false) forgetMcpAuth(id);
           updateSettings({ mcpServers: list });
           saveSettings();
           mcp.drop(id);
           await refreshMcp(false, true);
           broadcastMcp();
           return json(res, 200, { ok: true, mcp: mcpSnapshot() });
+        }
+
+        if (action === "trust" || action === "untrust") {
+          const id = String(body.id ?? "");
+          const server = s.mcpServers.find((x) => x.id === id);
+          if (!server) return json(res, 404, { error: `no MCP server "${id}"` });
+          const trusted = action === "trust";
+          updateSettings({ mcpServers: s.mcpServers.map((x) => (x.id === id ? { ...x, trusted } : x)) });
+          saveSettings();
+          mcp.drop(id);
+          mcpAuthError.delete(id);
+          if (!trusted) {
+            mcpAuthPending.get(id)?.cancel();
+            mcpAuthPending.delete(id);
+          }
+          await refreshMcp(true, true);
+          broadcastMcp();
+          return json(res, 200, { ok: true, mcp: mcpSnapshot() });
+        }
+
+        if (action === "authorize") {
+          const id = String(body.id ?? "");
+          const server = s.mcpServers.find((x) => x.id === id);
+          if (!server) return json(res, 404, { error: `no MCP server "${id}"` });
+          if (!server.oauth) return json(res, 400, { error: `MCP server "${id}" has no OAuth configuration` });
+          try {
+            const { authUrl } = await beginMcpAuth(server);
+            return json(res, 202, { ok: true, authUrl, pending: true, mcp: mcpSnapshot() });
+          } catch (error) {
+            mcpAuthError.set(id, (error as Error).message);
+            broadcastMcp();
+            return json(res, 400, { error: (error as Error).message, mcp: mcpSnapshot() });
+          }
+        }
+
+        if (action === "cancel-auth") {
+          const id = String(body.id ?? "");
+          mcpAuthPending.get(id)?.cancel();
+          mcpAuthPending.delete(id);
+          mcpAuthError.delete(id);
+          broadcastMcp();
+          return json(res, 200, { ok: true, mcp: mcpSnapshot() });
+        }
+
+        if (action === "signout") {
+          const id = String(body.id ?? "");
+          const server = s.mcpServers.find((x) => x.id === id);
+          if (!server) return json(res, 404, { error: `no MCP server "${id}"` });
+          mcpAuthPending.get(id)?.cancel();
+          mcpAuthPending.delete(id);
+          const removed = clearOAuth(server);
+          mcpAuthError.delete(id);
+          mcp.drop(id);
+          await refreshMcp(true, true);
+          broadcastMcp();
+          return json(res, 200, { ok: true, removed, mcp: mcpSnapshot() });
         }
 
         return json(res, 400, { error: `unknown action "${action}"` });
@@ -1871,7 +2060,7 @@ server.listen(boundPort, "127.0.0.1", () => {
   });
 
   if (getSettings().autoOpenBrowser && !process.argv.includes("--no-open")) {
-    spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+    openExternal(url);
   }
 });
 

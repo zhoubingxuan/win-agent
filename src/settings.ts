@@ -5,6 +5,7 @@ import { dataDir, migrateLegacyData } from "./store.js";
 import { bomLabel, parseJsonWithBom } from "./util/json.js";
 import { decodeText } from "./util/text.js";
 import { measuredMode } from "./model-profile.js";
+import { deleteSecret, getSecret, hasSecret, listSecretNames, setSecret } from "./secrets.js";
 import type { McpServer } from "./mcp.js";
 
 /** Languages supported by the UI and by the agent's replies. */
@@ -608,6 +609,31 @@ export function normalizeMcpServers(value: unknown): McpServer[] {
       timeoutMs = Math.min(600_000, Math.max(1_000, Math.round(parsed)));
     }
     const cwd = String(item.cwd ?? "").trim();
+    const trusted = item.trusted === false ? false : true;
+    let oauth: McpServer["oauth"];
+    const rawOauth = item.oauth;
+    if (transport !== "stdio" && rawOauth && typeof rawOauth === "object" && !Array.isArray(rawOauth)) {
+      const auth = rawOauth as Record<string, unknown>;
+      const rawScopes = auth.scopes;
+      const scopes = Array.isArray(rawScopes)
+        ? rawScopes.map((scope) => String(scope).trim()).filter(Boolean)
+        : String(rawScopes ?? "")
+            .split(/[\s,]+/)
+            .map((scope) => scope.trim())
+            .filter(Boolean);
+      const rawPort = Number(auth.callbackPort ?? 0);
+      const callbackPort = Number.isFinite(rawPort) && rawPort > 0 && rawPort <= 65535 ? Math.round(rawPort) : undefined;
+      const authorizationServer = String(auth.authorizationServer ?? "").trim();
+      const resource = String(auth.resource ?? "").trim();
+      const clientId = String(auth.clientId ?? "").trim();
+      oauth = {
+        ...(scopes.length ? { scopes } : {}),
+        ...(clientId ? { clientId } : {}),
+        ...(authorizationServer ? { authorizationServer } : {}),
+        ...(resource ? { resource } : {}),
+        ...(callbackPort ? { callbackPort } : {}),
+      };
+    }
     return {
       id,
       name: String(item.name ?? id) || id,
@@ -626,6 +652,9 @@ export function normalizeMcpServers(value: unknown): McpServer[] {
       autoApprove: item.autoApprove === true,
       ...(Object.keys(toolPolicies).length > 0 ? { toolPolicies } : {}),
       ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+      trusted,
+      // An empty object is meaningful: it enables discovery with all defaults.
+      ...(oauth ? { oauth } : {}),
       tools: Array.isArray(item.tools) ? item.tools.map((t) => String(t)) : [],
     } as McpServer;
   });
@@ -738,11 +767,47 @@ function mergeInto(patch: Record<string, unknown>): void {
   }
 }
 
+/** The DPAPI-store name for one endpoint's API key. */
+function profileKeySecret(id: string): string {
+  return `profile.${id}.apiKey`;
+}
+
+/**
+ * Move plaintext keys from `settings.json` into the DPAPI store. The settings
+ * file keeps an empty string so the layout stays readable. A key that is
+ * deliberately cleared also deletes the stored copy, otherwise loading would
+ * bring the old key back.
+ */
+function settingsOnDisk(settings: Settings): Settings {
+  const copy: Settings = {
+    ...settings,
+    apiKey: "",
+    profiles: settings.profiles.map((profile) => ({ ...profile, models: [...profile.models] })),
+  };
+  const keep = new Set(settings.profiles.map((profile) => profileKeySecret(profile.id)));
+  for (const profile of settings.profiles) {
+    const name = profileKeySecret(profile.id);
+    if (profile.apiKey) setSecret(name, profile.apiKey);
+    else if (hasSecret(name)) deleteSecret(name);
+  }
+  // A removed profile must not leave its key behind for an unrelated future
+  // profile that happens to reuse the same id.
+  for (const name of listSecretNames()) {
+    if (/^profile\..+\.apiKey$/.test(name) && !keep.has(name)) deleteSecret(name);
+  }
+  for (const profile of copy.profiles) profile.apiKey = "";
+  return copy;
+}
+
 export function loadSettings(): Settings {
   current = { ...DEFAULTS, profiles: DEFAULT_PROFILES.map((p) => ({ ...p, models: [...p.models] })) };
   // Pull any pre-data-folder files across before reading them.
   migrateLegacyData();
   const file = readFileSettings();
+  const rawProfiles = Array.isArray(file.profiles) ? file.profiles : [];
+  const fileHadKey =
+    Boolean(String(file.apiKey ?? "").trim()) ||
+    rawProfiles.some((entry) => Boolean(String((entry as Record<string, unknown> | null)?.apiKey ?? "").trim()));
   const env = fromEnv();
   const hasProfiles = Array.isArray(file.profiles) || Array.isArray(env.profiles);
   mergeInto(file);
@@ -755,7 +820,25 @@ export function loadSettings(): Settings {
     active.apiKey = current.apiKey;
     active.model = current.model;
   }
+  // A key that is absent from settings.json lives in the DPAPI store. Anything
+  // still inline (an older file, or a hand edit) wins and should not be left in
+  // plaintext any longer than this load. The default local key and env vars do
+  // not count: neither belongs in the settings file.
+  for (const profile of current.profiles) {
+    if (!profile.apiKey) {
+      const stored = getSecret(profileKeySecret(profile.id));
+      if (stored !== null) profile.apiKey = stored;
+    }
+  }
   syncMirror();
+  if (fileHadKey) {
+    try {
+      saveSettings();
+    } catch {
+      // A read-only folder or an unavailable DPAPI must not stop the app; the
+      // key stays in memory and the next writable save will migrate it.
+    }
+  }
   return current;
 }
 
@@ -896,7 +979,7 @@ export function updateSettings(patch: Record<string, unknown>): UpdateResult {
 export function saveSettings(): void {
   const file = settingsFile();
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(current, null, 2)}\n`, "utf8");
+  fs.writeFileSync(file, `${JSON.stringify(settingsOnDisk(current), null, 2)}\n`, "utf8");
 }
 
 /** Settings without the secrets, plus flags telling the UI whether keys are set. */

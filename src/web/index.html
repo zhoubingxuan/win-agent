@@ -486,6 +486,21 @@
               </div>
               <div class="row-toggles">
                 <label class="switch" title="Run this server's tools without asking"><input type="checkbox" id="m-auto" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpAuto">auto-approve</span></label>
+                <label class="switch" id="m-oauth-toggle" title="Use OAuth 2.1 with PKCE for this remote server" hidden><input type="checkbox" id="m-oauth" /><span class="slider" aria-hidden="true"></span><span data-i18n="settings.mcpOAuth">OAuth 2.1</span></label>
+              </div>
+              <div id="m-oauth-row" class="mcp-oauth-row" hidden>
+                <p class="muted" data-i18n="settings.mcpOAuthHint">The agent discovers the authorization server, registers itself, and opens the browser. Tokens are encrypted with Windows DPAPI and never written to settings.json.</p>
+                <div class="mcp-form-row" id="m-oauth-fields" hidden>
+                  <label class="grow"><span data-i18n="settings.mcpOAuthScopes">scopes (space or comma separated)</span>
+                    <input id="m-oauth-scopes" type="text" placeholder="mcp.read" />
+                  </label>
+                  <label class="grow"><span data-i18n="settings.mcpOAuthClient">client id (optional; blank = dynamic registration)</span>
+                    <input id="m-oauth-client" type="text" placeholder="client-id" />
+                  </label>
+                  <label class="grow"><span data-i18n="settings.mcpOAuthServer">authorization server (optional)</span>
+                    <input id="m-oauth-server" type="text" placeholder="https://auth.example.com" />
+                  </label>
+                </div>
               </div>
               <div class="actions">
                 <button type="button" id="m-save" class="primary" data-i18n="settings.mcpAdd">Add server</button>
@@ -507,6 +522,20 @@
               <button type="button" id="m-refresh" class="ghost" data-i18n="settings.mcpRefresh">Reconnect &amp; refresh tools</button>
               <span id="m-msg" class="muted"></span>
             </div>
+
+            <h4 data-i18n="settings.mcpSecrets">Secrets (DPAPI)</h4>
+            <p class="muted" data-i18n-html="settings.mcpSecretsHint">
+              Values are encrypted for your Windows account and never shown again. Use
+              <code>${secret:name}</code> in an MCP header or environment value; API keys are
+              handled automatically. The list shows names only.
+            </p>
+            <div id="secret-list" class="secret-list"></div>
+            <div class="secret-add">
+              <input id="secret-name" type="text" data-i18n-placeholder="settings.secretName" placeholder="name" />
+              <input id="secret-value" type="password" data-i18n-placeholder="settings.secretValue" placeholder="value" />
+              <button type="button" id="secret-save" class="ghost" data-i18n="settings.secretSave">Save secret</button>
+            </div>
+            <p class="muted" id="secret-msg"></p>
 
             <h4 data-i18n="settings.enabledTools">Enabled tools</h4>
             <p class="muted" data-i18n="settings.enabledToolsHint">

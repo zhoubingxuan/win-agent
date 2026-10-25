@@ -191,6 +191,7 @@ interface Messages {
   mcpStateOn: string;
   mcpStateOff: string;
   mcpStateDead: string;
+  mcpStateUntrusted: string;
   mcpUsage: string;
   mcpAddUsage: string;
   mcpIdInvalid: string;
@@ -286,6 +287,7 @@ MCP servers (Model Context Protocol - tools from other programs):
   /mcp add <id> http|sse <url>           a remote / proxied MCP endpoint
   /mcp enable | disable <id> switch one server
   /mcp remove <id>           forget a server
+  /mcp trust | untrust <id>  trust gate
 
 Other:
   /stop                      stop the task that is running
@@ -381,6 +383,7 @@ current directory.`,
     mcpStateOn: "connected, {0} tool(s)",
     mcpStateOff: "off",
     mcpStateDead: "not connected",
+    mcpStateUntrusted: "needs trust",
     mcpUsage: `usage:
   /mcp                 status
   /mcp on | off        master switch
@@ -389,7 +392,8 @@ current directory.`,
   /mcp add <id> stdio <command> [args...]
   /mcp add <id> http|sse <url>
   /mcp enable | disable <id>
-  /mcp remove <id>`,
+  /mcp remove <id>
+  /mcp trust | untrust <id>`,
     mcpAddUsage: "usage: /mcp add <id> <stdio <command> [args...] | http|sse <url>>",
     mcpIdInvalid: "server id must be letters, digits, - or _ (max 32)",
     mcpUnknown: 'no MCP server "{0}". Try /mcp',
@@ -480,6 +484,7 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
   /mcp add <id> http|sse <网址>          远程或经代理的 MCP 接口
   /mcp enable | disable <id> 单独开关某个服务器
   /mcp remove <id>           删除一个服务器
+  /mcp trust | untrust <id>  信任开关
 
 其他：
   /stop                      停止正在运行的任务
@@ -574,6 +579,7 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
     mcpStateOn: "已连接，{0} 个工具",
     mcpStateOff: "已关闭",
     mcpStateDead: "未连接",
+    mcpStateUntrusted: "需要信任",
     mcpUsage: `用法：
   /mcp                 状态
   /mcp on | off        总开关
@@ -582,7 +588,8 @@ MCP 服务器（Model Context Protocol —— 用别的程序的工具）：
   /mcp add <id> stdio <命令> [参数...]
   /mcp add <id> http|sse <网址>
   /mcp enable | disable <id>
-  /mcp remove <id>`,
+  /mcp remove <id>
+  /mcp trust | untrust <id>`,
     mcpAddUsage: "用法：/mcp add <id> <stdio <命令> [参数...] | http|sse <网址>>",
     mcpIdInvalid: "服务器 id 只能是字母、数字、- 或 _（最多 32 位）",
     mcpUnknown: "没有名为 “{0}” 的 MCP 服务器，试试 /mcp",
@@ -1070,9 +1077,11 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
           const found = live.find((x) => x.id === server.id);
           const state = !server.enabled
             ? m().mcpStateOff
-            : found?.connected
-              ? format(m().mcpStateOn, found.tools.length)
-              : m().mcpStateDead;
+            : server.trusted === false
+              ? m().mcpStateUntrusted
+              : found?.connected
+                ? format(m().mcpStateOn, found.tools.length)
+                : m().mcpStateDead;
           const context = found && (found.resources.length > 0 || found.prompts.length > 0)
             ? ` +${found.resources.length}R/${found.prompts.length}P`
             : "";
@@ -1119,6 +1128,20 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
         return `${out}\n${report()}`;
       }
 
+      if (sub === "trust" || sub === "untrust") {
+        const id = parts[0];
+        if (!id) throw new Error(format(m().mcpEnableUsage, sub));
+        if (!servers().some((x) => x.id === id)) throw new Error(format(m().mcpUnknown, id));
+        const out = await setKeys(host, {
+          mcpServers: servers().map((server) =>
+            server.id === id ? { ...server, trusted: sub === "trust" } : server,
+          ),
+        });
+        mcp.drop(id);
+        await mcp.refresh(true);
+        return `${out}\n${report()}`;
+      }
+
       // /mcp add <id> stdio <command> [args...]   or   /mcp add <id> http|sse <url>
       if (sub === "add") {
         const [id, transport, target, ...args] = parts;
@@ -1137,6 +1160,7 @@ export async function runCommand(line: string, host: CommandHost): Promise<strin
           url: remote ? target : "",
           enabled: true,
           autoApprove: false,
+          trusted: false,
           tools: [],
         };
         mcp.drop(id);

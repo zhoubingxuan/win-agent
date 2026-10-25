@@ -13,6 +13,73 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-10-25
+
+MCP servers now start only after an explicit trust decision, remote servers can use
+OAuth 2.1, and API keys plus OAuth tokens are encrypted with Windows DPAPI instead of
+being stored as plaintext in `settings.json`.
+
+### Added
+
+- **MCP trust gate.** A server added in the UI, imported from a client config, or
+  given a new command/URL starts as `trusted: false`. Its card shows whether it is a
+  local process or a remote server, and **Trust and connect** is the confirmation;
+  **Stop trusting** closes it and removes its tools. Servers saved by 2.4.0 have no
+  trust field and stay trusted, so an upgrade does not switch off a working install.
+- **OAuth 2.1 for HTTP/SSE MCP servers (`src/mcp-auth.ts`).** Protected-resource and
+  authorization-server discovery, dynamic client registration, PKCE S256, the RFC 8707
+  `resource` indicator, a loopback callback, refresh tokens, and one forced refresh +
+  reconnect after a `401`. The UI exposes scopes, a client-id override, an
+  authorization-server override, **Authorize**, **Cancel**, and **Sign out**.
+- **DPAPI secret store (`src/secrets.ts`).** `data/secrets.json` holds only
+  DPAPI-wrapped values for the current Windows user. Profile API keys move there on
+  the first load, so a hand-edited plaintext key is not left behind; `settings.json`
+  keeps an empty `apiKey` placeholder. OAuth access/refresh tokens and dynamic
+  registrations live there too. A value without a `dpapi:` prefix is never accepted
+  as a secret.
+- **`${secret:name}` references** in MCP headers and environment values, plus
+  `GET/POST /api/secrets` (names only, never values) and a small Secrets panel in
+  Settings. Blank values delete a secret.
+- **CLI trust controls:** `/mcp trust <id>` and `/mcp untrust <id>`; `/mcp add` and
+  `/mcp` report `needs trust` instead of pretending the server is connected.
+- `scripts/test-mcp-oauth.mjs` (34 checks) and `scripts/test-secrets.mjs` (26 checks)
+  cover discovery, PKCE, token refresh, the trust gate, DPAPI round-trips, settings
+  migration and MCP secret expansion. Both run in `npm run test:all`.
+
+### Changed
+
+- A new or changed MCP endpoint asks for trust again; editing only its name, policies
+  or timeout preserves the existing decision. A changed URL or program also drops the
+  old headers/environment and clears its OAuth token, registration and pending flow.
+- OAuth headers are added to a copy of the server at connection time. Tokens never
+  enter `settings.json`, chat history, the audit log, or server stderr.
+- Re-importing an *unchanged* server keeps its trust decision; a brand-new one or a
+  changed command/URL starts untrusted.
+- The MCP API snapshot now reports `needsTrust`, `authPending`, `authError` and the
+  OAuth status for each server.
+
+### Upgrade notes
+
+- Existing API keys are encrypted automatically on the next load. Keep the same
+  Windows account: a copied `data/secrets.json` cannot be decrypted by another user
+  or on another machine, so re-enter the keys there.
+- Existing MCP servers remain trusted. New ones need one click (or `/mcp trust <id>`).
+- Remote servers that previously used a static `Authorization` header can stay that
+  way; OAuth is opt-in per server.
+
+### Fixed
+
+- A `401` during the initial MCP connection, not only during a tool call, now forces
+  one token refresh and retry.
+- OAuth tokens are tied to their resource indicator and client id. Moving a server to
+  another URL cannot send the old bearer token there.
+- An empty OAuth block is preserved, so checking **OAuth 2.1** with all defaults works
+  instead of silently disabling OAuth.
+- Dynamic client registrations are re-created when the authorization server or
+  loopback redirect URI changes.
+- `scripts/test-sandbox.mjs` now clears its PID-named scratch folder before use, so a
+  leftover folder from a killed run cannot fail the "write a new file" check.
+
 ## [2.4.0] — 2026-10-25
 
 `auto` mode no longer has to guess from the number in the model name. A measured

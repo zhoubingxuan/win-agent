@@ -131,8 +131,9 @@ Invoke-RestMethod -Method Post "$base/api/profiles" -ContentType application/jso
 `POST /api/mcp` manages the servers the same way the Settings tab does. Every action
 returns the fresh `mcp` snapshot: `enabled`, `ageMs`, `refreshSeconds`, `totalTools`,
 `totalResources`, `totalPrompts`, and `servers[]` with `connected`, `serverInfo`,
-`liveTools`, `resources`, `prompts`, `capabilities`, `latencyMs`, `stderr`, `error`
-and `nextRetryMs`.
+`liveTools`, `resources`, `prompts`, `capabilities`, `latencyMs`, `stderr`, `error`,
+`nextRetryMs`, `needsTrust`, `authPending`, `authError` and `auth`
+(`configured`, `authorized`, `expiresAt`, `authorizationServer`, `tokenEndpoint`).
 
 ```powershell
 $base = "http://127.0.0.1:8787"
@@ -145,12 +146,22 @@ Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Bo
   "action":"add","id":"fs",
   "server":{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","D:\\new"]}}'
 
+# a new server is untrusted: review it, then allow it to start
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{"action":"trust","id":"fs"}'
+
 # add a Streamable-HTTP server with a header and a per-tool policy
 Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
   "action":"add","id":"docs",
   "server":{"transport":"http","url":"http://127.0.0.1:3001/mcp",
             "headers":{"Authorization":"Bearer ${DOCS_TOKEN}"},
             "toolPolicies":{"search":"allow","delete":"deny"}}}'
+
+# the same, with OAuth 2.1 + PKCE (the browser opens; 202 means it is waiting)
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
+  "action":"add","id":"remote",
+  "server":{"transport":"http","url":"https://example.com/mcp","trusted":true,
+            "oauth":{"scopes":["mcp.read"]}}}'
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{"action":"authorize","id":"remote"}'
 
 # add an SSE-only server
 Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
@@ -185,6 +196,29 @@ The same from the terminal, which is shorter for a one-off:
 ```powershell
 Invoke-RestMethod -Method Post "$base/api/terminal" -ContentType application/json `
   -Body '{"input":"/mcp add fs stdio npx -y @modelcontextprotocol/server-filesystem D:\\new"}'
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json `
+  -Body '{"action":"trust","id":"fs"}'
+```
+
+### Secrets
+
+`GET /api/secrets` returns names only. `POST /api/secrets` saves or deletes one
+value; a blank value deletes. Values are encrypted with Windows DPAPI and are never
+returned by the API. Reference a saved name from an MCP header or environment value
+with `${secret:name}`.
+
+```powershell
+Invoke-RestMethod -Method Post "$base/api/secrets" -ContentType application/json `
+  -Body '{"action":"set","name":"docs.token","value":"paste-the-token-here"}'
+Invoke-RestMethod "$base/api/secrets"
+
+# use it on an MCP server
+Invoke-RestMethod -Method Post "$base/api/mcp" -ContentType application/json -Body '{
+  "action":"update","id":"docs",
+  "server":{"headers":{"Authorization":"Bearer ${secret:docs.token}"}}}'
+
+Invoke-RestMethod -Method Post "$base/api/secrets" -ContentType application/json `
+  -Body '{"action":"delete","name":"docs.token"}'
 ```
 
 ## The working directory from a script

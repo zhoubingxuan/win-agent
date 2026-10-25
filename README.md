@@ -37,7 +37,9 @@ What that means in practice:
   `mcp__server__tool`, while resources and prompts are read through one condensed
   `mcp_context` tool. Per-server headers, working directory, timeout, reconnect and
   tool policies are all configurable, and an `mcpServers` block can be imported
-  straight from Claude Desktop, Cursor or VS Code.
+  straight from Claude Desktop, Cursor or VS Code. A new server has to be trusted
+  before it starts; remote servers can use OAuth 2.1 with PKCE, and tokens plus API
+  keys are encrypted with Windows DPAPI instead of being written to `settings.json`.
 - **One model list for every local server** — ask LM Studio (port 1234) *and* Ollama
   (port 11434) what they can load, merged into one picker; picking a model from
   another server switches the endpoint with it.
@@ -847,8 +849,57 @@ A new id is added, an existing id is updated in place (no `_2` duplicate), and a
 ending in `/sse` is recognised as the legacy transport. Invalid entries are skipped
 and reported, not silently guessed.
 
+### First connect: trust, then start
+
+Adding a server, importing one, or changing its command or URL leaves it **untrusted**.
+The card says whether it is a **local process** (it runs with your rights) or a
+**remote server** (it receives every request and may see your headers), and nothing
+starts until you press **Trust and connect**. This is intentionally stricter than a
+checkbox that is easy to miss: a pasted `mcpServers` block from the internet is code,
+not configuration. Editing only the name, policies or timeout keeps the existing
+trust decision; changing the endpoint asks again. **Stop trusting** closes the
+connection and removes its tools immediately.
+
+Servers saved by an older version have no trust field and stay trusted, so updating
+does not switch off a working setup.
+
+### OAuth 2.1 for remote servers
+
+Turn on **OAuth 2.1** when adding an `http`/`sse` server, then press **Authorize** on
+its card. win-agent follows the MCP authorization flow:
+
+1. `/.well-known/oauth-protected-resource` on the MCP URL names the authorization
+   server; `/.well-known/oauth-authorization-server` (or the OpenID configuration)
+   supplies the endpoints.
+2. If no pre-registered `clientId` is set, it registers itself with the server's
+   dynamic registration endpoint.
+3. It opens the browser with PKCE **S256**, a random `state`, and the MCP URL as the
+   RFC 8707 `resource` indicator. The callback listens only on `127.0.0.1`, on a
+   free port (or `callbackPort` if you pin one), and times out after five minutes.
+4. The code is exchanged for an access token and, when offered, a refresh token.
+   Expiring or revoked tokens are refreshed and the MCP call is retried once.
+
+Optional fields: **scopes** (space or comma separated), **client id**, and an
+**authorization server** override. The client secret from dynamic registration, when
+one is issued, is stored with the tokens in the DPAPI store. **Sign out** deletes the
+tokens and registration for that server.
+
+### Where secrets live
+
+`data/secrets.json` contains only DPAPI-wrapped values for the current Windows user:
+MCP OAuth tokens and registrations, plus profile API keys. `data/settings.json` has an
+empty `apiKey` placeholder; the key is decrypted at startup. Copying the data folder
+to another user or machine does not expose the keys, but it also means they cannot be
+decrypted there. Re-enter the keys after moving the folder.
+
+MCP headers and environment values may use `${secret:name}` in addition to the
+normal `${ENV}` expansion. OAuth tokens are added as the `Authorization` header at
+request time and never enter settings, chat history, the audit log or server stderr.
+Secret values are never returned by the API.
+
 ```
 PS D:\new> /mcp add fs stdio npx -y @modelcontextprotocol/server-filesystem D:\
+PS D:\new> /mcp trust fs            # a new server does not start until trusted
 PS D:\new> /mcp add docs http http://127.0.0.1:3001/mcp
 PS D:\new> /mcp add legacy sse http://127.0.0.1:3001/sse
 PS D:\new> /mcp                     # master switch, servers, connection, tool counts
@@ -1116,7 +1167,8 @@ one visible folder in the project:
 ```
 data/
   README.md            what this folder is
-  settings.json        your configuration (contains API keys!)
+  settings.json        your configuration (API keys are blank; see secrets.json)
+  secrets.json         DPAPI-wrapped API keys, MCP header/env secrets and OAuth tokens
   history.json         the conversation that is open right now
   usage.json           token totals summed over every conversation
   conversations/
@@ -1339,6 +1391,7 @@ The **Terminal** tab is the agent's console. Any line starting with `/` is an
 | `/mcp add <id> stdio <command> [args...]` | add an MCP server started as a child process | immediately + saved |
 | `/mcp add <id> http <url>` | add an MCP server reached over Streamable HTTP | immediately + saved |
 | `/mcp enable <id>` · `/mcp disable <id>` | switch one MCP server on or off | immediately + saved |
+| `/mcp trust <id>` · `/mcp untrust <id>` | allow a reviewed server to start, or stop trusting it | immediately + saved |
 | `/mcp remove <id>` | delete an MCP server | immediately + saved |
 | `/memory on` · `/memory off` | remember the conversation across restarts | immediately + saved |
 | `/memory clear` | file the open conversation away and start a new one | immediately |
@@ -1391,6 +1444,7 @@ PS D:\new> /profile                      # which endpoints exist, which is activ
 PS D:\new> /profile use cloud            # flip from the local server to a cloud API
 PS D:\new> /models                       # what does this endpoint actually serve?
 PS D:\new> /mcp add fs stdio npx -y @modelcontextprotocol/server-filesystem D:\
+PS D:\new> /mcp trust fs                 # a new server waits for this
 PS D:\new> /mcp tools                    # which MCP tools did the model get?
 PS D:\new> /model qwen2.5:14b            # switch model, keep the conversation
 PS D:\new> /disable powershell ui        # hide two dangerous tools from the model
@@ -1697,8 +1751,10 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `POST` | `/api/settings` | partial update; returns `{ settings, changed, notices }` |
 | `POST` | `/api/settings/reload` | reload from disk |
 | `GET` | `/api/models` | `?profile=<id>` — ask that endpoint which models it serves (remembers the list **and** the context lengths it reports). With `syncLocalModels` on, the answer also carries `endpoints` (every local server, with its route and error), `merged` (all models, each with its `endpointId`) and `context` |
-| `GET` | `/api/mcp` | the MCP master switch, cache TTL and every server, with transport, connection state, self-reported name, tools, resources, prompts, capabilities, latency, stderr and retry delay |
-| `POST` | `/api/mcp` | `{ action: "refresh" }` (force reconnect) · `{ action: "test", id, server }` · `{ action: "import", config }` · `{ action: "add", id, server }` · `{ action: "update", id, server }` · `{ action: "remove", id }` · `{ action: "toggle", id, enabled }` |
+| `GET` | `/api/mcp` | the MCP master switch, cache TTL and every server, with transport, connection state, self-reported name, tools, resources, prompts, capabilities, latency, stderr, retry delay, `needsTrust`, OAuth state and any pending authorization error |
+| `POST` | `/api/mcp` | `{ action: "refresh" }` (force reconnect) · `{ action: "test", id, server }` · `{ action: "import", config }` · `{ action: "add", id, server }` · `{ action: "update", id, server }` · `{ action: "remove", id }` · `{ action: "toggle", id, enabled }` · `{ action: "trust" \| "untrust", id }` · `{ action: "authorize", id }` (starts OAuth and returns `authUrl`) · `{ action: "cancel-auth", id }` · `{ action: "signout", id }` |
+| `GET` | `/api/secrets` | `{ names }` — DPAPI secret names only; values are never returned |
+| `POST` | `/api/secrets` | `{ action: "set", name, value }` or `{ action: "delete", name }`; blank values delete, names are limited to letters, digits, dot, dash and underscore |
 | `GET` | `/api/model-profiles` | measured model profiles: `{ version, profiles, active, running }`; `active` is the result for the current endpoint + model, `running` is the live job (or its last state) |
 | `POST` | `/api/model-profiles` | `{ action: "run" }` starts the seven-task probe in a child process — `{ action: "cancel" }` stops it — `{ action: "delete", key }` forgets one result (or the active one when `key` is omitted) |
 | `GET` | `/api/skills` | `{ dir, skills }` — every skill in the folder (name, description, when, files, problem); `?name=<id>` returns that one with its `body` |
@@ -1962,7 +2018,9 @@ npm run web        # or: npm run build && node dist/server.js --no-open
 
 Settings and conversations live in that folder's own `data/` (or `AGENT_DATA_DIR`), so a
 restored copy starts clean and cannot disturb the copy you are already using — copy
-`data/settings.json` across if you want it to start with your API keys.
+`data/settings.json` and `data/secrets.json` across if you want it to start with your
+settings and keys. DPAPI values only decrypt for the same Windows user on the same
+machine; elsewhere, enter the keys again.
 
 ### 版本库 / git
 

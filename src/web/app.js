@@ -374,6 +374,32 @@ const I18N = {
     "notice.mcpRemoved": "MCP server {0} removed",
     "chat.current": "current",
     "notice.workdirChanged": "workdir: {0}",
+    "settings.mcpTrust": "Trust and connect",
+    "settings.mcpUntrust": "Stop trusting",
+    "settings.mcpOAuth": "OAuth 2.1",
+    "settings.mcpOAuthHint": "The agent discovers the authorization server, registers itself, and opens the browser. Tokens are encrypted with Windows DPAPI and never written to settings.json.",
+    "settings.mcpOAuthScopes": "scopes (space or comma separated)",
+    "settings.mcpOAuthClient": "client id (optional; blank = dynamic registration)",
+    "settings.mcpOAuthServer": "authorization server (optional)",
+    "mcp.trustHint": "New or changed server: review where it runs and what it can reach, then trust it. Nothing is started before that.",
+    "mcp.riskLocal": "local process",
+    "mcp.riskRemote": "remote server",
+    "mcp.auth": "Authorize",
+    "mcp.signout": "Sign out",
+    "mcp.authPending": "Waiting for the browser...",
+    "mcp.authOk": "OAuth authorized",
+    "mcp.authNo": "OAuth not authorized",
+    "notice.mcpTrusted": "MCP server {0} trusted",
+    "notice.mcpAuthStarted": "opened the browser to authorize {0}",
+    "settings.mcpSecrets": "Secrets (DPAPI)",
+    "settings.mcpSecretsHint": "Values are encrypted for your Windows account and never shown again. Use <code>${secret:name}</code> in an MCP header or environment value; API keys are handled automatically. The list shows names only.",
+    "settings.secretName": "name",
+    "settings.secretValue": "value",
+    "settings.secretSave": "Save secret",
+    "settings.secretDelete": "Delete",
+    "notice.secretSaved": "secret {0} saved",
+    "notice.secretDeleted": "secret {0} deleted",
+    "settings.secretRequired": "enter a name and a value",
   },
   zh: {
     "brand.sub": "让本地小模型操作 Windows",
@@ -740,6 +766,32 @@ const I18N = {
     "notice.mcpRemoved": "已删除 MCP 服务器 {0}",
     "chat.current": "当前",
     "notice.workdirChanged": "工作目录：{0}",
+    "settings.mcpTrust": "信任并连接",
+    "settings.mcpUntrust": "取消信任",
+    "settings.mcpOAuth": "OAuth 2.1",
+    "settings.mcpOAuthHint": "智能体会自动发现授权服务器并注册自己，然后打开浏览器。令牌用 Windows DPAPI 加密，不会写进 settings.json。",
+    "settings.mcpOAuthScopes": "权限范围（空格或逗号分隔）",
+    "settings.mcpOAuthClient": "客户端 ID（可选，留空则动态注册）",
+    "settings.mcpOAuthServer": "授权服务器（可选）",
+    "mcp.trustHint": "新服务器或被改过的服务器：先看清楚它在本机还是远端、能碰到什么，再信任它。信任之前不会启动。",
+    "mcp.riskLocal": "本地进程",
+    "mcp.riskRemote": "远程服务器",
+    "mcp.auth": "授权",
+    "mcp.signout": "退出登录",
+    "mcp.authPending": "等待浏览器授权……",
+    "mcp.authOk": "OAuth 已授权",
+    "mcp.authNo": "OAuth 未授权",
+    "notice.mcpTrusted": "已信任 MCP 服务器 {0}",
+    "notice.mcpAuthStarted": "已打开浏览器授权 {0}",
+    "settings.mcpSecrets": "密钥（DPAPI）",
+    "settings.mcpSecretsHint": "值会用你的 Windows 账户加密，之后不再显示。在 MCP 请求头或环境变量里用 <code>${secret:名称}</code> 引用；API 密钥会自动处理。列表只显示名称。",
+    "settings.secretName": "名称",
+    "settings.secretValue": "值",
+    "settings.secretSave": "保存密钥",
+    "settings.secretDelete": "删除",
+    "notice.secretSaved": "密钥 {0} 已保存",
+    "notice.secretDeleted": "密钥 {0} 已删除",
+    "settings.secretRequired": "请输入名称和值",
   },
 };
 
@@ -809,6 +861,10 @@ let thinkingClosed = false;
 const LEVELS = ["answer", "thinking", "full"];
 const MODE_SETTINGS = ["auto", "guided", "normal", "expert"];
 const MCP_TRANSPORTS = ["stdio", "http", "sse"];
+let editingMcpTrusted = false;
+let editingMcpEndpoint = "";
+let editingMcpOAuth = null;
+let secretNames = [];
 
 /** How much of the process the chat draws right now. */
 function verbosity() {
@@ -1925,6 +1981,60 @@ function renderMcp() {
   for (const server of mcp.servers) box.appendChild(renderMcpCard(server));
 }
 
+async function loadSecrets() {
+  const result = await api("/api/secrets");
+  if (result.error) return;
+  secretNames = Array.isArray(result.names) ? result.names : [];
+  renderSecrets();
+}
+
+function renderSecrets() {
+  const box = el("secret-list");
+  if (!box) return;
+  box.innerHTML = "";
+  // OAuth tokens and API keys have their own controls; this list is for the
+  // names a user references as ${secret:name}.
+  const names = secretNames.filter((name) => !/^(profile\.|mcp\.)/.test(name));
+  for (const name of names) {
+    const row = document.createElement("div");
+    row.className = "secret-item";
+    const code = document.createElement("code");
+    setText(code, name);
+    const del = mcpButton(t("settings.secretDelete"), "mcp-act secret-delete", async () => {
+      const result = await api("/api/secrets", "POST", { action: "delete", name });
+      if (result.error) {
+        setText(el("secret-msg"), `${t("error.prefix")}${result.error}`);
+        return;
+      }
+      secretNames = result.names ?? [];
+      renderSecrets();
+      showNotice(t("notice.secretDeleted", name));
+    });
+    row.append(code, del);
+    box.appendChild(row);
+  }
+}
+
+async function saveSecret() {
+  const name = el("secret-name").value.trim();
+  const value = el("secret-value").value;
+  if (!name || !value) {
+    setText(el("secret-msg"), t("settings.secretRequired"));
+    return;
+  }
+  const result = await api("/api/secrets", "POST", { action: "set", name, value });
+  if (result.error) {
+    setText(el("secret-msg"), `${t("error.prefix")}${result.error}`);
+    return;
+  }
+  secretNames = result.names ?? [];
+  el("secret-value").value = "";
+  el("secret-name").value = "";
+  setText(el("secret-msg"), "");
+  renderSecrets();
+  showNotice(t("notice.secretSaved", name));
+}
+
 function renderMcpCard(server) {
   const card = document.createElement("div");
   card.className = "mcp-item mcp-card";
@@ -1955,15 +2065,77 @@ function renderMcpCard(server) {
         : t("mcp.disconnected");
   const where =
     server.transport === "stdio" ? [server.command, ...(server.args ?? [])].join(" ") : server.url;
-  const bits = [server.transport, where, state];
+  const risk = server.transport === "stdio" ? t("mcp.riskLocal") : t("mcp.riskRemote");
+  const bits = [server.transport, risk, where, state];
   if (server.connected && server.latencyMs) bits.push(t("settings.mcpLatency", server.latencyMs));
   if (server.connected && server.serverInfo) bits.push(server.serverInfo);
-  if (server.error) bits.push(server.error);
+  if (server.error && !server.needsTrust) bits.push(server.error);
   if (server.nextRetryMs > 0) bits.push(t("settings.mcpRetry", ageText(server.nextRetryMs)));
   setText(meta, bits.filter(Boolean).join(" · "));
   meta.title = bits.filter(Boolean).join("\n");
   head.append(name, meta);
   card.appendChild(head);
+
+  if (server.needsTrust) {
+    card.classList.add("untrusted");
+    const warning = document.createElement("div");
+    warning.className = "mcp-trust";
+    const text = document.createElement("p");
+    setText(text, t("mcp.trustHint"));
+    const trust = mcpButton(t("settings.mcpTrust"), "mcp-act mcp-trust primary", async () => {
+      const result = await mcpAction({ action: "trust", id: server.id });
+      if (result) showNotice(t("notice.mcpTrusted", server.name || server.id));
+    });
+    warning.append(text, trust);
+    card.appendChild(warning);
+  }
+
+  if (server.auth?.configured) {
+    const auth = document.createElement("div");
+    auth.className = "mcp-auth";
+    const badge = document.createElement("span");
+    badge.className = "mcp-auth-badge";
+    const pending = !!server.authPending;
+    setText(
+      badge,
+      pending
+        ? t("mcp.authPending")
+        : server.auth.authorized
+          ? t("mcp.authOk")
+          : t("mcp.authNo"),
+    );
+    badge.dataset.state = pending ? "pending" : server.auth.authorized ? "ok" : "required";
+    auth.appendChild(badge);
+    if (pending) {
+      auth.appendChild(
+        mcpButton(t("settings.mcpCancel"), "mcp-act mcp-auth-cancel", () => mcpAction({ action: "cancel-auth", id: server.id })),
+      );
+    } else if (server.auth.authorized) {
+      auth.appendChild(
+        mcpButton(t("mcp.signout"), "mcp-act mcp-signout", () => mcpAction({ action: "signout", id: server.id })),
+      );
+    } else {
+      auth.appendChild(
+        mcpButton(t("mcp.auth"), "mcp-act mcp-authorize primary", async () => {
+          const result = await mcpAction({ action: "authorize", id: server.id });
+          if (result) showNotice(t("notice.mcpAuthStarted", server.name || server.id));
+        }),
+      );
+    }
+    if (server.auth.expiresAt) {
+      const expires = document.createElement("span");
+      expires.className = "muted small";
+      setText(expires, new Date(server.auth.expiresAt).toLocaleString());
+      auth.appendChild(expires);
+    }
+    card.appendChild(auth);
+    if (server.authError) {
+      const error = document.createElement("div");
+      error.className = "mcp-auth-error";
+      setText(error, `${t("error.prefix")}${server.authError}`);
+      card.appendChild(error);
+    }
+  }
 
   const actions = document.createElement("div");
   actions.className = "mcp-actions";
@@ -1972,6 +2144,11 @@ function renderMcpCard(server) {
     mcpButton(t("settings.mcpTest"), "mcp-act mcp-test", () => testSavedServer(server)),
     mcpButton(t("mcp.remove"), "mcp-act mcp-remove", () => mcpAction({ action: "remove", id: server.id })),
   );
+  if (!server.needsTrust && (server.connected || server.auth?.authorized)) {
+    actions.append(
+      mcpButton(t("settings.mcpUntrust"), "mcp-act mcp-untrust", () => mcpAction({ action: "untrust", id: server.id })),
+    );
+  }
   card.appendChild(actions);
 
   const counts = document.createElement("div");
@@ -2072,6 +2249,8 @@ function renderMcpPolicies(container, tools, policies, autoApprove, onChange) {
 function editMcp(server) {
   editingMcpId = server.id;
   editingMcpEnabled = server.enabled !== false;
+  editingMcpTrusted = server.trusted !== false;
+  editingMcpOAuth = server.oauth ?? null;
   editingMcpTools = (server.liveTools?.length ? server.liveTools : server.tools ?? []).slice();
   el("m-id").value = server.id;
   el("m-name").value = server.name ?? server.id;
@@ -2088,7 +2267,12 @@ function editMcp(server) {
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
   el("m-auto").checked = !!server.autoApprove;
+  el("m-oauth").checked = !!server.oauth;
+  el("m-oauth-scopes").value = (server.oauth?.scopes ?? []).join(" ");
+  el("m-oauth-client").value = server.oauth?.clientId ?? "";
+  el("m-oauth-server").value = server.oauth?.authorizationServer ?? "";
   el("m-transport").value = String(Math.max(0, MCP_TRANSPORTS.indexOf(server.transport ?? "stdio")));
+  editingMcpEndpoint = mcpEndpointKey(server);
   renderMcpTransport();
   renderMcpPolicies(el("m-policies"), editingMcpTools, server.toolPolicies ?? {}, server.autoApprove);
   setText(el("m-save"), t("settings.mcpSave"));
@@ -2100,17 +2284,39 @@ function editMcp(server) {
 function resetMcpForm() {
   editingMcpId = "";
   editingMcpEnabled = true;
+  editingMcpTrusted = false;
+  editingMcpEndpoint = "";
+  editingMcpOAuth = null;
   editingMcpTools = [];
-  for (const id of ["m-id", "m-name", "m-command", "m-args", "m-cwd", "m-url", "m-timeout", "m-env", "m-headers"]) {
+  for (const id of [
+    "m-id",
+    "m-name",
+    "m-command",
+    "m-args",
+    "m-cwd",
+    "m-url",
+    "m-timeout",
+    "m-env",
+    "m-headers",
+    "m-oauth-scopes",
+    "m-oauth-client",
+    "m-oauth-server",
+  ]) {
     el(id).value = "";
   }
   el("m-auto").checked = false;
+  el("m-oauth").checked = false;
   el("m-transport").value = "0";
   el("m-policies").innerHTML = "";
   setText(el("m-save"), t("settings.mcpAdd"));
   el("m-cancel").hidden = true;
   setText(el("m-test-result"), "");
   renderMcpTransport();
+}
+
+/** Endpoint changes require the user to look at the server again. */
+function mcpEndpointKey(server) {
+  return [server.transport, server.command, (server.args ?? []).join("\u0000"), server.url].join("\u0001");
 }
 
 function renderMcpTransport() {
@@ -2122,6 +2328,11 @@ function renderMcpTransport() {
         ? "settings.mcpTransportSse"
         : "settings.mcpTransportStdio";
   setText(el("m-transportState"), t(key));
+  const remote = kind !== "stdio";
+  el("m-oauth-toggle").hidden = !remote;
+  if (!remote) el("m-oauth").checked = false;
+  el("m-oauth-row").hidden = !remote || !el("m-oauth").checked;
+  el("m-oauth-fields").hidden = !remote || !el("m-oauth").checked;
 }
 
 function parseMcpKeyValues(text, labelKey) {
@@ -2174,6 +2385,24 @@ function mcpFormServer() {
   for (const select of el("m-policies").querySelectorAll("select[data-tool]")) {
     toolPolicies[select.dataset.tool] = select.value;
   }
+  const scopes = el("m-oauth-scopes").value
+    .split(/[\s,]+/)
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  const clientId = el("m-oauth-client").value.trim();
+  const authorizationServer = el("m-oauth-server").value.trim();
+  const endpoint = mcpEndpointKey({ transport, command, args, url });
+  const sameEndpoint = Boolean(editingMcpId && endpoint === editingMcpEndpoint);
+  const oauth =
+    transport !== "stdio" && el("m-oauth").checked
+      ? {
+          ...(sameEndpoint && editingMcpOAuth?.resource ? { resource: editingMcpOAuth.resource } : {}),
+          ...(editingMcpOAuth?.callbackPort ? { callbackPort: editingMcpOAuth.callbackPort } : {}),
+          ...(scopes.length ? { scopes } : {}),
+          ...(clientId ? { clientId } : {}),
+          ...(authorizationServer ? { authorizationServer } : {}),
+        }
+      : null;
   return {
     id,
     name: el("m-name").value.trim() || id,
@@ -2186,6 +2415,8 @@ function mcpFormServer() {
     headers: parseMcpKeyValues(el("m-headers").value, "settings.mcpHeaders"),
     enabled: editingMcpId ? editingMcpEnabled : true,
     autoApprove: el("m-auto").checked,
+    trusted: Boolean(editingMcpId && editingMcpTrusted && endpoint === editingMcpEndpoint),
+    oauth,
     toolPolicies,
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     tools: editingMcpTools,
@@ -3395,6 +3626,7 @@ el("s-syncLocalModels").addEventListener("change", async () => {
 });
 
 el("m-refresh").addEventListener("click", () => mcpAction({ action: "refresh" }));
+el("secret-save").addEventListener("click", saveSecret);
 
 el("m-save").addEventListener("click", async () => {
   let server;
@@ -3418,6 +3650,7 @@ el("m-save").addEventListener("click", async () => {
 el("m-test").addEventListener("click", () => testMcpForm());
 el("m-cancel").addEventListener("click", () => resetMcpForm());
 el("m-transport").addEventListener("input", renderMcpTransport);
+el("m-oauth").addEventListener("change", renderMcpTransport);
 
 el("m-import-run").addEventListener("click", async () => {
   const raw = el("m-import").value.trim();
@@ -3641,7 +3874,7 @@ document.querySelectorAll(".example").forEach((button) => {
   fillSettingsForm(info.settings ?? state.settings);
 
   renderHistory(data.history, data.usage?.calls ?? [], data.turns ?? []);
-  await loadData();
+  await Promise.all([loadData(), loadSecrets()]);
   termLine(t("terminal.welcome"), "term-sys");
   connect();
   // Fill the model picker with whatever the local servers can load.

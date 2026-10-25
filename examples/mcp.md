@@ -8,6 +8,11 @@ advertises becomes a tool the model can call, named `mcp__<server>__<tool>`.
 MCP is **off** until you switch it on, because a server is a program that runs with
 your rights.
 
+A server is also **untrusted** until you say otherwise. A new command, an imported
+config or a changed URL does not start anything: the card (or `/mcp`) shows *needs
+trust*, and `/mcp trust <id>` or **Trust and connect** is the confirmation. This is
+what stops a pasted `mcpServers` block from running code just because it was saved.
+
 > The first example needs **nothing installed** — it uses the mock server that ships in
 > [`scripts/fixtures/mock-mcp-server.mjs`](../scripts/fixtures/mock-mcp-server.mjs),
 > which the test suite uses too.
@@ -21,6 +26,10 @@ Start the agent (or keep it running) and add the fixture:
 ```
 PS D:\new> /mcp add demo stdio node D:\new\scripts\fixtures\mock-mcp-server.mjs
 updated: mcpServers, mcpEnabled
+MCP master switch: on (1 server(s) configured)
+  demo           stdio needs trust
+PS D:\new> /mcp trust demo
+updated: mcpServers
 MCP master switch: on (1 server(s) configured)
   demo           stdio connected, 5 tool(s) +2R/1P
 ```
@@ -106,6 +115,11 @@ The reference filesystem server is a Node package, so the first run downloads it
 
 ```
 PS D:\new> /mcp add fs stdio npx -y @modelcontextprotocol/server-filesystem D:\
+updated: mcpServers, mcpEnabled
+MCP master switch: on (1 server(s) configured)
+  fs             stdio needs trust
+PS D:\new> /mcp trust fs
+updated: mcpServers
 MCP master switch: on (1 server(s) configured)
   fs             stdio connected, 11 tool(s)
 ```
@@ -165,6 +179,9 @@ per session), give the agent its URL instead:
 ```
 PS D:\new> /mcp add docs http http://127.0.0.1:3001/mcp
 MCP master switch: on (2 server(s) configured)
+  docs           http  needs trust
+PS D:\new> /mcp trust docs
+MCP master switch: on (2 server(s) configured)
   docs           http  connected, 3 tool(s)
 ```
 
@@ -183,6 +200,8 @@ the `sse` transport directly — no bridge needed:
 
 ```
 PS D:\new> /mcp add legacy sse http://127.0.0.1:3001/sse
+  legacy         sse   needs trust
+PS D:\new> /mcp trust legacy
   legacy         sse   connected, 2 tool(s)
 ```
 
@@ -191,6 +210,40 @@ The command form is:
 ```
 /mcp add <id> stdio <command> [args...]
 /mcp add <id> http|sse <url>
+/mcp trust | untrust <id>
+```
+
+### OAuth 2.1
+
+A remote server that uses OAuth asks for it in its `401` response. Turn on **OAuth
+2.1** on its card (or set `oauth` in the server object) and press **Authorize**.
+The agent discovers the authorization server, registers a public client when the
+server allows dynamic registration, and opens the browser with PKCE S256. The
+callback is a loopback listener on `127.0.0.1`; no other machine can reach it.
+
+```json
+{
+  "transport": "http",
+  "url": "https://example.com/mcp",
+  "oauth": { "scopes": ["mcp.read"] }
+}
+```
+
+`clientId` and `authorizationServer` are optional overrides. Tokens are refreshed
+automatically; a `401` on a live session triggers one refresh and one retry.
+**Sign out** removes the tokens and the dynamic registration. The token request uses
+the MCP URL as the RFC 8707 `resource`, so a token minted for one server is not sent
+to another.
+
+### Secrets
+
+Header and environment values can use `${secret:name}` as well as `${ENV}`. Save the
+value in **Settings → MCP → Secrets**, or through `POST /api/secrets`; the value is
+encrypted with DPAPI and never shown again. API keys and OAuth tokens use the same
+store automatically and do not appear in `settings.json`:
+
+```json
+{ "Authorization": "Bearer ${secret:docs.token}" }
 ```
 
 ---
@@ -287,9 +340,10 @@ In `data/settings.json` a stdio server and an HTTP server look like this (see
 }
 ```
 
-`env` and `headers` are stored in `data/settings.json` like your API key is — the
-file is local-only and never served to another machine. Prefer `${VAR}` references
-when you can, so the secret stays in the environment instead of the file.
+`env` and `headers` are stored in `data/settings.json`; the file is local-only but
+those values are readable there. Use `${secret:name}` for a value in the DPAPI store,
+`${VAR}` for the environment, or the Settings → Secrets panel instead of pasting a
+token into the server form. API keys themselves are never written to settings.json.
 
 ---
 
@@ -304,6 +358,7 @@ when you can, so the secret stays in the environment instead of the file.
 | `/mcp enable <id>` · `/mcp disable <id>` | one server on/off, without deleting it |
 | `/mcp add <id> stdio <command> [args...]` | add a stdio server |
 | `/mcp add <id> http\|sse <url>` | add a remote server |
+| `/mcp trust <id>` · `/mcp untrust <id>` | allow a reviewed server to start, or close it and remove its tools |
 | `/mcp remove <id>` | delete a server |
 
 The cache is refreshed at boot, whenever MCP settings change, and before a turn when

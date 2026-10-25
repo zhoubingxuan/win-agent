@@ -23,6 +23,9 @@ const scratch = path.join(os.tmpdir(), `win-agent-sandbox-${process.pid}`);
 process.env.AGENT_DATA_DIR = path.join(scratch, "data");
 const inside = path.join(scratch, "inside");
 const outside = path.join(scratch, "outside");
+// A killed earlier run can leave this PID-named folder behind, and a reused PID
+// would then make "write a new file" fail. Start from a known-empty folder.
+fs.rmSync(scratch, { recursive: true, force: true });
 fs.mkdirSync(inside, { recursive: true });
 fs.mkdirSync(outside, { recursive: true });
 fs.writeFileSync(path.join(outside, "secret.txt"), "outside-the-fence");

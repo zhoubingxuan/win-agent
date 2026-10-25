@@ -267,7 +267,7 @@ console.log("config import: Claude Desktop / Cursor / VS Code");
         fs: { command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "D:\\"], env: { A: "1" } },
         remote: { url: "https://example.com/mcp", headers: { Authorization: "Bearer x" } },
         legacy: { url: "https://example.com/sse" },
-        keep: { command: "node", args: ["server.mjs"] },
+        keep: { command: process.execPath, args: [MOCK] },
       },
     },
     existing,
@@ -282,6 +282,12 @@ console.log("config import: Claude Desktop / Cursor / VS Code");
   check("a URL defaults to HTTP", imported.servers.find((s) => s.id === "remote").transport === "http");
   check("a URL ending in /sse is SSE", imported.servers.find((s) => s.id === "legacy").transport === "sse");
   check("headers are kept", imported.servers.find((s) => s.id === "remote").headers.Authorization === "Bearer x");
+  const movedRemote = parseMcpConfig(
+    { mcpServers: { remote: { url: "https://other.example/mcp" } } },
+    imported.servers,
+  ).servers.find((s) => s.id === "remote");
+  check("a changed endpoint does not inherit old headers", Object.keys(movedRemote.headers).length === 0);
+  check("a changed endpoint needs trust", movedRemote.trusted === false);
 
   const again = parseMcpConfig(
     { mcpServers: { fs: { command: "npx", args: ["-y", "other"] } } },
@@ -290,6 +296,12 @@ console.log("config import: Claude Desktop / Cursor / VS Code");
   check("re-importing updates in place", again.updated === 1 && again.servers.length === imported.servers.length);
   check("the new argument took effect", again.servers.find((s) => s.id === "fs").args[1] === "other");
   check("the display name of another server is untouched", again.servers.find((s) => s.id === "keep").name === "Keep me");
+  check("an unchanged re-import keeps an existing trust", imported.servers.find((s) => s.id === "keep").trusted !== false);
+  const moved = parseMcpConfig(
+    { mcpServers: { keep: { command: "node", args: ["other.mjs"] } } },
+    imported.servers,
+  );
+  check("a changed imported endpoint asks for trust again", moved.servers.find((s) => s.id === "keep").trusted === false);
 
   const partial = parseMcpConfig({ mcpServers: { fs: { env: { B: "2" } } } }, again.servers);
   const kept = partial.servers.find((s) => s.id === "fs");
@@ -311,6 +323,8 @@ console.log("settings validation for the new MCP fields");
       toolPolicies: { echo: "deny" },
       timeoutMs: 500,
       cwd: "D:\\workspace",
+      trusted: false,
+      oauth: { scopes: "mcp.read, offline_access", clientId: "client-1", authorizationServer: "https://auth.example.com" },
     },
   ]);
   check("SSE is accepted", server.transport === "sse");
@@ -319,6 +333,14 @@ console.log("settings validation for the new MCP fields");
   check("tool policies survive", server.toolPolicies.echo === "deny");
   check("a short timeout is clamped", server.timeoutMs === 1_000);
   check("cwd survives", server.cwd === "D:\\workspace");
+  check("an explicit trust decision survives", server.trusted === false);
+  check("OAuth scopes accept a comma-separated string", JSON.stringify(server.oauth?.scopes) === '["mcp.read","offline_access"]');
+  check("an OAuth client id survives", server.oauth?.clientId === "client-1");
+  check("an OAuth authorization server override survives", server.oauth?.authorizationServer === "https://auth.example.com");
+  const [bareOAuth] = normalizeMcpServers([{ id: "bare", transport: "http", url: "https://example.com/mcp", oauth: {} }]);
+  check("an empty OAuth block still enables OAuth", Boolean(bareOAuth.oauth));
+  const [legacy] = normalizeMcpServers([{ id: "legacy", command: "node" }]);
+  check("a server saved before trust existed stays trusted", legacy.trusted === true);
 
   let duplicate = "";
   try {
@@ -415,11 +437,15 @@ console.log("ensureFresh() only refreshes when the cache is old");
 {
   const { manager } = makeManager([stdioServer()]);
   await manager.refresh();
+  await new Promise((resolve) => setTimeout(resolve, 25));
   const age = manager.age();
   await manager.ensureFresh(60_000);
-  check("a fresh cache is reused", manager.age() === age);
+  const reusedAge = manager.age();
+  check("a fresh cache is reused", reusedAge >= age && reusedAge - age < 1_000, `${age} -> ${reusedAge}`);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const expiredAge = manager.age();
   await manager.ensureFresh(0);
-  check("an expired cache is refreshed", manager.age() < age || manager.age() >= 0);
+  check("an expired cache is refreshed", manager.age() < expiredAge, `${expiredAge} -> ${manager.age()}`);
   check("the age is a number of milliseconds", typeof manager.age() === "number" && manager.age() >= 0);
   manager.close();
 }
