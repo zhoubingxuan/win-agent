@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.5.0",
+  "createdAt": "2026-10-25T06:05:47.314Z",
+  "node": ">=20.3",
+  "files": 104,
+  "bytes": 1641521,
+  "note": "MCP servers now start only after an explicit trust decision, remote servers can use OAuth 2.1, and API keys plus OAuth tokens are encrypted with Windows DPAPI…"
+}
