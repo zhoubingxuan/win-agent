@@ -25,6 +25,7 @@ Each release is also a git tag (`git show v1.1.0`, `git checkout v1.1.0`).
 
 | Version | Backed up | Files | Note |
 | --- | --- | --- | --- |
+| 2.6.0 | 2026-11-01 09:48 | 107 | The agent can now **see** — a pasted screenshot or an image returned by the `ui screenshot` tool is sent to a vision model as OpenAI content parts. Image input… |
 | 2.5.0 | 2026-10-25 06:05 | 104 | MCP servers now start only after an explicit trust decision, remote servers can use OAuth 2.1, and API keys plus OAuth tokens are encrypted with Windows DPAPI… |
 | 2.4.0 | 2026-10-25 04:37 | 100 | `auto` mode no longer has to guess from the number in the model name. A measured capability profile now decides between guided, normal and expert, with the old… |
 | 2.3.1 | 2026-10-25 04:14 | 97 | A small hardening release after 2.3.0 went out: the new MCP client was checked against real servers, not only the fixture, and an open page now follows MCP… |

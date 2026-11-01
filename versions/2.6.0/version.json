@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.6.0",
+  "createdAt": "2026-11-01T09:48:24.070Z",
+  "node": ">=20.3",
+  "files": 107,
+  "bytes": 1704520,
+  "note": "The agent can now **see** — a pasted screenshot or an image returned by the `ui screenshot` tool is sent to a vision model as OpenAI content parts. Image input…"
+}
