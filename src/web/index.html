@@ -124,10 +124,19 @@
             <button type="button" id="queue-clear" class="ghost small" data-i18n="chat.queueClear">Clear</button>
           </div>
           <form id="composer" class="composer">
-            <textarea id="input" rows="1" data-i18n-placeholder="chat.placeholder"
-              placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"></textarea>
-            <button id="stop" type="button" class="ghost" data-i18n="chat.stop" hidden>Stop</button>
-            <button id="send" type="submit" data-i18n="chat.send">Send</button>
+            <div id="attachments" class="attachments" hidden></div>
+            <div class="composer-row">
+              <button id="attach" type="button" class="ghost attach" data-i18n-title="chat.attach"
+                title="Attach an image">＋</button>
+              <input id="image-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
+              <textarea id="input" rows="1" data-i18n-placeholder="chat.placeholder"
+                placeholder="Describe a task…  (Enter to send, Shift+Enter for newline)"></textarea>
+              <button id="stop" type="button" class="ghost" data-i18n="chat.stop" hidden>Stop</button>
+              <button id="send" type="submit" data-i18n="chat.send">Send</button>
+            </div>
+            <div class="composer-hint muted small" data-i18n="chat.imageHint">
+              Paste or drop a screenshot — the model sees it when image input is on.
+            </div>
           </form>
         </section>
 
@@ -330,6 +339,23 @@
               </div>
             </div>
             <p class="muted" id="s-verbosityState">…</p>
+
+            <h4 data-i18n="settings.vision">Image input — let the model see screenshots</h4>
+            <p class="muted" data-i18n="settings.visionHint">
+              Paste or drop a screenshot into the chat, or let the <code>ui screenshot</code> tool
+              return one. Auto sends images only when the model id looks like a vision model; On
+              forces it for a local model with an unusual name; Off refuses images. The image is
+              stored with the conversation and counts against the context window.
+            </p>
+            <div class="levels">
+              <input type="range" id="s-vision" min="0" max="2" step="1" value="1" />
+              <div class="levels-labels">
+                <span data-i18n="settings.visionOff">off</span>
+                <span data-i18n="settings.visionAuto">auto</span>
+                <span data-i18n="settings.visionOn">on</span>
+              </div>
+            </div>
+            <p class="muted" id="s-visionState">…</p>
 
             <h4 data-i18n="settings.windows">Windows</h4>
             <p class="muted" data-i18n="settings.windowsHint">
@@ -648,6 +674,11 @@
         <button type="button" id="dir-use" class="primary" data-i18n="dir.use">Use this folder</button>
       </div>
     </dialog>
+
+    <div id="lightbox" class="lightbox" hidden>
+      <button type="button" id="lightbox-close" class="ghost" data-i18n="common.close">Close</button>
+      <img id="lightbox-img" alt="" />
+    </div>
 
     <script src="/app.js"></script>
   </body>

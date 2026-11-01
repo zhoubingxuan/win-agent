@@ -1,5 +1,6 @@
 import type { Config } from "./settings.js";
 import { capabilities, markSupported, markUnsupported, rejectedField } from "./providers.js";
+import { estimateImageTokens, imagePart, type ImageAttachment } from "./images.js";
 
 export type Role = "system" | "user" | "assistant" | "tool";
 
@@ -19,6 +20,13 @@ export interface ChatMessage {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   name?: string;
+  /**
+   * Images the model should see with this message. They are stored beside the
+   * text and turned into OpenAI content parts on the way out; a tool result with
+   * images gets a follow-up user message because the tool role itself is
+   * text-only in the OpenAI schema.
+   */
+  images?: ImageAttachment[];
   /**
    * The model's reasoning for this message (reasoning models), kept so the chat
    * view can show it after a reload. It is *ours*: `outbound()` strips it before
@@ -134,13 +142,40 @@ function keepReasoning(text: string): string | undefined {
  * forwarded except what is only ours - today that is `reasoning`.
  */
 function outbound(messages: ChatMessage[]): Array<Record<string, unknown>> {
-  return messages.map((message) => ({
-    role: message.role,
-    content: message.content,
-    ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
-    ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
-    ...(message.name ? { name: message.name } : {}),
-  }));
+  const out: Array<Record<string, unknown>> = [];
+  for (const message of messages) {
+    const base = {
+      role: message.role,
+      ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
+      ...(message.tool_call_id ? { tool_call_id: message.tool_call_id } : {}),
+      ...(message.name ? { name: message.name } : {}),
+    };
+    if (!message.images || message.images.length === 0) {
+      out.push({ ...base, content: message.content });
+      continue;
+    }
+    if (message.role === "tool") {
+      // The tool role carries the text; the image follows as a user message,
+      // which is the shape every OpenAI-compatible vision endpoint understands.
+      out.push({ ...base, content: message.content ?? "" });
+      out.push({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: `Image returned by the ${message.name ?? "tool"} tool above. Inspect it before deciding the next step.`,
+          },
+          ...message.images.map(imagePart),
+        ],
+      });
+      continue;
+    }
+    const content: Array<Record<string, unknown>> = [];
+    if (message.content) content.push({ type: "text", text: message.content });
+    for (const image of message.images) content.push(imagePart(image));
+    out.push({ ...base, content });
+  }
+  return out;
 }
 
 function toFloat(value: unknown): number | null {
@@ -226,7 +261,11 @@ function buildUsage(input: {
 function estimatePromptTokens(messages: ChatMessage[], reported: number): number {
   if (reported > 0) return reported;
   const chars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
-  return Math.max(1, Math.round(chars / 4));
+  const images = messages.reduce(
+    (sum, m) => sum + (m.images?.reduce((total, image) => total + estimateImageTokens(image), 0) ?? 0),
+    0,
+  );
+  return Math.max(1, Math.round(chars / 4) + images);
 }
 
 function finishUsage(usage: Usage, messages: ChatMessage[], reported: boolean): Usage {

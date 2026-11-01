@@ -15,6 +15,7 @@ emit, and the terminal lines are exactly what the agent accepts (verified with
 | [code.md](code.md) | a coder turn: read, `apply_patch` (preview → apply), `tests` detect/run, `git` commit, and the overwrite guard |
 | [modes.md](modes.md) | the four agent modes (`auto` / `guided` / `normal` / `expert`): what changes, and how to pick one |
 | [verbosity.md](verbosity.md) | the output-detail slider (`answer` / `thinking` / `full`): one turn drawn at all three levels |
+| [vision.md](vision.md) | image input: paste a screenshot, `ui screenshot` to the model, `visionMode` off/auto/on, local vision models, limits |
 | [sandbox.md](sandbox.md) | the folder fence (`sandbox`, on by default): a refused path, what is confined, how to switch it off |
 | [stability.md](stability.md) | staying on the rails: a blocked repeat, the step limit, a trimmed result, and the error hints |
 | [skills.md](skills.md) | three complete skills (temp cleanup, a restart checklist, a weekly report) and the one prompt line each adds |

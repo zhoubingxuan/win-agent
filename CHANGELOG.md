@@ -13,6 +13,56 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-11-01
+
+The agent can now **see** — a pasted screenshot or an image returned by the
+`ui screenshot` tool is sent to a vision model as OpenAI content parts. Image input is
+a three-stop setting, images are stored with the conversation, and the context planner
+prices them before deciding what to drop.
+
+### Added
+
+- **Chat image attachments.** Paste (Win+Shift+S then Ctrl+V), drop a file on the
+  composer, or press **＋**; up to four PNG/JPEG/WebP images per message. The browser
+  resizes the longest side to 1600 px, shows thumbnails with a remove button, and a
+  click opens a lightbox. Images survive a reload and are replayed when an archived
+  conversation is reopened.
+- **Vision wire format (`src/images.ts`, `src/llm.ts`).** A user message with images
+  becomes `[{ type: "text" }, { type: "image_url", image_url: { url: "data:..." } }]`.
+  A tool result stays a text `tool` message and is followed by a user image message,
+  the shape OpenAI-compatible vision endpoints understand. Image bytes are sniffed
+  (PNG/JPEG/WebP magic), dimensions are read from the header, and a declared MIME type
+  that disagrees with the bytes is rejected.
+- **`ui screenshot` returns the screen.** The screenshot is still saved as a PNG
+  (default `data/screenshots/`); a model-sized JPEG is made and attached to the tool
+  result. `send_to_model: false` only saves the file. The original stays on disk.
+- **`visionMode`: `off` / `auto` / `on`.** `auto` recognises common vision families
+  (`vl`, `vision`, `llava`, `minicpm-v`, `pixtral`, `internvl`, `gemma3`, `gpt-4o`,
+  `gpt-4.1`, `gpt-5`, `o3`/`o4`, `claude`, `gemini`, `grok-4`, …); `on` forces images
+  for an unusual local name; `off` refuses them. Exposed as the **Image input** slider
+  in Settings, `visionMode` in settings, `/set visionMode ...`, and
+  `AGENT_VISION_MODE`. `GET /api/state` reports the resolved `visionActive`.
+- **HTTP and SSE images.** `POST /api/chat` accepts `{ message, images }`; `user` and
+  `tool_result` events carry the same optional `images` array. The request body limit
+  grows to 24 MB (5 MB per image, 12 MB per message). Queued image messages survive a
+  restart and show their image count in the queue strip.
+- **Context budgeting for images.** Each image costs roughly 85–1600 tokens. When a
+  request does not fit, older images are dropped first, then the newest one, with a
+  note in the text and `droppedImages` in the `context` event and UI notice.
+- **`scripts/test-vision.mjs` (47 checks)** plus HTTP coverage in
+  `scripts/test-api.mjs`: validation, dimensions, data URLs, vision-model detection,
+  content parts, tool-result follow-up, agent attach/refuse, and image trimming.
+
+### Changed
+
+- `ChatMessage` gains `images?: ImageAttachment[]`; `Tool.run` may return
+  `{ text, images }`, and `ToolRegistry.executeDetailed()` preserves images while the
+  old `execute()` still returns text for the MCP server and tests.
+- The tool result text says whether the image was attached, so a model on `off` knows
+  why it cannot see the screen.
+- Screenshots are no longer required to name a path; the default is a timestamped file
+  under `data/screenshots/`.
+
 ## [2.5.0] — 2026-10-25
 
 MCP servers now start only after an explicit trust decision, remote servers can use

@@ -31,6 +31,7 @@ const I18N = {
     "common.dryRun": "Dry run",
     "common.autoApprove": "Auto-approve",
     "common.sandbox": "Sandbox",
+    "common.close": "Close",
     "tab.chat": "Chat",
     "tab.terminal": "Terminal",
     "tab.settings": "Settings",
@@ -48,6 +49,13 @@ const I18N = {
     "chat.placeholder": "Describe a task…  (Enter to send, Shift+Enter for newline)",
     "chat.send": "Send",
     "chat.stop": "Stop",
+    "chat.attach": "Attach an image",
+    "chat.imageHint": "Paste or drop a screenshot — the model sees it when image input is on.",
+    "chat.imageUnsupported": "Only PNG, JPEG and WebP images are supported.",
+    "chat.imageTooLarge": "That image is too large (max {0} MB).",
+    "chat.imageTooMany": "At most {0} images can be attached to one message.",
+    "chat.imageFailed": "Could not read that image: {0}",
+    "chat.imageCount": "{0} image(s)",
     "chat.thinking": "thinking… ({0} chars so far)",
     "chat.thought": "thinking ({0} chars) — click to read",
     "chat.detail": "detail",
@@ -117,6 +125,20 @@ const I18N = {
       "now: answer + thinking — the model's reasoning appears while it works, and folds away when the answer starts",
     "settings.verbosityStateFull":
       "now: everything — reasoning, every tool call with its arguments and result, step markers and token usage",
+    "settings.vision": "Image input — let the model see screenshots",
+    "settings.visionHint":
+      "Paste or drop a screenshot into the chat, or let the ui screenshot tool return one. Auto sends images only when the model id looks like a vision model; On forces it for a local model with an unusual name; Off refuses images. Images are stored with the conversation and count against the context window.",
+    "settings.visionOff": "off",
+    "settings.visionAuto": "auto",
+    "settings.visionOn": "on",
+    "settings.visionStateOff":
+      "now: off — images are refused; screenshots are saved to disk but not attached to the model",
+    "settings.visionStateOn":
+      "now: on — images are always sent; use this for a local vision model whose name does not say so",
+    "settings.visionStateAutoActive":
+      "now: auto — this model looks like a vision model, so images will be sent",
+    "settings.visionStateAutoInactive":
+      "now: auto — this model does not look like a vision model; set On if it can see images anyway",
     "settings.windows": "Windows",
     "settings.windowsHint":
       "What the agent is actually driving. Elevation decides whether services, the firewall and machine-wide settings can be changed at all.",
@@ -431,6 +453,7 @@ const I18N = {
     "common.dryRun": "试运行",
     "common.autoApprove": "自动批准",
     "common.sandbox": "沙箱",
+    "common.close": "关闭",
     "tab.chat": "对话",
     "tab.terminal": "终端",
     "tab.settings": "设置",
@@ -448,6 +471,13 @@ const I18N = {
     "chat.placeholder": "描述一个任务…（Enter 发送，Shift+Enter 换行）",
     "chat.send": "发送",
     "chat.stop": "停止",
+    "chat.attach": "添加图片",
+    "chat.imageHint": "粘贴或拖入截图 —— 开启图片输入后，模型就能看到它。",
+    "chat.imageUnsupported": "只支持 PNG、JPEG 和 WebP 图片。",
+    "chat.imageTooLarge": "图片太大（上限 {0} MB）。",
+    "chat.imageTooMany": "一条消息最多添加 {0} 张图片。",
+    "chat.imageFailed": "读取图片失败：{0}",
+    "chat.imageCount": "{0} 张图片",
     "chat.thinking": "思考中…（已 {0} 字符）",
     "chat.thought": "思考（{0} 字符）—— 点击展开",
     "chat.detail": "详细",
@@ -513,6 +543,18 @@ const I18N = {
     "settings.verbosityStateAnswer": "当前：只显示回答 —— 只有你的消息和模型的回答；工具调用、思考过程和 token 用量都不进对话区",
     "settings.verbosityStateThinking": "当前：回答 + 思考过程 —— 模型工作时显示它的思考，开始回答时自动折叠",
     "settings.verbosityStateFull": "当前：全部 —— 思考过程、每次工具调用及其参数与结果、步骤标记、token 用量",
+    "settings.vision": "图片输入 —— 让模型看到截图",
+    "settings.visionHint":
+      "把截图粘贴或拖进对话，或者让 ui screenshot 工具直接返回画面。自动：只有模型名字看起来像视觉模型时才发送图片；开：强制发送，适合名字不明显的本地视觉模型；关：拒绝图片。图片会存进对话记录，并占用上下文窗口。",
+    "settings.visionHint":
+      "把截图粘贴或拖进对话，或者让 ui screenshot 工具直接返回画面。自动：只有模型名字看起来像视觉模型时才发送图片；开：强制发送，适合名字不明显的本地视觉模型；关：拒绝图片。图片会存进对话记录，并占用上下文窗口。",
+    "settings.visionOff": "关",
+    "settings.visionAuto": "自动",
+    "settings.visionOn": "开",
+    "settings.visionStateOff": "当前：关 —— 拒绝图片；截图仍会保存到磁盘，但不会交给模型",
+    "settings.visionStateOn": "当前：开 —— 总是发送图片；适合名字里没有视觉标记的本地视觉模型",
+    "settings.visionStateAutoActive": "当前：自动 —— 这个模型看起来支持视觉，图片会发送",
+    "settings.visionStateAutoInactive": "当前：自动 —— 这个模型名字不像视觉模型；如果它其实能看图，请选“开”",
     "settings.windows": "Windows",
     "settings.windowsHint": "这里是智能体实际驱动的环境。是否有管理员权限，决定了能不能改服务、防火墙和系统级设置。",
     "settings.winShell": "PowerShell",
@@ -843,6 +885,8 @@ let customTools = [];
 let termHistory = [];
 let termHistoryIndex = -1;
 let settingsFilePath = "";
+/** Images picked for the next message, already resized in the browser. */
+let pendingImages = [];
 
 /** Usage of the LLM call that is being rendered right now, waiting for its last element. */
 let pendingUsage = null;
@@ -860,6 +904,9 @@ let thinkingClosed = false;
 /** The three levels, mirroring VERBOSITY_LEVELS in src/settings.ts. */
 const LEVELS = ["answer", "thinking", "full"];
 const MODE_SETTINGS = ["auto", "guided", "normal", "expert"];
+const VISION_SETTINGS = ["off", "auto", "on"];
+const MAX_PENDING_IMAGES = 4;
+const MAX_CLIENT_IMAGE_BYTES = 5 * 1024 * 1024;
 const MCP_TRANSPORTS = ["stdio", "http", "sse"];
 let editingMcpTrusted = false;
 let editingMcpEndpoint = "";
@@ -887,6 +934,11 @@ const LEVEL_STATE = {
   answer: "settings.verbosityStateAnswer",
   thinking: "settings.verbosityStateThinking",
   full: "settings.verbosityStateFull",
+};
+const VISION_STATE = {
+  off: "settings.visionStateOff",
+  auto: "settings.visionStateAutoActive",
+  on: "settings.visionStateOn",
 };
 
 /* ---------------------------------------------------------------- utilities */
@@ -952,6 +1004,9 @@ function applyLanguage() {
   for (const node of document.querySelectorAll("[data-i18n-placeholder]")) {
     node.placeholder = t(node.dataset.i18nPlaceholder);
   }
+  for (const node of document.querySelectorAll("[data-i18n-title]")) {
+    node.title = t(node.dataset.i18nTitle);
+  }
   for (const node of document.querySelectorAll("[data-i18n-html]")) {
     node.innerHTML = t(node.dataset.i18nHtml);
   }
@@ -994,16 +1049,190 @@ async function setLanguage(value, persist = true) {
 
 /* ------------------------------------------------------------------ chat */
 
+/** A data URL for an image object as stored by the server. */
+function imageSrc(image) {
+  return `data:${image.mimeType};base64,${image.data}`;
+}
+
+function openLightbox(src) {
+  const box = el("lightbox");
+  if (!box) return;
+  el("lightbox-img").src = src;
+  box.hidden = false;
+  document.body.classList.add("lightbox-open");
+}
+
+function closeLightbox() {
+  const box = el("lightbox");
+  if (!box) return;
+  box.hidden = true;
+  el("lightbox-img").removeAttribute("src");
+  document.body.classList.remove("lightbox-open");
+}
+
+/** Thumbnails under a bubble or a tool card. */
+function imageStrip(images, className = "image-strip") {
+  const wrap = document.createElement("div");
+  wrap.className = className;
+  for (const image of images) {
+    const img = document.createElement("img");
+    img.src = imageSrc(image);
+    img.alt = image.name || t("chat.imageCount", 1);
+    img.loading = "lazy";
+    img.title = image.name || "";
+    img.addEventListener("click", () => openLightbox(img.src));
+    wrap.appendChild(img);
+  }
+  return wrap;
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadBitmap(file) {
+  if (typeof createImageBitmap === "function") return createImageBitmap(file);
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("image could not be decoded"));
+    };
+    img.src = url;
+  });
+}
+
+/**
+ * Read one image and make it small enough to store and send. A screenshot is
+ * usually a PNG with text; a 1600px JPEG at quality 90 stays readable while a
+ * 4K PNG can be several megabytes. The original is not uploaded.
+ */
+async function prepareImage(file) {
+  if (!/^image\/(png|jpeg|webp)$/i.test(file.type)) {
+    throw new Error(t("chat.imageUnsupported"));
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    throw new Error(t("chat.imageTooLarge", 20));
+  }
+  const dataUrl = await fileToDataUrl(file);
+  const bitmap = await loadBitmap(file);
+  const width = bitmap.width;
+  const height = bitmap.height;
+  const max = 1600;
+  const scale = Math.min(1, max / Math.max(width, height));
+  const outWidth = Math.max(1, Math.round(width * scale));
+  const outHeight = Math.max(1, Math.round(height * scale));
+  const smallEnough = file.size <= 1_500_000 && width <= 2000 && height <= 2000;
+  if (smallEnough) {
+    const match = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl);
+    if (match) {
+      if (typeof bitmap.close === "function") bitmap.close();
+      return {
+        mimeType: match[1].toLowerCase(),
+        data: match[2],
+        name: file.name || "image",
+        width,
+        height,
+      };
+    }
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = outWidth;
+  canvas.height = outHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas is not available");
+  // JPEG has no alpha; white keeps transparent screenshots readable.
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, outWidth, outHeight);
+  ctx.drawImage(bitmap, 0, 0, outWidth, outHeight);
+  if (typeof bitmap.close === "function") bitmap.close();
+  const encoded = canvas.toDataURL("image/jpeg", 0.9);
+  const match = /^data:([^;]+);base64,(.+)$/i.exec(encoded);
+  if (!match) throw new Error("image could not be encoded");
+  const data = match[2];
+  const bytes = Math.floor((data.length * 3) / 4);
+  if (bytes > MAX_CLIENT_IMAGE_BYTES) {
+    throw new Error(t("chat.imageTooLarge", Math.round(MAX_CLIENT_IMAGE_BYTES / 1024 / 1024)));
+  }
+  return {
+    mimeType: "image/jpeg",
+    data,
+    name: file.name || "image",
+    width: outWidth,
+    height: outHeight,
+  };
+}
+
+function renderAttachments() {
+  const box = el("attachments");
+  if (!box) return;
+  box.replaceChildren();
+  box.hidden = pendingImages.length === 0;
+  pendingImages.forEach((image, index) => {
+    const item = document.createElement("div");
+    item.className = "attachment";
+    const img = document.createElement("img");
+    img.src = imageSrc(image);
+    img.alt = image.name || t("chat.imageCount", 1);
+    img.title = image.name || "";
+    img.addEventListener("click", () => openLightbox(img.src));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "attachment-remove";
+    remove.textContent = "×";
+    remove.title = t("common.close");
+    remove.addEventListener("click", () => {
+      pendingImages.splice(index, 1);
+      renderAttachments();
+    });
+    item.append(img, remove);
+    box.appendChild(item);
+  });
+}
+
+async function addImageFiles(files) {
+  const list = [...files].filter((file) => /^image\//i.test(file.type));
+  for (const file of list) {
+    if (pendingImages.length >= MAX_PENDING_IMAGES) {
+      showNotice(t("chat.imageTooMany", MAX_PENDING_IMAGES));
+      break;
+    }
+    try {
+      pendingImages.push(await prepareImage(file));
+      renderAttachments();
+    } catch (error) {
+      showNotice(t("chat.imageFailed", error?.message ?? String(error)));
+    }
+  }
+}
+
+function clearPendingImages() {
+  pendingImages = [];
+  renderAttachments();
+  const picker = el("image-input");
+  if (picker) picker.value = "";
+}
+
 function clearEmpty() {
   const empty = el("empty");
   if (empty) empty.remove();
 }
 
-function addBubble(role, text) {
+function addBubble(role, text, images) {
   clearEmpty();
   if (role === "assistant") closeThinking();
   // A streamed reply already built this bubble: fill in the final text.
-  if (role === "assistant" && streamBubble) {
+  if (role === "assistant" && streamBubble && !(images && images.length > 0)) {
     const div = streamBubble;
     streamBubble = null;
     div.classList.remove("streaming");
@@ -1014,7 +1243,13 @@ function addBubble(role, text) {
   }
   const div = document.createElement("div");
   div.className = `bubble ${role}`;
-  setText(div, text);
+  if (text) {
+    const body = document.createElement("div");
+    body.className = "bubble-text";
+    setText(body, text);
+    div.appendChild(body);
+  }
+  if (images && images.length > 0) div.appendChild(imageStrip(images, "bubble-images"));
   log.appendChild(div);
   if (role === "assistant" && pendingUsage) pendingUsageAnchor = div;
   followBottom(log);
@@ -1141,7 +1376,7 @@ function addToolCall(name, args) {
   return card;
 }
 
-function addToolResult(name, result) {
+function addToolResult(name, result, images) {
   if (!showsProcess()) return;
   const index = openTools.findIndex((entry) => entry.name === name);
   const entry = index >= 0 ? openTools.splice(index, 1)[0] : null;
@@ -1157,6 +1392,7 @@ function addToolResult(name, result) {
     setText(card.querySelector(".tool-body"), result);
     card.classList.add("done");
   }
+  if (images && images.length > 0) card.appendChild(imageStrip(images, "tool-images"));
   if (pendingUsage) pendingUsageAnchor = card;
   followBottom(log);
 }
@@ -1447,7 +1683,7 @@ function renderAudit(report) {
 function handle(ev) {
   switch (ev.type) {
     case "user":
-      addBubble("user", ev.text);
+      addBubble("user", ev.text, ev.images);
       // A message was just sent (probably by this reader): show the newest output.
       scrollToBottom(log);
       break;
@@ -1468,7 +1704,7 @@ function handle(ev) {
       addToolCall(ev.name, ev.args);
       break;
     case "tool_result":
-      addToolResult(ev.name, ev.result);
+      addToolResult(ev.name, ev.result, ev.images);
       break;
     case "usage":
       if (ev.totals) renderUsage(ev.totals);
@@ -2626,6 +2862,7 @@ function fillSettingsForm(s) {
   el("s-todoCheck").checked = s.todoCheck !== false;
   el("s-mcpServeAutoApprove").checked = !!s.mcpServeAutoApprove;
   setVerbosityControls(s.verbosity);
+  setVisionControls(s.visionMode);
   renderModeState();
   renderModelProfile();
   // A different endpoint or model means the measured profile changed too. The
@@ -2806,6 +3043,38 @@ async function setVerbosity(index) {
   // What is already drawn stays as it was drawn; a redraw replays the stored
   // conversation at the new level. Never mid-turn: that would erase the live log.
   if (!running) reloadHistory();
+}
+
+/** The image mode as words, including what `auto` resolves to right now. */
+function renderVisionState(index) {
+  const mode = VISION_SETTINGS[index ?? VISION_SETTINGS.indexOf(state.settings?.visionMode ?? "auto")] ?? "auto";
+  if (mode === "auto") {
+    const key = state.settings?.visionActive
+      ? "settings.visionStateAutoActive"
+      : "settings.visionStateAutoInactive";
+    setText(el("s-visionState"), t(key));
+    return;
+  }
+  setText(el("s-visionState"), t(VISION_STATE[mode]));
+}
+
+function setVisionControls(value) {
+  const index = Math.max(0, VISION_SETTINGS.indexOf(String(value ?? "auto")));
+  el("s-vision").value = String(index);
+  renderVisionState(index);
+}
+
+/** Apply an image mode immediately, like the detail slider. */
+async function setVision(index) {
+  renderVisionState(index);
+  const result = await api("/api/settings", "POST", {
+    visionMode: VISION_SETTINGS[index] ?? "auto",
+  });
+  if (result.error) {
+    showNotice(`${t("error.prefix")}${result.error}`);
+    return;
+  }
+  if (result.settings) applySettingsToUi(result.settings);
 }
 
 /** Which PowerShell is behind the tools, and whether it can change the machine. */
@@ -3029,6 +3298,7 @@ async function saveSettings() {
     remember: el("s-remember").checked,
     syncLocalModels: el("s-syncLocalModels").checked,
     agentMode: MODE_SETTINGS[Number(el("s-mode").value)] ?? "auto",
+    visionMode: VISION_SETTINGS[Number(el("s-vision").value)] ?? "auto",
     verbosity: LEVELS[Number(el("s-verbosity").value)] ?? "answer",
     psEnglishErrors: el("s-psEnglishErrors").checked,
     auditLog: el("s-auditLog").checked,
@@ -3168,7 +3438,9 @@ function renderHistory(entries, calls = [], turns = []) {
   for (const [index, entry] of entries.entries()) {
     if (entry.role === "user") {
       flushUsage();
-      if (entry.content) addBubble("user", entry.content);
+      if (entry.content || (entry.images && entry.images.length > 0)) {
+        addBubble("user", entry.content ?? "", entry.images);
+      }
     } else if (entry.role === "assistant") {
       flushUsage();
       const usage = calls[callIndex++];
@@ -3181,7 +3453,7 @@ function renderHistory(entries, calls = [], turns = []) {
       }
       if (!entry.tool_calls || entry.tool_calls.length === 0) flushUsage();
     } else if (entry.role === "tool") {
-      addToolResult(entry.name ?? "?", entry.content ?? "");
+      addToolResult(entry.name ?? "?", entry.content ?? "", entry.images);
     }
     for (const turn of cardsAt.get(index + 1) ?? []) addTurnCard(turn);
   }
@@ -3467,7 +3739,10 @@ function renderQueue(items) {
     row.className = "queue-item";
     const label = document.createElement("span");
     const value = String(item.message ?? "");
-    label.textContent = `${index + 1}. ${value.length > 70 ? `${value.slice(0, 70)}…` : value}`;
+    const imageCount = item.images?.length ?? 0;
+    const text = value.length > 70 ? `${value.slice(0, 70)}…` : value;
+    const images = imageCount > 0 ? ` ${t("chat.imageCount", imageCount)}` : "";
+    label.textContent = `${index + 1}. ${text || images.trim()}${text ? images : ""}`;
     label.title = value;
     const remove = document.createElement("button");
     remove.type = "button";
@@ -3485,27 +3760,87 @@ function renderQueue(items) {
 
 /* -------------------------------------------------------------------- wire */
 
-el("composer").addEventListener("submit", (event) => {
+el("composer").addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = input.value.trim();
-  if (!text) return;
+  const images = pendingImages.slice();
+  if (!text && images.length === 0) return;
+  const result = await sendMessage(text, images);
+  if (result?.error) return;
   input.value = "";
   input.style.height = "auto";
-  void sendMessage(text);
+  clearPendingImages();
 });
 
 /** Send a message: starts a turn, or queues it when one is already running. */
-async function sendMessage(text) {
-  const result = await api("/api/chat", "POST", { message: text });
+async function sendMessage(text, images = []) {
+  const payload = { message: text };
+  if (images.length > 0) payload.images = images;
+  const result = await api("/api/chat", "POST", payload);
   if (result.error) {
     showNotice(`${t("error.prefix")}${result.error}`);
-    return;
+    return result;
   }
   if (result.queued) {
     showNotice(t("notice.queued", result.position));
     refreshQueue();
   }
+  return result;
 }
+
+el("attach").addEventListener("click", () => el("image-input").click());
+el("image-input").addEventListener("change", async (event) => {
+  await addImageFiles(event.target.files ?? []);
+  event.target.value = "";
+});
+
+// A screenshot pasted while the composer has focus is an attachment, not text.
+input.addEventListener("paste", (event) => {
+  const files = [...(event.clipboardData?.items ?? [])]
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (files.length === 0) return;
+  event.preventDefault();
+  void addImageFiles(files);
+});
+
+// Win+Shift+S puts the screenshot on the clipboard; paste it anywhere in the
+// chat tab. The terminal keeps its own paste behavior.
+document.addEventListener("paste", (event) => {
+  if (event.defaultPrevented || !el("view-chat").classList.contains("active")) return;
+  if (document.activeElement === el("termInput")) return;
+  const files = [...(event.clipboardData?.items ?? [])]
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (files.length === 0) return;
+  event.preventDefault();
+  void addImageFiles(files);
+});
+
+const composer = el("composer");
+for (const type of ["dragenter", "dragover"]) {
+  composer.addEventListener(type, (event) => {
+    event.preventDefault();
+    composer.classList.add("dragging");
+  });
+}
+for (const type of ["dragleave", "drop"]) {
+  composer.addEventListener(type, (event) => {
+    event.preventDefault();
+    composer.classList.remove("dragging");
+  });
+}
+composer.addEventListener("drop", (event) => {
+  const files = [...(event.dataTransfer?.files ?? [])].filter((file) => file.type.startsWith("image/"));
+  if (files.length > 0) void addImageFiles(files);
+});
+
+el("lightbox-close").addEventListener("click", closeLightbox);
+el("lightbox").addEventListener("click", (event) => {
+  if (event.target === el("lightbox")) closeLightbox();
+});
 
 input.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
@@ -3518,9 +3853,12 @@ el("stop").addEventListener("click", () => stopTask());
 
 // Esc anywhere (outside a text field's own handling) stops the running task.
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && running && document.activeElement !== el("termInput")) {
-    stopTask();
+  if (event.key !== "Escape") return;
+  if (!el("lightbox").hidden) {
+    closeLightbox();
+    return;
   }
+  if (running && document.activeElement !== el("termInput")) stopTask();
 });
 input.addEventListener("input", () => {
   input.style.height = "auto";
@@ -3793,6 +4131,11 @@ for (const id of ["chat-verbosity", "s-verbosity"]) {
   el(id).addEventListener("input", (event) => renderVerbosityState(Number(event.target.value)));
   el(id).addEventListener("change", (event) => setVerbosity(Number(event.target.value)));
 }
+
+// Image input is a capability switch, not a view: apply it at once so the next
+// message sees the new setting even if the form was not saved.
+el("s-vision").addEventListener("input", (event) => renderVisionState(Number(event.target.value)));
+el("s-vision").addEventListener("change", (event) => setVision(Number(event.target.value)));
 
 el("c-add").addEventListener("click", () => {
   const name = el("c-name").value.trim();

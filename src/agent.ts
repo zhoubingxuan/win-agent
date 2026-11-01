@@ -1,6 +1,7 @@
 import type { AgentMode, Config, Language } from "./settings.js";
 import { EXPERT_INSTRUCTIONS, GUIDED_INSTRUCTIONS, LANGUAGE_INSTRUCTIONS } from "./settings.js";
 import { chat, type ChatMessage, type ToolCall, type Usage } from "./llm.js";
+import type { ImageAttachment } from "./images.js";
 import { capText, planContext, schemaTokens, toolCapFor, type ContextStats } from "./context.js";
 import type { ToolRegistry } from "./tools/index.js";
 import { skillIndex } from "./skills.js";
@@ -14,7 +15,7 @@ export interface AgentEvents {
   /** Live "thinking" text from a reasoning model (streaming). */
   onReasoning?: (text: string) => void;
   onToolCall?: (name: string, args: string) => void;
-  onToolResult?: (name: string, result: string) => void;
+  onToolResult?: (name: string, result: string, images?: ImageAttachment[]) => void;
   onStep?: (step: number, maxSteps: number) => void;
   /** Token accounting for every LLM call, as it happens. */
   onUsage?: (usage: Usage) => void;
@@ -301,18 +302,22 @@ export class Agent {
   }
 
   /** Run one user turn to completion and return the final assistant text. */
-  async run(userInput: string, signal?: AbortSignal): Promise<string> {
+  async run(userInput: string, signal?: AbortSignal, images?: ImageAttachment[]): Promise<string> {
     // The page watches the checklist live, so subscribe for exactly this turn.
     const unsubscribe = subscribeTodos((items) => this.events.onTodos?.(items));
     try {
-      return await this.runTurn(userInput, signal);
+      return await this.runTurn(userInput, signal, images);
     } finally {
       unsubscribe();
     }
   }
 
-  private async runTurn(userInput: string, signal?: AbortSignal): Promise<string> {
-    this.history.push({ role: "user", content: userInput });
+  private async runTurn(userInput: string, signal?: AbortSignal, images?: ImageAttachment[]): Promise<string> {
+    this.history.push({
+      role: "user",
+      content: userInput,
+      ...(images && images.length > 0 ? { images } : {}),
+    });
 
     // Characters of "thinking" this turn produced. When the model answers with
     // nothing, this number is the only clue about where the answer went.
@@ -440,12 +445,23 @@ export class Agent {
         this.events.onToolCall?.(call.function.name, call.function.arguments);
         const signature = callSignature(call);
         let result: string;
+        let images: ImageAttachment[] = [];
         if (this.config.loopGuard !== false && stuckInALoop(memory, signature)) {
           // Nothing new can come of it: answer instead of running it a third time.
           result = repeatedCall(this.config.language, call.function.name, call.function.arguments);
           blocked += 1;
         } else {
-          result = await this.tools.execute(call.function.name, call.function.arguments);
+          const output = await this.tools.executeDetailed(call.function.name, call.function.arguments);
+          result = output.text;
+          if (output.images && output.images.length > 0) {
+            if (this.config.vision) {
+              images = output.images;
+              result += `\n[${images.length} image(s) attached for you to inspect]`;
+            } else {
+              result +=
+                "\n[image not attached: image input is off for this model — set Settings → Image input to On, or use a vision model]";
+            }
+          }
           // One result cannot be allowed to fill the window (or the conversation
           // file) on its own; the note says how much of the middle is missing.
           result = capText(result, this.toolCap(), "characters trimmed; use a narrower call if you need the middle");
@@ -453,12 +469,13 @@ export class Agent {
           if (memory.length > CALL_MEMORY) memory.shift();
           blocked = 0;
         }
-        this.events.onToolResult?.(call.function.name, result);
+        this.events.onToolResult?.(call.function.name, result, images.length > 0 ? images : undefined);
         this.history.push({
           role: "tool",
           tool_call_id: call.id,
           name: call.function.name,
           content: result,
+          ...(images.length > 0 ? { images } : {}),
         });
       }
 

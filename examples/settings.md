@@ -118,6 +118,25 @@ Note that this file is a *view* setting: `remember: false` is what decides wheth
 conversation is written to `data/history.json` at all. See
 [verbosity.md](verbosity.md).
 
+## Image input: off, auto, or on
+
+`visionMode` decides whether a pasted screenshot or a `ui screenshot` result is sent to
+the model. `auto` (the default) recognises common vision model names; `on` forces it for
+a local model with an unusual name; `off` refuses images.
+
+```json
+{
+  "visionMode": "auto"
+}
+```
+
+```powershell
+PS> /set visionMode on
+$env:AGENT_VISION_MODE = "auto"
+```
+
+See [vision.md](vision.md) for the chat workflow, the HTTP shape and the limits.
+
 ## Windows: English errors and the PowerShell in use
 
 `psEnglishErrors` is on by default so error text is English on a Chinese (or German,

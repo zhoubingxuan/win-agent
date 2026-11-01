@@ -48,6 +48,39 @@ export const AGENT_MODES: AgentMode[] = ["guided", "normal", "expert"];
 export const AGENT_MODE_SETTINGS: AgentModeSetting[] = ["auto", ...AGENT_MODES];
 
 /**
+ * Whether images are sent to the model.
+ *
+ * `auto` trusts the model id for common vision families; `on` forces it (useful
+ * for a local vision model with an unusual name), and `off` refuses images even
+ * for a model that could read them.
+ */
+export type VisionMode = "off" | "auto" | "on";
+
+export const VISION_MODES: VisionMode[] = ["off", "auto", "on"];
+
+export function normalizeVisionMode(value: unknown): VisionMode {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (["on", "true", "yes", "1", "开", "开启"].includes(raw)) return "on";
+  if (["off", "false", "no", "0", "关", "关闭"].includes(raw)) return "off";
+  return "auto";
+}
+
+/** Common vision model families, including the local ones people actually load. */
+const VISION_MODEL =
+  /(?:^|[^a-z0-9])(?:vl|vision|llava|bakllava|moondream|minicpm-v|pixtral|internvl|idefics|paligemma|florence|molmo|smolvlm|omni|llama-?3\.2-vision|gemma-?3|gpt-4o|gpt-4\.1|gpt-5|o3|o4|claude|gemini|grok-4)(?:[^a-z0-9]|$)/i;
+
+export function looksLikeVisionModel(model: string): boolean {
+  return VISION_MODEL.test(String(model ?? ""));
+}
+
+/** The resolved image capability for the active endpoint. */
+export function visionEnabled(settings: Pick<Settings, "model" | "visionMode">): boolean {
+  if (settings.visionMode === "on") return true;
+  if (settings.visionMode === "off") return false;
+  return looksLikeVisionModel(settings.model);
+}
+
+/**
  * Accepts the names in both languages; unknown values fall back to `auto`,
  * which is the least surprising default: a cloud endpoint gets expert speed,
  * a local 7B gets the guided procedure.
@@ -208,6 +241,8 @@ export interface Config {
   workdir: string;
   /** The resolved mode (auto is already applied when this object is built). */
   agentMode: AgentMode;
+  /** Whether this endpoint/model may receive images. */
+  vision: boolean;
   /** Stream the model's answer token by token instead of waiting for all of it. */
   stream: boolean;
   /** Context window used for budgeting (0 = unlimited / unknown). */
@@ -284,6 +319,8 @@ export interface Settings {
   sandbox: boolean;
   /** auto resolves from the endpoint; guided/normal/expert are explicit. */
   agentMode: AgentModeSetting;
+  /** off / auto / on: whether images may be sent to the active model. */
+  visionMode: VisionMode;
   /** How much of the process the chat view shows (see Verbosity). */
   verbosity: Verbosity;
   /** Write every change to data/audit.jsonl and keep a stack of undoable ones. */
@@ -406,6 +443,8 @@ export const DEFAULTS: Settings = {
   // Auto: a cloud endpoint gets the fast expert path, a local 7B gets the guided
   // procedure. A large local model (14B+) is treated as expert too.
   agentMode: "auto",
+  // Auto: send images only when the model id looks like a vision model.
+  visionMode: "auto",
   // A small model chatters: dozens of tool calls before it answers. The quiet view
   // is the default, and two steps up turn the machine room back on.
   verbosity: "answer",
@@ -678,6 +717,7 @@ export function coerceSetting(key: string, value: unknown): unknown {
   if (BOOLEAN_KEYS.includes(typed)) return asBoolean(value);
   if (typed === "language") return normalizeLanguage(value);
   if (typed === "agentMode") return normalizeAgentMode(value);
+  if (typed === "visionMode") return normalizeVisionMode(value);
   if (typed === "verbosity") return normalizeVerbosity(value);
   if (typed === "modelContext") return asModelContext(value);
   if (typed === "profiles") return asProfiles(value);
@@ -738,6 +778,7 @@ function fromEnv(): Record<string, unknown> {
   if (env.AGENT_POWERSHELL) patch.powershell = env.AGENT_POWERSHELL;
   if (env.AGENT_PS_ENGLISH_ERRORS) patch.psEnglishErrors = env.AGENT_PS_ENGLISH_ERRORS;
   if (env.AGENT_MODE) patch.agentMode = env.AGENT_MODE;
+  if (env.AGENT_VISION_MODE) patch.visionMode = env.AGENT_VISION_MODE;
   if (env.AGENT_SANDBOX) patch.sandbox = env.AGENT_SANDBOX;
   if (env.AGENT_VERBOSITY) patch.verbosity = env.AGENT_VERBOSITY;
   if (env.AGENT_AUDIT_LOG) patch.auditLog = env.AGENT_AUDIT_LOG;
@@ -987,6 +1028,8 @@ export function publicSettings(): Omit<Settings, "apiKey" | "profiles"> & {
   apiKeySet: boolean;
   /** The mode `auto` resolves to right now, so the UI can show it. */
   agentModeEffective: AgentMode;
+  /** Whether images would be sent with the current model and mode. */
+  visionActive: boolean;
   profiles: Array<Omit<Profile, "apiKey"> & { apiKeySet: boolean }>;
 } {
   const { apiKey, profiles, ...rest } = current;
@@ -994,6 +1037,7 @@ export function publicSettings(): Omit<Settings, "apiKey" | "profiles"> & {
     ...rest,
     apiKeySet: apiKey.length > 0,
     agentModeEffective: effectiveAgentMode(current),
+    visionActive: visionEnabled(current),
     profiles: profiles.map(({ apiKey: key, ...profile }) => ({
       ...profile,
       apiKeySet: key.length > 0,
@@ -1015,6 +1059,7 @@ export function toConfig(settings: Settings = current): Config {
     systemPrompt: settings.systemPrompt,
     workdir: settings.workdir,
     agentMode: effectiveAgentMode(settings),
+    vision: visionEnabled(settings),
     stream: settings.stream,
     contextLimit: context.limit,
     requestTimeoutMs: settings.requestTimeoutMs,

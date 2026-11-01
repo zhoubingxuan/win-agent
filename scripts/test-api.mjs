@@ -833,6 +833,46 @@ try {
 
   /* ---------------------------------------------------------------------- */
 
+  section("image input over HTTP");
+  {
+    const PNG =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+    const on = await api("/api/settings", "POST", { visionMode: "on" });
+    check("vision mode can be switched on", on.data?.settings?.visionMode === "on");
+    check("the API reports images will be sent", on.data?.settings?.visionActive === true);
+
+    const bad = await api("/api/chat", "POST", {
+      message: "VISION_TEST",
+      images: [{ mimeType: "image/jpeg", data: PNG }],
+    });
+    check("an image whose bytes disagree with its type is a 400", bad.status === 400, JSON.stringify(bad.data));
+
+    requests.length = 0;
+    const sent = await api("/api/chat", "POST", {
+      message: "VISION_TEST",
+      images: [{ mimeType: "image/png", data: PNG }],
+    });
+    check("an image message is accepted", sent.status === 202, JSON.stringify(sent.data));
+
+    const deadline = Date.now() + 30_000;
+    let final = null;
+    while (Date.now() < deadline) {
+      final = (await api("/api/state")).data;
+      if (!final.running && final.history.length >= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    check("the vision turn finished", final && final.running === false);
+    check("the stored user message keeps the image", final?.history?.[0]?.images?.length === 1);
+    const body = requests.find((entry) => entry.path.includes("/chat/completions"))?.body;
+    const content = body?.messages?.find((entry) => entry.role === "user" && Array.isArray(entry.content))?.content;
+    check("the endpoint received an image part", content?.some((part) => part.type === "image_url"), JSON.stringify(content).slice(0, 200));
+
+    const cleared = await api("/api/reset", "POST", {});
+    check("the vision conversation can be reset", cleared.status === 200);
+  }
+
+  /* ---------------------------------------------------------------------- */
+
   section("the queue");
   {
     // A message sent while a turn is running waits instead of being refused, and

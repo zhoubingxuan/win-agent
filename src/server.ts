@@ -22,6 +22,7 @@ import {
   settingsFileWarning,
   toConfig,
   updateSettings,
+  visionEnabled,
 } from "./settings.js";
 import { configureErrorHints, configurePowerShell, configurePowerShellDiagnostics, powerShellInfo } from "./util/ps.js";
 import { auditLog, configureAudit, setAuditTurn } from "./audit.js";
@@ -69,6 +70,7 @@ import {
   type UsageTotals,
 } from "./store.js";
 import type { ChatMessage, Usage } from "./llm.js";
+import { normalizeImages, type ImageAttachment } from "./images.js";
 import type { Profile } from "./settings.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -92,7 +94,7 @@ let running = false;
  * another, so a user can hand over three jobs and walk away. In memory only: a
  * restart clears the queue (the conversation itself is still on disk).
  */
-const queue: Array<{ id: string; message: string; addedAt: string }> = [];
+const queue: Array<{ id: string; message: string; images?: ImageAttachment[]; addedAt: string }> = [];
 const MAX_QUEUE = 20;
 /** Cancels the LLM request(s) of the turn that is running (the Stop button). */
 let taskAbort: AbortController | null = null;
@@ -255,6 +257,7 @@ function contextNotice(stats: ContextStats): string {
   const parts: string[] = [];
   if (stats.droppedMessages > 0) parts.push(`${stats.droppedMessages} older exchange(s) dropped`);
   if (stats.truncatedToolResults > 0) parts.push(`${stats.truncatedToolResults} tool result(s) shortened`);
+  if (stats.droppedImages > 0) parts.push(`${stats.droppedImages} image(s) omitted`);
   return `context trimmed to fit ${stats.limit} tokens: ${parts.join(", ")} — the stored conversation is unchanged`;
 }
 
@@ -830,12 +833,20 @@ function loadQueue(): void {
     const raw = JSON.parse(fs.readFileSync(queueFile(), "utf8")) as { items?: unknown };
     if (!Array.isArray(raw.items)) return;
     for (const item of raw.items) {
-      const record = item as { id?: unknown; message?: unknown; addedAt?: unknown };
-      if (typeof record?.message !== "string" || !record.message.trim()) continue;
+      const record = item as { id?: unknown; message?: unknown; images?: unknown; addedAt?: unknown };
+      const message = typeof record?.message === "string" ? record.message : "";
+      let images: ImageAttachment[] = [];
+      try {
+        images = normalizeImages(record.images);
+      } catch {
+        images = [];
+      }
+      if (!message.trim() && images.length === 0) continue;
       if (queue.length >= MAX_QUEUE) break;
       queue.push({
         id: typeof record.id === "string" ? record.id : randomUUID(),
-        message: record.message,
+        message,
+        ...(images.length > 0 ? { images } : {}),
         addedAt: typeof record.addedAt === "string" ? record.addedAt : new Date().toISOString(),
       });
     }
@@ -845,9 +856,17 @@ function loadQueue(): void {
 }
 
 /** Put a message in the queue; null when the queue is full. */
-function enqueue(message: string): { id: string; message: string; addedAt: string } | null {
+function enqueue(
+  message: string,
+  images?: ImageAttachment[],
+): { id: string; message: string; images?: ImageAttachment[]; addedAt: string } | null {
   if (queue.length >= MAX_QUEUE) return null;
-  const item = { id: randomUUID(), message, addedAt: new Date().toISOString() };
+  const item = {
+    id: randomUUID(),
+    message,
+    ...(images && images.length > 0 ? { images } : {}),
+    addedAt: new Date().toISOString(),
+  };
   queue.push(item);
   saveQueue();
   broadcast({ type: "queue", items: queue });
@@ -861,10 +880,10 @@ function drainQueue(): void {
   if (!next) return;
   saveQueue();
   broadcast({ type: "queue", items: queue });
-  void runAgent(next.message);
+  void runAgent(next.message, next.images);
 }
 
-async function runAgent(message: string): Promise<void> {
+async function runAgent(message: string, images?: ImageAttachment[]): Promise<void> {
   if (running) {
     broadcast({ type: "error", message: "The agent is already working on a task." });
     return;
@@ -875,7 +894,7 @@ async function runAgent(message: string): Promise<void> {
   // Everything the tools change while this run is going belongs to this turn, so
   // the answer can list the files it touched.
   const turnId = randomUUID();
-  broadcast({ type: "user", text: message });
+  broadcast({ type: "user", text: message, ...(images && images.length > 0 ? { images } : {}) });
   broadcast({ type: "status", running: true });
 
   // Pick up MCP servers added since the last turn (cached, so this is cheap).
@@ -912,7 +931,8 @@ async function runAgent(message: string): Promise<void> {
       },
       onAssistantText: (text) => broadcast({ type: "assistant", text }),
       onToolCall: (name, args) => broadcast({ type: "tool_call", name, args }),
-      onToolResult: (name, result) => broadcast({ type: "tool_result", name, result }),
+      onToolResult: (name, result, images) =>
+        broadcast({ type: "tool_result", name, result, ...(images && images.length > 0 ? { images } : {}) }),
       onContext: (stats) => {
         broadcast({ type: "context", ...stats });
         broadcast({ type: "notice", text: contextNotice(stats) });
@@ -936,7 +956,7 @@ async function runAgent(message: string): Promise<void> {
 
   try {
     setAuditTurn(turnId);
-    await agent.run(message, controller.signal);
+    await agent.run(message, controller.signal, images);
     // The assistant's text was already streamed as "assistant" events by the
     // agent, so "done" only signals that the turn is over (avoids duplicates).
     // Whatever the model thought on the last step goes out first.
@@ -1165,7 +1185,8 @@ function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 2_000_000) req.destroy();
+      // Room for a few base64 images, but not an unbounded upload.
+      if (body.length > 24_000_000) req.destroy();
     });
     req.on("end", () => {
       try {
@@ -1921,15 +1942,27 @@ const server = http.createServer(async (req, res) => {
       case "POST /api/chat": {
         const body = await readJsonBody(req);
         const message = typeof body.message === "string" ? body.message.trim() : "";
-        if (!message) return json(res, 400, { error: "message is required" });
+        let images: ImageAttachment[] = [];
+        try {
+          images = normalizeImages(body.images);
+        } catch (error) {
+          return json(res, 400, { error: (error as Error).message });
+        }
+        if (!message && images.length === 0) return json(res, 400, { error: "message is required" });
+        if (images.length > 0 && !visionEnabled(getSettings())) {
+          return json(res, 400, {
+            error:
+              "image input is off for this model — set Settings → Image input to On, or switch to a vision model",
+          });
+        }
         // While a turn is running, a new message is queued instead of refused: the
         // user can line up the next jobs and leave. It starts when the turn ends.
         if (running) {
-          const item = enqueue(message);
+          const item = enqueue(message, images);
           if (!item) return json(res, 429, { error: `the queue is full (${MAX_QUEUE} waiting)` });
           return json(res, 202, { ok: true, queued: true, position: queue.length, id: item.id });
         }
-        void runAgent(message);
+        void runAgent(message, images);
         return json(res, 202, { ok: true });
       }
 

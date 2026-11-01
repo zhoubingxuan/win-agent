@@ -45,6 +45,11 @@ What that means in practice:
   another server switches the endpoint with it.
 - **Chat toolbar** — the working directory (with a folder picker), the endpoint and
   the model sit above the composer, one click each.
+- **Vision input** — paste or drop a screenshot into the chat, or let the
+  `ui screenshot` tool return the screen to the model. A three-stop **Image input**
+  slider (`off` / `auto` / `on`) decides whether images are sent; `auto` recognises
+  common vision model families, including local Qwen-VL, LLaVA and MiniCPM-V. See
+  [Image input](#image-input--screenshots-and-vision-models).
 - **Output detail** — another slider decides how much of the *process* the chat log
   shows: just the answers (the default — a 7B model's dozen tool calls stay out of the
   way), the answers plus the model's reasoning, or the whole machine room with every
@@ -162,8 +167,13 @@ Three tabs, all talking to the same local server over SSE.
 - A **detail** slider in the toolbar (the same one sits in Settings) decides how much
   of the process the log shows — see [Output detail](#output-detail). It is a view
   setting: the agent does exactly the same work at every level.
+- **Paste or drop an image** (or use the **＋** button) to attach up to four PNG,
+  JPEG or WebP images to one message. They are resized in the browser, shown as
+  thumbnails, and sent as OpenAI vision content parts. Click a thumbnail to enlarge
+  it. The `ui screenshot` tool attaches the screen the same way when image input is
+  on — see [Image input](#image-input--screenshots-and-vision-models).
 - Every tool call is a card you can expand to see its result (at the `+ tools & usage`
-  level).
+  level); a tool that returns an image also shows it in the card.
 - Destructive actions pop up **Approve / Deny** buttons (see *Safety*).
 - Enter sends, Shift+Enter makes a newline; example prompts are one click away.
 
@@ -195,6 +205,9 @@ A form for **every** setting, plus:
   [Measured model profile](#measured-model-profile--auto-without-the-name-game)).
 - **Output detail** — how much of the process the chat log shows (see
   [Output detail](#output-detail)).
+- **Image input** — the off / auto / on slider for screenshots and attached images,
+  with a line saying what `auto` resolved to for the current model (see
+  [Image input](#image-input--screenshots-and-vision-models)).
 - **Sandbox** — the folder fence and the command fence, on by default: file paths stay
   inside the working directory and a script is read before it runs (see
   [Sandbox](#sandbox)).
@@ -1063,6 +1076,58 @@ whitespace; `format: "json"` pretty-prints an API response instead.
 
 ---
 
+## Image input — screenshots and vision models
+
+The agent can **see** the screen, not only read text about it. There are two ways in:
+
+- **You** paste a screenshot into the chat (Win+Shift+S, then Ctrl+V), drop an image
+  file on the composer, or press **＋**. Up to four PNG/JPEG/WebP images can go with
+  one message. They are resized in the browser (longest side 1600 px) and stored with
+  the message, so a reload or a reopened conversation still shows them.
+- **The model** calls `ui` with `{"action":"screenshot"}`. The screen is saved as a
+  PNG (by default under `data/screenshots/`), a model-sized JPEG is made, and the
+  image is attached to the tool result. `"send_to_model": false` only saves the file.
+  The tool result itself stays text, followed by an image message — the shape every
+  OpenAI-compatible vision endpoint understands.
+
+The **Image input** slider in Settings has three stops:
+
+| Value | Meaning |
+| --- | --- |
+| `off` | Images are refused. A screenshot is still saved, but the model is told it was not attached. |
+| `auto` (default) | Send images only when the model id looks like a vision model: `vl`, `vision`, `llava`, `minicpm-v`, `pixtral`, `internvl`, `gemma3`, `gpt-4o`, `gpt-4.1`, `gpt-5`, `o3`/`o4`, `claude`, `gemini`, `grok-4`, and similar. |
+| `on` | Always send images. Use this for a local vision model whose name does not advertise it. |
+
+The same setting is `visionMode` in `data/settings.json`, `/set visionMode on` in the
+terminal, or `AGENT_VISION_MODE=auto|on|off`. `GET /api/state` also reports
+`settings.visionActive`, the resolved answer for the current endpoint and model.
+
+**What is sent:** an OpenAI `content` array with a text part and one `image_url` part
+per image (`data:image/...;base64,...`). MCP image resources and tool images follow
+the same path. The API accepts images directly:
+
+```powershell
+$img = [Convert]::ToBase64String([IO.File]::ReadAllBytes("shot.png"))
+Invoke-RestMethod -Method Post http://127.0.0.1:8787/api/chat `
+  -ContentType application/json `
+  -Body (@{ message = "What is wrong with this dialog?"; images = @(@{ mimeType = "image/png"; data = $img }) } | ConvertTo-Json -Depth 5)
+```
+
+**Limits and honesty:** one image may be 5 MB, all images in a message 12 MB, and
+four images per message. The bytes are sniffed, so a file that claims to be a PNG but
+is not is rejected. Images count against the context window (roughly 85–1600 tokens
+each); when a request would not fit, the context planner drops older images first and
+adds a note saying it did. The stored conversation keeps them.
+
+**Which local models?** LM Studio and llama.cpp expose vision through the same
+`/v1/chat/completions` shape. Load a vision model (for example
+`qwen/qwen2.5-vl-32b-instruct`, `llava`, `minicpm-v`, or `gemma-3-*`) and leave the
+slider on `auto`; if the model name is unusual, set it to `on`. Ollama's OpenAI
+compatibility endpoint accepts `image_url` in recent versions; an older Ollama that
+does not will answer with an error — update it, or use LM Studio.
+
+---
+
 ## Context window
 
 This is the difference between "a demo" and "usable with a 7B model". A tool result
@@ -1083,7 +1148,11 @@ win-agent measures **every request before sending it** and keeps it inside the w
    time, oldest first, never the system prompt and never the newest request. Tool
    calls and their results always travel together, so the model never sees a
    `tool_calls` without its reply.
-4. **The stored conversation is untouched.** Only the copy sent to the model shrinks,
+4. **Images are priced in.** A high-detail image is 85–1600 estimated tokens. If the
+   newest image alone still does not fit, older images are dropped first, then the
+   newest one, and a note in the text says the image was omitted — the request is
+   never sent over the window just because it has a screenshot in it.
+5. **The stored conversation is untouched.** Only the copy sent to the model shrinks,
    so the UI, `data/history.json` and the token totals keep everything.
 
 The sidebar shows `used / window` (amber past 75 %), Settings shows the same line with
@@ -1091,7 +1160,7 @@ where the number came from, and `/context` prints it in your language. When a re
 had to be trimmed you get a notice in the chat log:
 
 ```
-context trimmed to fit 2200 tokens: 1 older exchange(s) dropped — the stored conversation is unchanged
+context trimmed to fit 2200 tokens: 1 older exchange(s) dropped, 1 image(s) omitted — the stored conversation is unchanged
 ```
 
 > Practical advice: set `contextLimit` to your model's *actual* loaded window (LM Studio
@@ -1482,6 +1551,7 @@ with a message and nothing changes.
 | `loopGuard` | boolean | `true` | refuse a third identical call that already returned the same answer twice (see [Staying on the rails](#staying-on-the-rails)) |
 | `todoCheck` | boolean | `true` | refuse to end a turn while the model's own checklist still has open items, twice (see [The checklist](#the-checklist--what-the-model-owes-you)) |
 | `agentMode` | `"auto"` \| `"guided"` \| `"normal"` \| `"expert"` | `auto` | how much the model is supervised; `auto` prefers a measured profile, then resolves to `expert` for cloud endpoints and local models 14B+ (see [Agent modes](#agent-modes--auto-guided-normal-expert) and [Measured model profile](#measured-model-profile--auto-without-the-name-game)) |
+| `visionMode` | `"off"` \| `"auto"` \| `"on"` | `auto` | whether images are sent to the model; `auto` recognises common vision model names (see [Image input](#image-input--screenshots-and-vision-models)) |
 | `verbosity` | `"answer"` \| `"thinking"` \| `"full"` | `answer` | how much of the process the chat log shows (see [Output detail](#output-detail)) |
 | `auditLog` | boolean | `true` | append every change to `data/audit.jsonl` and keep the undo stack (see [Audit log and undo](#audit-log-and-undo)) |
 | `undoRetentionDays` | number | `7` | how long the copies in `data/undo/` are kept, 1–365 (see [Audit log and undo](#audit-log-and-undo)) |
@@ -1535,6 +1605,7 @@ on. Every variable is the upper-case setting name with an `AGENT_` prefix:
 | `AGENT_WORKDIR` | `workdir` | |
 | `AGENT_POWERSHELL` | `powershell` | `pwsh.exe` for PowerShell 7 |
 | `AGENT_MODE` | `agentMode` | `auto` / `guided` / `normal` / `expert` |
+| `AGENT_VISION_MODE` | `visionMode` | `off` / `auto` / `on` |
 | `AGENT_SANDBOX` | `sandbox` | `true` / `false` |
 | `AGENT_VERBOSITY` | `verbosity` | `answer` / `thinking` / `full` |
 | `AGENT_AUDIT_LOG` | `auditLog` | `true` / `false` |
@@ -1609,7 +1680,7 @@ Custom commands run arbitrary PowerShell, so they always require approval
 | `web` | search, fetch, download — internet access (see [Web access](#web-access--the-web-tool)) |
 | `scheduled_tasks` | list, info, create, delete, run |
 | `registry` | get, list, set, delete |
-| `ui` | clipboard_get, clipboard_set, screenshot, open, notify |
+| `ui` | clipboard_get, clipboard_set, screenshot (saved to disk and attached to the model when image input is on), open, notify |
 | `skills` | list, load, read — procedures from `data/skills/`, loaded only when a task matches (see [Skills](#skills)) |
 | `todo` | set, list, done, doing, reopen, clear — the model's own checklist, shown live in the chat (see [The checklist](#the-checklist--what-the-model-owes-you)) |
 | `powershell` | raw script escape hatch (always confirmed; with the sandbox on the script is read first and refused if a path leaves the folder) |
@@ -1764,7 +1835,7 @@ All endpoints are local-only (`127.0.0.1`). Useful for scripting your own front 
 | `GET` | `/api/fs/list` | `?path=<dir>` — sub-folders (and `parent`) for the chat folder picker; an empty `path` lists the drives. Directories only, no files |
 | `POST` | `/api/diagnose` | probe the endpoint and return `{ checks, context, verdict, text }` |
 | `POST` | `/api/profiles` | `{ action: "use"\|"save"\|"create"\|"remove", id, ... }` — manage endpoints |
-| `POST` | `/api/chat` | `{ message }` — start a task (results arrive on the event stream); while a turn is running the message is **queued** and answered with `{ ok, queued: true, position, id }` |
+| `POST` | `/api/chat` | `{ message, images? }` — start a task (results arrive on the event stream). `images` is an array of `{ mimeType, data, name?, width?, height? }`; `data` is base64 or a data URL. While a turn is running the message is **queued** and answered with `{ ok, queued: true, position, id }` |
 | `GET` | `/api/queue` | `{ items, running, limit }` — messages waiting for the running turn |
 | `POST` | `/api/queue` | `{ action: "remove", id }` or `{ action: "clear" }` — drop one or all queued messages |
 | `GET` | `/api/turns` | the last few turns with the files each changed (`{ turns: [{ id, time, at, files: [{ path, seq, action, tool, summary, undoable, restorable }] }] }`) |
@@ -1783,8 +1854,10 @@ Event types on `/api/events`: `user`, `assistant`, `delta`, `thinking`, `step`,
 
 `delta` carries one live piece of the answer (`{ text }`), `thinking` reports how much
 a reasoning model has thought so far (`{ chars }`), `stopped` means the user cancelled
-the turn, `context` reports the budget of a request that had to be trimmed
-(`{ estimatedTokens, limit, budget, droppedMessages, truncatedToolResults }`), and
+the turn, `user` and `tool_result` carry an optional `images` array (each image has
+`mimeType`, `data`, `name`, `width`, `height`), `context` reports the budget of a
+request that had to be trimmed
+(`{ estimatedTokens, limit, budget, droppedMessages, truncatedToolResults, droppedImages }`), and
 `turn` is sent when a turn ends with `{ turn }` — the files it changed and the
 checklist it ended with, ready for the card under the answer. `todo` carries the
 model's live checklist (`{ todos }`) every time it is written or ticked off.
@@ -1811,6 +1884,7 @@ src/
   skills.ts       data/skills/<name>/SKILL.md: the header block, the one-line prompt index, and reading a skill's files
   version.ts      reads the version from package.json (one source of truth)
   context.ts      token estimation + context budgeting (what to send, what to trim)
+  images.ts       image validation, byte sniffing, dimensions, data URLs, token cost
   providers.ts    endpoint compatibility memory + context-length discovery
   mcp.ts          MCP client: stdio + Streamable HTTP, tool discovery, call routing
   mcp-server.ts   MCP server: the same tools over stdio, for another agent (--mcp-server)

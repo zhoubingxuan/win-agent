@@ -1,4 +1,5 @@
 import type { ToolSchema } from "../llm.js";
+import type { ImageAttachment } from "../images.js";
 import { auditLog, type AuditEntry, type AuditInput } from "../audit.js";
 import { SandboxRefusal } from "../sandbox.js";
 import { parseToolArguments } from "../util/json.js";
@@ -24,9 +25,15 @@ export interface ToolContext {
   record(input: AuditInput): AuditEntry | null;
 }
 
+/** What a tool produced: text for the model, plus optional images it may see. */
+export interface ToolResult {
+  text: string;
+  images?: ImageAttachment[];
+}
+
 export interface Tool {
   schema: ToolSchema;
-  run(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
+  run(args: Record<string, unknown>, ctx: ToolContext): Promise<string | ToolResult>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -230,23 +237,23 @@ export class ToolRegistry {
     return null;
   }
 
-  /** Execute a tool by name. Errors are returned as text so the model can react. */
-  async execute(name: string, rawArguments: string): Promise<string> {
+  /** Execute a tool by name and keep any images it returns. */
+  async executeDetailed(name: string, rawArguments: string): Promise<ToolResult> {
     const hiddenBecause = this.hidden.get(name);
     if (hiddenBecause !== undefined) {
       const hint = hiddenBecause.hint ? ` ${hiddenBecause.hint}` : "";
-      return `Error: ${hiddenBecause.reason}.${hint}`;
+      return { text: `Error: ${hiddenBecause.reason}.${hint}` };
     }
     const tool = this.tools.get(name);
     if (!tool) {
       const suggestion = this.closestName(name);
       const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
-      return `Error: unknown tool "${name}".${hint} Available tools: ${this.names().join(", ")}`;
+      return { text: `Error: unknown tool "${name}".${hint} Available tools: ${this.names().join(", ")}` };
     }
 
     const parsed = parseToolArguments<Record<string, unknown>>(rawArguments);
     if (!parsed) {
-      return `Error: arguments for "${name}" were not valid JSON: ${rawArguments}`;
+      return { text: `Error: arguments for "${name}" were not valid JSON: ${rawArguments}` };
     }
     const args = parsed.value;
 
@@ -260,12 +267,18 @@ export class ToolRegistry {
     };
 
     try {
-      return await tool.run(args, ctx);
+      const result = await tool.run(args, ctx);
+      return typeof result === "string" ? { text: result } : result;
     } catch (error) {
       // A path outside the sandbox is a refusal, not a failure: the model has to
       // change the path, not retry the same one (see src/sandbox.ts).
-      if (error instanceof SandboxRefusal) return `Refused: ${error.message}`;
-      return `Error: ${(error as Error).message}`;
+      if (error instanceof SandboxRefusal) return { text: `Refused: ${error.message}` };
+      return { text: `Error: ${(error as Error).message}` };
     }
+  }
+
+  /** Execute a tool by name. Errors are returned as text so the model can react. */
+  async execute(name: string, rawArguments: string): Promise<string> {
+    return (await this.executeDetailed(name, rawArguments)).text;
   }
 }

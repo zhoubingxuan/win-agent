@@ -111,6 +111,10 @@ function registry(answer) {
       },
     ],
     describe: () => "- ping: a test tool (argument: x)",
+    executeDetailed: async (name, raw) => {
+      calls.push({ name, args: raw });
+      return { text: await answer(name, raw, calls.length) };
+    },
     execute: async (name, raw) => {
       calls.push({ name, args: raw });
       return answer(name, raw, calls.length);

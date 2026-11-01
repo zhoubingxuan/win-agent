@@ -1,4 +1,5 @@
 import type { ChatMessage } from "./llm.js";
+import { estimateImageTokens } from "./images.js";
 
 /**
  * Context budgeting.
@@ -37,6 +38,7 @@ export function measure(messages: ChatMessage[], extraTokens = 0): number {
     if (message.tool_calls && message.tool_calls.length > 0) {
       total += estimateTokens(JSON.stringify(message.tool_calls));
     }
+    for (const image of message.images ?? []) total += estimateImageTokens(image);
   }
   return total;
 }
@@ -54,6 +56,8 @@ export interface ContextStats {
   droppedMessages: number;
   /** Tool results that were shortened. */
   truncatedToolResults: number;
+  /** Images removed because the window could not hold them. */
+  droppedImages: number;
 }
 
 export interface ContextResult {
@@ -117,6 +121,7 @@ export function planContext(messages: ChatMessage[], options: PlanOptions = {}):
   let list: ChatMessage[] = messages.map((message) => ({ ...message }));
   let truncatedToolResults = 0;
   let droppedMessages = 0;
+  let droppedImages = 0;
 
   // 1. Squeeze oversized tool results - cheap and keeps the conversation shape.
   for (const message of list) {
@@ -148,6 +153,35 @@ export function planContext(messages: ChatMessage[], options: PlanOptions = {}):
         }
       }
     }
+
+    // 4. Images are expensive. Keep the newest one (the model is about to look
+    //    at it) and drop the older ones before dropping the whole exchange.
+    if (measure(list, extraTokens) > budget) {
+      let keptNewest = false;
+      for (let index = list.length - 1; index >= 0; index--) {
+        const message = list[index];
+        if (!message.images || message.images.length === 0) continue;
+        if (!keptNewest) {
+          keptNewest = true;
+          continue;
+        }
+        const count = message.images.length;
+        droppedImages += count;
+        message.images = undefined;
+        message.content = `${message.content ?? ""}\n[${count} older image(s) omitted to fit the context window]`.trim();
+      }
+    }
+
+    // 5. Even the newest image may not fit. Drop it too rather than send a
+    //    request the endpoint will reject.
+    if (measure(list, extraTokens) > budget) {
+      for (const message of list) {
+        if (!message.images || message.images.length === 0) continue;
+        droppedImages += message.images.length;
+        message.images = undefined;
+        message.content = `${message.content ?? ""}\n[image omitted to fit the context window]`.trim();
+      }
+    }
   }
 
   const estimatedTokens = measure(list, extraTokens);
@@ -157,9 +191,10 @@ export function planContext(messages: ChatMessage[], options: PlanOptions = {}):
       estimatedTokens,
       limit: limit && limit > 0 ? limit : null,
       budget,
-      trimmed: droppedMessages > 0 || truncatedToolResults > 0,
+      trimmed: droppedMessages > 0 || truncatedToolResults > 0 || droppedImages > 0,
       droppedMessages,
       truncatedToolResults,
+      droppedImages,
     },
   };
 }
