@@ -13,6 +13,26 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+### Added
+
+- **Desktop control in the `ui` tool.** The agent can now move the pointer, click
+  (left/right/middle, 1–3 clicks), type Unicode text, press key combinations, scroll,
+  list top-level windows with their handles and bounds, focus a window, and wait for an
+  app to catch up. Typing uses `SendInput` with Unicode key events, so Chinese text and
+  emoji do not go through the clipboard.
+- **Screenshot coordinates now make sense.** A screenshot result reports the virtual
+  screen size and the scale of the model-sized image, so a click coordinate taken from
+  the attached image can be converted to screen pixels instead of guessing.
+- **Desktop actions can target a window directly.** `click`, `type`, `key` and `scroll`
+  accept `window` (title substring) or `handle` (from `window_list`) and focus that
+  window inside the same PowerShell call. This avoids the race where a separate
+  `window_focus` succeeds but the next hidden PowerShell hands the foreground back to
+  the previous app, so the keystroke lands nowhere.
+- **Desktop actions are approval-gated.** `click`, `type`, `key`, `scroll` and
+  `window_focus` ask first unless `autoApprove` is on; `dryRun` describes them. The
+  approval summary for typing does not echo the text, so a password is not shown in the
+  card.
+
 ## [2.6.1] — 2026-11-07
 
 ### Fixed

@@ -15,3 +15,6 @@ data/
 # Local environment
 .env
 .env.local
+
+# Release archives are uploaded as GitHub release assets, not committed.
+versions/*.tar.gz

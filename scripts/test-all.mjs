@@ -17,6 +17,7 @@ const SUITES = [
   ["mcp-server", "scripts/test-mcp-server.mjs", true],
   ["secrets", "scripts/test-secrets.mjs", true],
   ["vision", "scripts/test-vision.mjs", true],
+  ["ui", "scripts/test-ui.mjs", true],
   ["models", "scripts/test-models.mjs", true],
   ["mode", "scripts/test-mode.mjs", true],
   ["model", "scripts/test-model-profile.mjs", true],

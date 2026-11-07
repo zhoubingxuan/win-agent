@@ -1128,6 +1128,50 @@ does not will answer with an error — update it, or use LM Studio.
 
 ---
 
+## Desktop control — click, type, keys and windows
+
+The `ui` tool is not only a clipboard and a screenshot button. It can drive the
+desktop the way a person does, while keeping every state-changing action behind the
+normal approval card:
+
+| Action | What it does |
+| --- | --- |
+| `window_list` | List visible top-level windows: handle, process, title and screen bounds. |
+| `window_focus` | Bring a window to the front by `title` substring or exact `handle`. Minimised windows are restored. |
+| `screenshot` | Capture the virtual screen; the result now says the screen size and the scale of the attached image. |
+| `move` | Move the pointer to screen `x`,`y`. |
+| `click` | Click at screen `x`,`y`; `button` is `left` / `right` / `middle`, `clicks` is 1–3 (use 2 for a double-click). Omit both coordinates to click where the pointer already is. |
+| `type` | Type Unicode text into the active window (newlines become Enter, tabs become Tab). The clipboard is not touched. |
+| `key` | Press a combination such as `ctrl+s`, `alt+tab`, `win+r`, `f5` or `enter`. Use `plus` for the `+` key. |
+| `scroll` | Turn the wheel; positive `amount` scrolls up, negative down. Optional `x`,`y` put the pointer there first. |
+| `wait` | Pause for `ms` milliseconds (0–60000), e.g. while an app opens. |
+
+**The workflow that actually works:** `window_list` → `screenshot` → `click` /
+`type` / `key` with `window` or `handle` → `screenshot` again to check. The action
+itself focuses the named window in the same PowerShell call; doing `window_focus`
+separately is not enough, because starting the next hidden PowerShell can hand the
+foreground back to the previous app and the keystroke lands nowhere. The screenshot
+is scaled to at most 1600 px for the model, so the tool result includes the screen
+size and the multiplier: if a 2560-pixel-wide screen comes back as a 1600-pixel
+image, multiply the coordinates you see by 1.60 before calling `click`.
+
+```json
+{"action":"window_list"}
+{"action":"window_focus","title":"Notepad"}
+{"action":"type","text":"Hello from win-agent","window":"Notepad"}
+{"action":"key","key":"ctrl+s","window":"Notepad"}
+{"action":"click","x":640,"y":420,"button":"left","clicks":1,"window":"Notepad"}
+```
+
+`click`, `type`, `key`, `scroll` and `window_focus` ask for approval unless
+`autoApprove` is on; `dryRun` describes the action instead of doing it. `move` and
+`wait` are not state-changing and do not ask. The tool cannot type into a UAC secure
+desktop, and a non-elevated agent cannot drive an elevated window — Windows blocks
+that by design. If `window_focus` says it could not switch, click the window once
+yourself and try again.
+
+---
+
 ## Context window
 
 This is the difference between "a demo" and "usable with a 7B model". A tool result
@@ -1680,7 +1724,7 @@ Custom commands run arbitrary PowerShell, so they always require approval
 | `web` | search, fetch, download — internet access (see [Web access](#web-access--the-web-tool)) |
 | `scheduled_tasks` | list, info, create, delete, run |
 | `registry` | get, list, set, delete |
-| `ui` | clipboard_get, clipboard_set, screenshot (saved to disk and attached to the model when image input is on), open, notify |
+| `ui` | clipboard_get, clipboard_set, screenshot (saved to disk and attached to the model when image input is on), open, notify, move, click, type, key, scroll, window_list, window_focus, wait |
 | `skills` | list, load, read — procedures from `data/skills/`, loaded only when a task matches (see [Skills](#skills)) |
 | `todo` | set, list, done, doing, reopen, clear — the model's own checklist, shown live in the chat (see [The checklist](#the-checklist--what-the-model-owes-you)) |
 | `powershell` | raw script escape hatch (always confirmed; with the sandbox on the script is read first and refused if a path leaves the folder) |

@@ -241,9 +241,10 @@ ask for approval.
 
 ---
 
-## `ui` — clipboard, screenshot, open, notify
+## `ui` — clipboard, screenshot, desktop control, windows
 
 > "What is on my clipboard? Put the answer there too." · "剪贴板里是什么？"
+> "Open Notepad, type a note and save it." · "打开记事本，写一句话并保存。"
 
 ```json
 {"name":"ui","arguments":{"action":"clipboard_get"}}
@@ -256,8 +257,27 @@ ask for approval.
 {"action":"notify","title":"win-agent","text":"Task finished"}
 ```
 
-`screenshot` needs a visible desktop session; `open` uses Explorer, so it also works for
-folders and documents.
+Desktop control uses **screen pixels**, not image pixels. `screenshot` returns the
+screen size and the scale of the attached image, so a 1600-pixel-wide image of a
+2560-pixel screen needs its coordinates multiplied by 1.60.
+
+```json
+{"action":"window_list"}
+{"action":"window_focus","title":"Notepad"}
+{"action":"type","text":"Hello from win-agent","window":"Notepad"}
+{"action":"key","key":"ctrl+s","window":"Notepad"}
+{"action":"click","x":640,"y":420,"button":"left","clicks":1,"window":"Notepad"}
+{"action":"scroll","amount":-3,"window":"Notepad"}
+{"action":"wait","ms":500}
+```
+
+Pass `window` (title substring) or `handle` (from `window_list`) to `click`, `type`,
+`key` or `scroll` when the action must land in a specific app. The tool focuses that
+window inside the same PowerShell call; a separate `window_focus` can be undone when
+the next hidden PowerShell starts. `click`, `type`, `key`, `scroll` and
+`window_focus` ask for approval unless `autoApprove` is on; `dryRun` describes them
+instead. `screenshot` needs a visible desktop session; `open` uses Explorer, so it
+also works for folders and documents.
 
 ---
 
