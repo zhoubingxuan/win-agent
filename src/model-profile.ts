@@ -19,7 +19,7 @@ import { decodeText } from "./util/text.js";
  * returns that model to the old name-based heuristic.
  */
 
-export const MODEL_PROFILE_VERSION = 1;
+export const MODEL_PROFILE_VERSION = 2;
 
 /** One task's result, kept for the UI so a score can be explained. */
 export interface ModelCheck {

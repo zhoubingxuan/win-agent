@@ -2182,6 +2182,10 @@ Baseline (`data/eval/*.json` keeps every result):
 | `qwen3.6-35b-a3b` | guided | files (26) | 24/26 | 3.8 min | 570 729 |
 | `qwen3-coder-30b-a3b-instruct-ud` (2.2.0) | guided | **all (34)** | 33/34 | 2.4 min | 2 019 969 |
 | `qwen3-coder-30b-a3b-instruct-ud` (2.3.0) | expert | **all (34)** | **34/34** | 3.2 min | **1 108 490** |
+| `deepseek-v4.1-flash` (2.6.1) | expert | **all (34)** | **34/34** | 19.2 min | 751 736 |
+
+The V4.1 run used a local Strata endpoint with an 8 192-token context; the 19.2
+minutes are the endpoint's speed, not a regression in the agent.
 
 In the guided full run the coder passed **26/26** files tasks (1 030 130 tokens) and
 **7/8** code tasks (989 839 tokens). The one miss is `code_import_error`: it changed

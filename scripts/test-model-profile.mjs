@@ -132,7 +132,11 @@ section("saving, finding and deleting");
   check("a trailing slash still finds it", profiles.findModelProfile(`${base}/`, model)?.score === 86);
   check("a different model is not found", profiles.findModelProfile(base, "other") === null);
   check("the file has no BOM", fs.readFileSync(path.join(data, "model-profiles.json"))[0] === 0x7b);
-  check("the JSON is an object with a version", JSON.parse(fs.readFileSync(path.join(data, "model-profiles.json"), "utf8")).version === 1);
+  check(
+    "the JSON is an object with a version",
+    JSON.parse(fs.readFileSync(path.join(data, "model-profiles.json"), "utf8")).version ===
+      profiles.MODEL_PROFILE_VERSION,
+  );
 
   const updated = profiles.saveModelProfile(sample({ score: 100, passed: 7 }));
   check("saving the same key updates in place", profiles.loadModelProfiles().length === 1);

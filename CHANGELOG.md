@@ -13,6 +13,26 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.6.1] — 2026-11-07
+
+### Fixed
+
+- **The model probe's `recover` task no longer fails a correct recovery.** The
+  prompt said "create it with the exact content recovered", which a capable model
+  can read as "the content you recovered from somewhere" and answer by asking for
+  the missing text (or by creating an empty file). It now asks for the literal word
+  `"recovered"`, so the task tests recovery from the missing-file error instead of
+  guessing what the model thought the sentence meant. `MODEL_PROFILE_VERSION` is
+  now `2`, so measurements made with the old wording are ignored rather than used
+  to pick a mode.
+
+### Changed
+
+- **V4.1 baseline added to the README.** `deepseek-v4.1-flash` (local Strata
+  endpoint, 8 192-token context) passed all **34/34** eval tasks in `expert` mode:
+  19.2 minutes, 751 736 tokens, 136 tool calls. Its measured model profile also
+  recommends `expert`.
+
 ## [2.6.0] — 2026-11-01
 
 The agent can now **see** — a pasted screenshot or an image returned by the

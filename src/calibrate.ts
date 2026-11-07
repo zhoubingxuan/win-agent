@@ -161,9 +161,12 @@ const TASKS: ProbeTask[] = [
     },
     prompt:
       "Read probe-missing.txt with the files tool. If it does not exist, create it with " +
-      "the exact content recovered, then read it back and answer RECOVERED.",
+      'the exact content "recovered" (that literal word, no newline), then read it back ' +
+      "and answer RECOVERED.",
     verify(dir, run) {
-      const text = read(dir, "probe-missing.txt");
+      const file = path.join(dir, "probe-missing.txt");
+      const exists = fs.existsSync(file);
+      const text = exists ? fs.readFileSync(file, "utf8") : "";
       const sawError = run.toolResults.some((result) => /^Error:|does not exist|not found/i.test(result));
       return {
         ok: text === "recovered" && sawError,
@@ -172,7 +175,9 @@ const TASKS: ProbeTask[] = [
             ? sawError
               ? "read failed, then the file was created"
               : "created without reacting to the missing-file error"
-            : `file contains ${JSON.stringify(text.slice(0, 120))}`,
+            : !exists
+              ? "the file was not created"
+              : `file contains ${JSON.stringify(text.slice(0, 120))}`,
       };
     },
   },
