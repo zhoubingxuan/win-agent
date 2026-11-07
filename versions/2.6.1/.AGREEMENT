@@ -1,0 +1,30 @@
+win-agent — AGREEMENT
+Copyright 2026 zhoubingxuan
+https://github.com/zhoubingxuan/win-agent
+
+This is the standalone copy of the terms that govern this software and anything
+built on top of it. It says the same thing as LICENSE (the Apache License 2.0),
+NOTICE and the ecosystem notice at the top of README.md. If they ever disagree,
+LICENSE governs.
+
+1. USE
+   win-agent is released under the Apache License, Version 2.0 — see LICENSE.
+   You are highly encouraged to use, modify, fork and redistribute it, for
+   commercial and open-source projects alike.
+
+2. ATTRIBUTION REQUIREMENT
+   If you build derivative plugins, forks, extensions or projects based on this
+   work, you are required to explicitly credit the original author in your
+   project's README, documentation or user interface, naming the GitHub account
+   zhoubingxuan (https://github.com/zhoubingxuan). Apache 2.0 §4(d) makes the
+   contents of the NOTICE file part of any redistribution of this software.
+
+3. DEVELOPMENT RULE
+   Any development carried out on top of this framework must keep that
+   attribution — the GitHub account name zhoubingxuan — in place. Building on
+   win-agent does not remove the credit.
+
+4. WHERE THIS FILE LIVES
+   Every released version is copied, complete and runnable, into
+   versions/<version>/. This agreement travels with each of those copies, so a
+   framework taken from any version folder still carries it.

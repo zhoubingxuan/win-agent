@@ -1,0 +1,9 @@
+{
+  "name": "win-agent",
+  "version": "2.6.1",
+  "createdAt": "2026-11-07T13:21:31.669Z",
+  "node": ">=20.3",
+  "files": 107,
+  "bytes": 1706137,
+  "note": "prompt said \"create it with the exact content recovered\", which a capable model can read as \"the content you recovered from somewhere\" and answer by asking for"
+}
