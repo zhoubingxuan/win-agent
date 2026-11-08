@@ -123,6 +123,7 @@ export function parseKeyCombo(combo: string): number[] {
 /** The C# helpers shared by every desktop action. One PowerShell process per call. */
 const WIN_UI_TYPE = String.raw`
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
 public static class WinAgentUi {
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
@@ -132,13 +133,24 @@ public static class WinAgentUi {
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attach, uint attachTo, bool on);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
-  [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr hWnd, bool altTab);
   [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll", SetLastError = true)] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int index);
   [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint count, INPUT[] inputs, int size);
+
+  public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+  public static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
+  public const uint SWP_NOSIZE = 0x0001;
+  public const uint SWP_NOMOVE = 0x0002;
+  public const uint SWP_NOACTIVATE = 0x0010;
+  public const uint SWP_SHOWWINDOW = 0x0040;
+  public const int GWL_EXSTYLE = -20;
+  public const int WS_EX_TOPMOST = 0x00000008;
 
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
@@ -194,35 +206,104 @@ public static class WinAgentUi {
     mouse_event(0x0800, 0, 0, amount * 120, UIntPtr.Zero);
   }
 
+  public static void Center(IntPtr hWnd) {
+    RECT rect;
+    if (GetWindowRect(hWnd, out rect)) {
+      SetCursorPos(rect.Left + (rect.Right - rect.Left) / 2, rect.Top + (rect.Bottom - rect.Top) / 2);
+    }
+  }
+
+  // Put a window above other apps without activating it. A title-bar click can
+  // then activate it even when the Windows foreground lock refuses
+  // SetForegroundWindow. Keep it topmost until after the click, then restore.
+  public static bool MakeTopmost(IntPtr hWnd) {
+    bool wasTopmost = (GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    return wasTopmost;
+  }
+
+  public static void RestoreTopmost(IntPtr hWnd, bool wasTopmost) {
+    if (!wasTopmost) {
+      SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+  }
+
   public static bool IsForeground(IntPtr hWnd) {
     return GetForegroundWindow() == hWnd;
   }
 
+  public static bool IsTopmost(IntPtr hWnd) {
+    return (GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+  }
+
+  public static string Describe(IntPtr hWnd) {
+    if (hWnd == IntPtr.Zero) return "none";
+    StringBuilder text = new StringBuilder(256);
+    GetWindowText(hWnd, text, text.Capacity);
+    return hWnd.ToInt64().ToString() + ":" + text.ToString();
+  }
+
   public static string Focus(IntPtr hWnd) {
+    return Focus(hWnd, false);
+  }
+
+  public static string Focus(IntPtr hWnd, bool keepTopmost) {
     if (IsIconic(hWnd)) ShowWindow(hWnd, 9);
+    bool wasTopmost = IsTopmost(hWnd);
+    // Do not click a window that is already active: the title-bar click would
+    // move focus away from the edit control the previous click just selected.
+    if (IsForeground(hWnd)) {
+      if (keepTopmost) MakeTopmost(hWnd);
+      return "focused";
+    }
+
+    // Keep the target above other apps until the click has activated it. This
+    // also works when another app is topmost; restoring the flag immediately
+    // would let that app cover the title bar again before the click.
+    MakeTopmost(hWnd);
+    BringWindowToTop(hWnd);
+
+    // A real click on the title bar is the most reliable way to activate a
+    // window from a background process. SetForegroundWindow is often refused
+    // by the Windows foreground lock; a mouse click is genuine user input and
+    // also restores the window's last focused child control.
+    RECT rect;
+    if (GetWindowRect(hWnd, out rect)) {
+      int width = rect.Right - rect.Left;
+      if (width > 20) {
+        SetCursorPos(rect.Left + width / 2, rect.Top + 12);
+        mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(250);
+        if (IsForeground(hWnd)) {
+          if (!keepTopmost) RestoreTopmost(hWnd, wasTopmost);
+          return "focused";
+        }
+      }
+    }
+
+    // Fallback for a covered title bar or a borderless window. Attach the
+    // *foreground* thread to this thread (the order used by the usual
+    // SetForegroundWindow workaround), then use the synthetic-Alt trick.
     uint pid;
     uint currentThread = GetCurrentThreadId();
-    uint targetThread = GetWindowThreadProcessId(hWnd, out pid);
     IntPtr foreground = GetForegroundWindow();
     uint foregroundThread = foreground == IntPtr.Zero ? 0 : GetWindowThreadProcessId(foreground, out pid);
-    // SetForegroundWindow is refused when the caller is not the foreground
-    // process. Attach this thread to both the old foreground thread and the
-    // target thread, then use the synthetic-Alt trick and SwitchToThisWindow.
-    bool attachForeground =
+    bool attached =
       foregroundThread != 0 && foregroundThread != currentThread &&
-      AttachThreadInput(currentThread, foregroundThread, true);
-    bool attachTarget =
-      targetThread != 0 && targetThread != currentThread &&
-      AttachThreadInput(currentThread, targetThread, true);
+      AttachThreadInput(foregroundThread, currentThread, true);
     keybd_event(0x12, 0, 0, UIntPtr.Zero);
     BringWindowToTop(hWnd);
+    MakeTopmost(hWnd);
     ShowWindow(hWnd, 5);
-    SwitchToThisWindow(hWnd, true);
     SetForegroundWindow(hWnd);
     keybd_event(0x12, 0, 2, UIntPtr.Zero);
-    if (attachTarget) AttachThreadInput(currentThread, targetThread, false);
-    if (attachForeground) AttachThreadInput(currentThread, foregroundThread, false);
-    return IsForeground(hWnd) ? "focused" : "could not focus (Windows refused the foreground switch)";
+    if (attached) AttachThreadInput(foregroundThread, currentThread, false);
+    bool focused = IsForeground(hWnd);
+    if (!keepTopmost || !focused) RestoreTopmost(hWnd, wasTopmost);
+    return focused
+      ? "focused"
+      : "could not focus (foreground=" + Describe(GetForegroundWindow()) + ", target=" + Describe(hWnd) + ")";
   }
 }
 `;
@@ -295,16 +376,42 @@ function focusLines(handle?: string, title?: string): string[] {
   return [
     `$target = ${windowTarget(handle, title)}`,
     `if (-not $target) { throw ${psQuote(`window not found: ${handle ?? title}`)} }`,
-    "$result = [WinAgentUi]::Focus($target.MainWindowHandle)",
+    "$wasTopmost = [WinAgentUi]::IsTopmost($target.MainWindowHandle)",
+    "$result = [WinAgentUi]::Focus($target.MainWindowHandle, $true)",
     "if ($result -ne 'focused') {",
-    "  $shell = New-Object -ComObject WScript.Shell",
-    "  [void]$shell.AppActivate($target.Id)",
-    "  Start-Sleep -Milliseconds 250",
-    "  if ([WinAgentUi]::IsForeground($target.MainWindowHandle)) { $result = 'focused' }",
+    "  Start-Sleep -Milliseconds 400",
+    "  $result = [WinAgentUi]::Focus($target.MainWindowHandle, $true)",
+    "  if ($result -ne 'focused') {",
+    "    $shell = New-Object -ComObject WScript.Shell",
+    "    [void]$shell.AppActivate($target.Id)",
+    "    Start-Sleep -Milliseconds 250",
+    "    if ([WinAgentUi]::IsForeground($target.MainWindowHandle)) {",
+    "      $result = 'focused'",
+    "      [void][WinAgentUi]::MakeTopmost($target.MainWindowHandle)",
+    "    }",
+    "  }",
     "}",
-    "if ($result -ne 'focused') { throw 'could not focus window' }",
+    'if ($result -ne \'focused\') { throw "could not focus window: $result" }',
     "Start-Sleep -Milliseconds 120",
   ];
+}
+
+/**
+ * Wrap an action in focus + topmost raise + restore. Keeping the target topmost
+ * through the click/keystroke also works when a topmost window covers it; the
+ * original topmost state is restored in `finally`, even if the action throws.
+ */
+function withWindowFocus(handle: string | undefined, title: string | undefined, body: string[]): string {
+  const focus = focusLines(handle, title);
+  if (focus.length === 0) return body.join("\n");
+  return [
+    ...focus,
+    "try {",
+    ...body.map((line) => `  ${line}`),
+    "} finally {",
+    "  [WinAgentUi]::RestoreTopmost($target.MainWindowHandle, $wasTopmost)",
+    "}",
+  ].join("\n");
 }
 
 function screenshotText(out: string, screen: ScreenBounds | null, image?: { width?: number; height?: number }): string {
@@ -358,8 +465,16 @@ export const uiTool: Tool = {
             type: "boolean",
             description: "For screenshot: attach the image to the conversation (default true).",
           },
-          x: { type: "integer", description: "Screen x coordinate for move, click or scroll." },
-          y: { type: "integer", description: "Screen y coordinate for move, click or scroll." },
+          x: {
+            type: "integer",
+            description:
+              "Screen x coordinate for move, click or scroll; for type/key it is an optional point to click first.",
+          },
+          y: {
+            type: "integer",
+            description:
+              "Screen y coordinate for move, click or scroll; for type/key it is an optional point to click first.",
+          },
           button: {
             type: "string",
             enum: ["left", "right", "middle"],
@@ -520,10 +635,9 @@ export const uiTool: Tool = {
         if (!(await ctx.approve(`click ${button} ${clicks} time(s) at ${where}`))) return "Cancelled by user.";
         await runPs(
           winUiScript(
-            [
-              ...focusLines(handle, window),
+            withWindowFocus(handle, window, [
               `[WinAgentUi]::Click(${hasX ? Math.round(x) : 0}, ${hasY ? Math.round(y) : 0}, ${hasX ? "$true" : "$false"}, ${psQuote(button)}, ${clicks})`,
-            ].join("\n"),
+            ]),
           ),
         );
         return `Clicked ${button} ${clicks} time(s) at ${where}.`;
@@ -534,14 +648,19 @@ export const uiTool: Tool = {
         const handle = argOpt(args, "handle")?.trim();
         const window = argOpt(args, "window")?.trim();
         const target = handle ? `window handle ${handle}` : window ? `window "${window}"` : "the active window";
-        if (ctx.dryRun) return `DRY RUN: would type ${text.length} characters into ${target}.`;
-        if (!(await ctx.approve(`type text into ${target}`))) return "Cancelled by user.";
-        await runPs(
-          winUiScript(
-            [...focusLines(handle, window), `[WinAgentUi]::TypeText(${psQuote(text)})`].join("\n"),
-          ),
-        );
-        return `Typed ${text.length} characters into ${target}.`;
+        const x = argNum(args, "x", Number.NaN);
+        const y = argNum(args, "y", Number.NaN);
+        const hasX = Number.isFinite(x);
+        const hasY = Number.isFinite(y);
+        if (hasX !== hasY) throw new Error("type needs both x and y, or neither");
+        const point = hasX ? ` after clicking ${Math.round(x)},${Math.round(y)}` : "";
+        if (ctx.dryRun) return `DRY RUN: would type ${text.length} characters into ${target}${point}.`;
+        if (!(await ctx.approve(`type text into ${target}${point}`))) return "Cancelled by user.";
+        const body: string[] = [];
+        if (hasX) body.push(`[WinAgentUi]::Click(${Math.round(x)}, ${Math.round(y)}, $true, 'left', 1)`);
+        body.push(`[WinAgentUi]::TypeText(${psQuote(text)})`);
+        await runPs(winUiScript(withWindowFocus(handle, window, body)));
+        return `Typed ${text.length} characters into ${target}${point}.`;
       }
 
       case "key": {
@@ -550,14 +669,19 @@ export const uiTool: Tool = {
         const handle = argOpt(args, "handle")?.trim();
         const window = argOpt(args, "window")?.trim();
         const target = handle ? `window handle ${handle}` : window ? `window "${window}"` : "the active window";
-        if (ctx.dryRun) return `DRY RUN: would press ${combo} in ${target}.`;
-        if (!(await ctx.approve(`press ${combo} in ${target}`))) return "Cancelled by user.";
-        await runPs(
-          winUiScript(
-            [...focusLines(handle, window), `[WinAgentUi]::PressKeys([int[]]@(${keys.join(",")}))`].join("\n"),
-          ),
-        );
-        return `Pressed ${combo} in ${target}.`;
+        const x = argNum(args, "x", Number.NaN);
+        const y = argNum(args, "y", Number.NaN);
+        const hasX = Number.isFinite(x);
+        const hasY = Number.isFinite(y);
+        if (hasX !== hasY) throw new Error("key needs both x and y, or neither");
+        const point = hasX ? ` after clicking ${Math.round(x)},${Math.round(y)}` : "";
+        if (ctx.dryRun) return `DRY RUN: would press ${combo} in ${target}${point}.`;
+        if (!(await ctx.approve(`press ${combo} in ${target}${point}`))) return "Cancelled by user.";
+        const body: string[] = [];
+        if (hasX) body.push(`[WinAgentUi]::Click(${Math.round(x)}, ${Math.round(y)}, $true, 'left', 1)`);
+        body.push(`[WinAgentUi]::PressKeys([int[]]@(${keys.join(",")}))`);
+        await runPs(winUiScript(withWindowFocus(handle, window, body)));
+        return `Pressed ${combo} in ${target}${point}.`;
       }
 
       case "scroll": {
@@ -578,10 +702,11 @@ export const uiTool: Tool = {
         if (!(await ctx.approve(`scroll ${direction} ${Math.abs(amount)} notch(es)${where}`))) {
           return "Cancelled by user.";
         }
-        const move = hasX ? `[WinAgentUi]::SetCursorPos(${Math.round(x)}, ${Math.round(y)}) | Out-Null\n` : "";
-        await runPs(
-          winUiScript([...focusLines(handle, window), `${move}[WinAgentUi]::Scroll(${amount})`].join("\n")),
-        );
+        const body: string[] = [];
+        if (hasX) body.push(`[WinAgentUi]::SetCursorPos(${Math.round(x)}, ${Math.round(y)}) | Out-Null`);
+        else if (handle || window) body.push("[WinAgentUi]::Center($target.MainWindowHandle)");
+        body.push(`[WinAgentUi]::Scroll(${amount})`);
+        await runPs(winUiScript(withWindowFocus(handle, window, body)));
         return `Scrolled ${direction} ${Math.abs(amount)} notch(es)${where}.`;
       }
 
@@ -618,10 +743,14 @@ export const uiTool: Tool = {
               `if (-not $target) { throw ${psQuote(`window not found: ${handle ?? title}`)} }`,
               "$result = [WinAgentUi]::Focus($target.MainWindowHandle)",
               "if ($result -ne 'focused') {",
-              "  $shell = New-Object -ComObject WScript.Shell",
-              "  [void]$shell.AppActivate($target.Id)",
-              "  Start-Sleep -Milliseconds 250",
-              "  if ([WinAgentUi]::IsForeground($target.MainWindowHandle)) { $result = 'focused' }",
+              "  Start-Sleep -Milliseconds 400",
+              "  $result = [WinAgentUi]::Focus($target.MainWindowHandle)",
+              "  if ($result -ne 'focused') {",
+              "    $shell = New-Object -ComObject WScript.Shell",
+              "    [void]$shell.AppActivate($target.Id)",
+              "    Start-Sleep -Milliseconds 250",
+              "    if ([WinAgentUi]::IsForeground($target.MainWindowHandle)) { $result = 'focused' }",
+              "  }",
               "}",
               "[pscustomobject]@{ handle = $target.MainWindowHandle.ToInt64().ToString(); process = $target.ProcessName; title = $target.MainWindowTitle; result = $result } | ConvertTo-Json -Compress",
             ].join("\n"),

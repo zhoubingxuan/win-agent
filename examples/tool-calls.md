@@ -264,8 +264,8 @@ screen size and the scale of the attached image, so a 1600-pixel-wide image of a
 ```json
 {"action":"window_list"}
 {"action":"window_focus","title":"Notepad"}
-{"action":"type","text":"Hello from win-agent","window":"Notepad"}
-{"action":"key","key":"ctrl+s","window":"Notepad"}
+{"action":"type","text":"Hello from win-agent","window":"Notepad","x":640,"y":420}
+{"action":"key","key":"ctrl+s","window":"Notepad","x":640,"y":420}
 {"action":"click","x":640,"y":420,"button":"left","clicks":1,"window":"Notepad"}
 {"action":"scroll","amount":-3,"window":"Notepad"}
 {"action":"wait","ms":500}
@@ -273,11 +273,14 @@ screen size and the scale of the attached image, so a 1600-pixel-wide image of a
 
 Pass `window` (title substring) or `handle` (from `window_list`) to `click`, `type`,
 `key` or `scroll` when the action must land in a specific app. The tool focuses that
-window inside the same PowerShell call; a separate `window_focus` can be undone when
-the next hidden PowerShell starts. `click`, `type`, `key`, `scroll` and
-`window_focus` ask for approval unless `autoApprove` is on; `dryRun` describes them
-instead. `screenshot` needs a visible desktop session; `open` uses Explorer, so it
-also works for folders and documents.
+window and performs the click or keystroke inside the same PowerShell call; a
+separate `window_focus` can be undone when the next hidden PowerShell starts. For
+`type` and `key`, pass the field's `x`,`y` so the tool clicks it first; without
+coordinates the text goes to the window's current focus. A `handle` is more stable
+than a title, which can gain an asterisk after the first edit. `click`, `type`, `key`,
+`scroll` and `window_focus` ask for approval unless `autoApprove` is on; `dryRun`
+describes them instead. `screenshot` needs a visible desktop session; `open` uses
+Explorer, so it also works for folders and documents.
 
 ---
 

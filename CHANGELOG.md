@@ -13,6 +13,8 @@ drifted from the newest backup.
 
 ## [Unreleased]
 
+## [2.7.0] — 2026-11-08
+
 ### Added
 
 - **Desktop control in the `ui` tool.** The agent can now move the pointer, click
@@ -28,6 +30,17 @@ drifted from the newest backup.
   window inside the same PowerShell call. This avoids the race where a separate
   `window_focus` succeeds but the next hidden PowerShell hands the foreground back to
   the previous app, so the keystroke lands nowhere.
+- **Reliable foreground focus on Windows.** Focus first clicks the title bar, because a
+  real mouse click is accepted where a background `SetForegroundWindow` is often
+  refused. If the title bar is covered, it falls back to the documented
+  `AttachThreadInput` + synthetic-Alt workaround. A window that is already active is
+  left alone, so a click that put the caret in an edit control is not undone by the
+  following `type` or `key`.
+- **`type` and `key` can click the target field first.** Pass `x`,`y` with `window` or
+  `handle`; the tool focuses the window, clicks that point and types or presses the key
+  in one PowerShell call. This is the reliable way to type into a specific edit box.
+  `scroll` with a target and no coordinates now moves the pointer to the window centre
+  instead of leaving it on the title bar.
 - **Desktop actions are approval-gated.** `click`, `type`, `key`, `scroll` and
   `window_focus` ask first unless `autoApprove` is on; `dryRun` describes them. The
   approval summary for typing does not echo the text, so a password is not shown in the

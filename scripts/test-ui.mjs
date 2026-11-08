@@ -100,12 +100,39 @@ section("dry run");
   check("type reports the length, not the text", type.includes("5 characters") && !type.includes("hello"), type);
   const targetedType = await uiTool.run({ action: "type", text: "hello", window: "Notepad" }, ctx);
   check("type can target a window", targetedType.includes("Notepad"), targetedType);
+  const typeAt = await uiTool.run(
+    { action: "type", text: "hello", handle: "123", x: 5, y: 6 },
+    ctx,
+  );
+  check(
+    "type can click a point before typing",
+    typeAt.includes("handle 123") && typeAt.includes("5,6"),
+    typeAt,
+  );
   const key = await uiTool.run({ action: "key", key: "ctrl+s" }, ctx);
   check("key reports the combination", key.includes("ctrl+s"), key);
   const targetedKey = await uiTool.run({ action: "key", key: "ctrl+s", handle: "123" }, ctx);
   check("key can target a handle", targetedKey.includes("handle 123"), targetedKey);
+  const keyAt = await uiTool.run(
+    { action: "key", key: "ctrl+s", handle: "123", x: 5, y: 6 },
+    ctx,
+  );
+  check(
+    "key can click a point before pressing",
+    keyAt.includes("handle 123") && keyAt.includes("5,6"),
+    keyAt,
+  );
   const scroll = await uiTool.run({ action: "scroll", amount: -3 }, ctx);
   check("scroll reports direction and amount", scroll.includes("down") && scroll.includes("3"), scroll);
+  const scrollAt = await uiTool.run(
+    { action: "scroll", amount: -2, handle: "123", x: 5, y: 6 },
+    ctx,
+  );
+  check(
+    "scroll can target a window and point",
+    scrollAt.includes("handle 123") && scrollAt.includes("5,6"),
+    scrollAt,
+  );
   const focus = await uiTool.run({ action: "window_focus", title: "Notepad" }, ctx);
   check("window_focus reports the title", focus.includes("Notepad"), focus);
   const wait = await uiTool.run({ action: "wait", ms: 250 }, ctx);
@@ -121,6 +148,27 @@ section("validation");
     oneCoordinate = true;
   }
   check("click refuses x without y", oneCoordinate);
+  let typeCoordinate = false;
+  try {
+    await uiTool.run({ action: "type", text: "x", x: 1 }, ctx);
+  } catch {
+    typeCoordinate = true;
+  }
+  check("type refuses x without y", typeCoordinate);
+  let keyCoordinate = false;
+  try {
+    await uiTool.run({ action: "key", key: "enter", y: 2 }, ctx);
+  } catch {
+    keyCoordinate = true;
+  }
+  check("key refuses y without x", keyCoordinate);
+  let scrollCoordinate = false;
+  try {
+    await uiTool.run({ action: "scroll", amount: 1, x: 1 }, ctx);
+  } catch {
+    scrollCoordinate = true;
+  }
+  check("scroll refuses x without y", scrollCoordinate);
   let badClicks = false;
   try {
     await uiTool.run({ action: "click", x: 1, y: 2, clicks: 9 }, ctx);

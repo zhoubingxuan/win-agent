@@ -1141,25 +1141,33 @@ normal approval card:
 | `screenshot` | Capture the virtual screen; the result now says the screen size and the scale of the attached image. |
 | `move` | Move the pointer to screen `x`,`y`. |
 | `click` | Click at screen `x`,`y`; `button` is `left` / `right` / `middle`, `clicks` is 1–3 (use 2 for a double-click). Omit both coordinates to click where the pointer already is. |
-| `type` | Type Unicode text into the active window (newlines become Enter, tabs become Tab). The clipboard is not touched. |
-| `key` | Press a combination such as `ctrl+s`, `alt+tab`, `win+r`, `f5` or `enter`. Use `plus` for the `+` key. |
-| `scroll` | Turn the wheel; positive `amount` scrolls up, negative down. Optional `x`,`y` put the pointer there first. |
+| `type` | Type Unicode text into the active window (newlines become Enter, tabs become Tab). Optional `x`,`y` click that point first, which is the reliable way to put the caret in a field. The clipboard is not touched. |
+| `key` | Press a combination such as `ctrl+s`, `alt+tab`, `win+r`, `f5` or `enter`. Use `plus` for the `+` key. Optional `x`,`y` click that point first, e.g. the editor before `ctrl+s`. |
+| `scroll` | Turn the wheel; positive `amount` scrolls up, negative down. Optional `x`,`y` put the pointer there first; with a target window and no coordinates the pointer moves to its centre. |
 | `wait` | Pause for `ms` milliseconds (0–60000), e.g. while an app opens. |
 
-**The workflow that actually works:** `window_list` → `screenshot` → `click` /
-`type` / `key` with `window` or `handle` → `screenshot` again to check. The action
-itself focuses the named window in the same PowerShell call; doing `window_focus`
-separately is not enough, because starting the next hidden PowerShell can hand the
-foreground back to the previous app and the keystroke lands nowhere. The screenshot
-is scaled to at most 1600 px for the model, so the tool result includes the screen
-size and the multiplier: if a 2560-pixel-wide screen comes back as a 1600-pixel
-image, multiply the coordinates you see by 1.60 before calling `click`.
+**The workflow that actually works:** `window_list` → `screenshot` → `type` / `key` /
+`click` with `window` or `handle` (and the field's `x`,`y` for `type`/`key`) →
+`screenshot` again to check. The action itself focuses the named window and clicks
+the field in the same PowerShell call; doing `window_focus` separately is not enough,
+because starting the next hidden PowerShell can hand the foreground back to the
+previous app and the keystroke lands nowhere. Prefer `handle`: a title can gain an
+asterisk after the first edit. The screenshot is scaled to at most 1600 px for the
+model, so the tool result includes the screen size and the multiplier: if a
+2560-pixel-wide screen comes back as a 1600-pixel image, multiply the coordinates you
+see by 1.60 before calling `click`.
+
+Focus uses a real title-bar click first, because Windows often refuses a background
+`SetForegroundWindow`; if the title bar is covered, it falls back to the
+`AttachThreadInput` workaround. Typing or pressing keys without `x`,`y` goes to the
+window's current focus, so pass the field coordinates when you need the caret in a
+specific control.
 
 ```json
 {"action":"window_list"}
 {"action":"window_focus","title":"Notepad"}
-{"action":"type","text":"Hello from win-agent","window":"Notepad"}
-{"action":"key","key":"ctrl+s","window":"Notepad"}
+{"action":"type","text":"Hello from win-agent","window":"Notepad","x":640,"y":420}
+{"action":"key","key":"ctrl+s","window":"Notepad","x":640,"y":420}
 {"action":"click","x":640,"y":420,"button":"left","clicks":1,"window":"Notepad"}
 ```
 
