@@ -1,8 +1,9 @@
 // Desktop-control helpers: key parsing and the new `ui` schema, without touching
 // the real mouse, keyboard or screen. The dry-run path is the contract the model
-// sees; the actual C# calls are exercised by the Windows-only manual check.
+// sees; the actual C# calls are exercised by npm run test:ui:real, which needs an
+// interactive Windows desktop.
 // Run with: npm run test:ui
-import { parseKeyCombo, uiTool } from "../src/tools/ui.js";
+import { filterWindowRows, parseKeyCombo, uiTool } from "../src/tools/ui.js";
 
 let passed = 0;
 let failures = 0;
@@ -42,11 +43,29 @@ section("schema");
     "scroll",
     "window_list",
     "window_focus",
+    "window_wait",
+    "window_state",
     "wait",
   ]) {
     check(`the ui tool offers ${action}`, actions.includes(action));
   }
-  for (const property of ["x", "y", "button", "clicks", "key", "amount", "handle", "window", "ms"]) {
+  for (const property of [
+    "x",
+    "y",
+    "width",
+    "height",
+    "button",
+    "clicks",
+    "key",
+    "amount",
+    "handle",
+    "window",
+    "process",
+    "exact",
+    "state",
+    "filter",
+    "ms",
+  ]) {
     check(`the schema documents ${property}`, Object.hasOwn(fn.parameters.properties, property));
   }
   check("the screenshot scale is mentioned", fn.description.includes("scale"));
@@ -88,6 +107,21 @@ section("key parsing");
       }
     })(),
   );
+}
+
+section("window filtering");
+{
+  const rows = [
+    { handle: "1", process: "notepad", title: "Untitled - Notepad" },
+    { handle: "2", process: "chrome", title: "GitHub" },
+    { handle: "3", process: "explorer", title: "Downloads" },
+  ];
+  equal("filter matches a title", filterWindowRows(rows, "github").map((row) => row.handle), ["2"]);
+  equal("filter matches a process", filterWindowRows(rows, "notepad").map((row) => row.handle), ["1"]);
+  equal("filter matches a handle", filterWindowRows(rows, "3").map((row) => row.handle), ["3"]);
+  equal("filter ignores case and surrounding spaces", filterWindowRows(rows, "  EXPLORER  ").map((row) => row.handle), ["3"]);
+  equal("an empty filter keeps every window", filterWindowRows(rows, " ").length, 3);
+  equal("an unmatched filter returns nothing", filterWindowRows(rows, "no-such-window").length, 0);
 }
 
 section("dry run");
@@ -135,6 +169,36 @@ section("dry run");
   );
   const focus = await uiTool.run({ action: "window_focus", title: "Notepad" }, ctx);
   check("window_focus reports the title", focus.includes("Notepad"), focus);
+  const focused = await uiTool.run(
+    { action: "window_focus", title: "Notepad", process: "notepad", exact: true },
+    ctx,
+  );
+  check(
+    "window_focus reports the process and exact match",
+    focused.includes("Notepad") && focused.includes("notepad") && focused.includes("exact"),
+    focused,
+  );
+  const waited = await uiTool.run({ action: "window_wait", title: "Notepad", ms: 500 }, ctx);
+  check("window_wait reports the timeout and title", waited.includes("500") && waited.includes("Notepad"), waited);
+  const maximize = await uiTool.run(
+    { action: "window_state", state: "maximize", title: "Notepad" },
+    ctx,
+  );
+  check("window_state maximize reports the title", maximize.includes("maximize") && maximize.includes("Notepad"), maximize);
+  const moveWindow = await uiTool.run(
+    { action: "window_state", state: "move", title: "Notepad", x: 10, y: 20 },
+    ctx,
+  );
+  check("window_state move reports the position", moveWindow.includes("move") && moveWindow.includes("10,20"), moveWindow);
+  const resizeWindow = await uiTool.run(
+    { action: "window_state", state: "resize", title: "Notepad", width: 800, height: 600 },
+    ctx,
+  );
+  check(
+    "window_state resize reports the size",
+    resizeWindow.includes("resize") && resizeWindow.includes("800x600"),
+    resizeWindow,
+  );
   const wait = await uiTool.run({ action: "wait", ms: 250 }, ctx);
   check("wait reports the delay", wait.includes("250"), wait);
 }
@@ -183,6 +247,58 @@ section("validation");
     badWait = true;
   }
   check("wait refuses more than a minute", badWait);
+  let focusTarget = false;
+  try {
+    await uiTool.run({ action: "window_focus" }, ctx);
+  } catch {
+    focusTarget = true;
+  }
+  check("window_focus needs a title or handle", focusTarget);
+  let waitTarget = false;
+  try {
+    await uiTool.run({ action: "window_wait", ms: 1 }, ctx);
+  } catch {
+    waitTarget = true;
+  }
+  check("window_wait needs a title or handle", waitTarget);
+  let badWindowWait = false;
+  try {
+    await uiTool.run({ action: "window_wait", title: "Notepad", ms: 60_001 }, ctx);
+  } catch {
+    badWindowWait = true;
+  }
+  check("window_wait refuses more than a minute", badWindowWait);
+  let badState = false;
+  try {
+    await uiTool.run({ action: "window_state", title: "Notepad" }, ctx);
+  } catch {
+    badState = true;
+  }
+  check("window_state needs a state", badState);
+  let moveTarget = false;
+  try {
+    await uiTool.run({ action: "window_state", state: "move", title: "Notepad", x: 1 }, ctx);
+  } catch {
+    moveTarget = true;
+  }
+  check("window_state move needs both coordinates", moveTarget);
+  let resizeTarget = false;
+  try {
+    await uiTool.run({ action: "window_state", state: "resize", title: "Notepad", width: 1 }, ctx);
+  } catch {
+    resizeTarget = true;
+  }
+  check("window_state resize needs both dimensions", resizeTarget);
+  let badResize = false;
+  try {
+    await uiTool.run(
+      { action: "window_state", state: "resize", title: "Notepad", width: 0, height: 10 },
+      ctx,
+    );
+  } catch {
+    badResize = true;
+  }
+  check("window_state resize refuses a zero dimension", badResize);
 }
 
 console.log(`\n${passed} passed, ${failures} failed`);

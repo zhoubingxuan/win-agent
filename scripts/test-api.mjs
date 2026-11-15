@@ -228,7 +228,7 @@ const settings = {
   stream: false,
   maxSteps: 4,
   temperature: 0,
-  contextLimit: 8192,
+  contextLimit: 16384,
   autoApprove: true,
   agentMode: "guided",
   psEnglishErrors: true,
@@ -865,7 +865,11 @@ try {
     check("the stored user message keeps the image", final?.history?.[0]?.images?.length === 1);
     const body = requests.find((entry) => entry.path.includes("/chat/completions"))?.body;
     const content = body?.messages?.find((entry) => entry.role === "user" && Array.isArray(entry.content))?.content;
-    check("the endpoint received an image part", content?.some((part) => part.type === "image_url"), JSON.stringify(content).slice(0, 200));
+    check(
+      "the endpoint received an image part",
+      content?.some((part) => part.type === "image_url"),
+      JSON.stringify(content ?? null).slice(0, 200),
+    );
 
     const cleared = await api("/api/reset", "POST", {});
     check("the vision conversation can be reset", cleared.status === 200);

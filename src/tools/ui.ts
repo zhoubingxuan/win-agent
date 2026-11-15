@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { arg, argBool, argEnum, argNum, argOpt, type Tool, type ToolResult } from "./registry.js";
+import { arg, argBool, argEnum, argNum, argOpt, type Tool, type ToolContext, type ToolResult } from "./registry.js";
 import { psQuote, runPs } from "../util/ps.js";
 import { dataDir } from "../store.js";
 import { readImageFile } from "../images.js";
@@ -18,6 +18,8 @@ const ACTIONS = [
   "scroll",
   "window_list",
   "window_focus",
+  "window_wait",
+  "window_state",
   "wait",
 ] as const;
 
@@ -124,6 +126,8 @@ export function parseKeyCombo(combo: string): number[] {
 const WIN_UI_TYPE = String.raw`
 using System;
 using System.Text;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 public static class WinAgentUi {
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
@@ -132,8 +136,15 @@ public static class WinAgentUi {
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
+  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attach, uint attachTo, bool on);
   [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
@@ -151,6 +162,11 @@ public static class WinAgentUi {
   public const uint SWP_SHOWWINDOW = 0x0040;
   public const int GWL_EXSTYLE = -20;
   public const int WS_EX_TOPMOST = 0x00000008;
+  public const int SW_MAXIMIZE = 3;
+  public const int SW_MINIMIZE = 6;
+  public const int SW_RESTORE = 9;
+  public const uint WM_CLOSE = 0x0010;
+  public const uint SWP_NOZORDER = 0x0004;
 
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
@@ -236,11 +252,85 @@ public static class WinAgentUi {
     return (GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
   }
 
+  public static string GetTitle(IntPtr hWnd) {
+    if (hWnd == IntPtr.Zero) return "";
+    int length = GetWindowTextLength(hWnd);
+    StringBuilder text = new StringBuilder(Math.Max(length + 1, 256));
+    GetWindowText(hWnd, text, text.Capacity);
+    return text.ToString();
+  }
+
   public static string Describe(IntPtr hWnd) {
     if (hWnd == IntPtr.Zero) return "none";
-    StringBuilder text = new StringBuilder(256);
-    GetWindowText(hWnd, text, text.Capacity);
-    return hWnd.ToInt64().ToString() + ":" + text.ToString();
+    return hWnd.ToInt64().ToString() + ":" + GetTitle(hWnd);
+  }
+
+  // EnumWindows, not Get-Process.MainWindowHandle: one process can own several
+  // top-level windows, and a GUI hosted by another process is not its "main" one.
+  public static IntPtr FindWindowByHandle(long handle) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+      if (hWnd.ToInt64() == handle) { found = hWnd; return false; }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+
+  public static long[] FindWindowHandles(string title, string process, bool exact) {
+    List<long> found = new List<long>();
+    EnumWindows(delegate(IntPtr hWnd, IntPtr lParam) {
+      if (!IsWindowVisible(hWnd)) return true;
+      string text = GetTitle(hWnd);
+      if (text.Length == 0) return true;
+      bool titleMatches = exact
+        ? string.Equals(text, title, StringComparison.OrdinalIgnoreCase)
+        : text.IndexOf(title, StringComparison.OrdinalIgnoreCase) >= 0;
+      if (!titleMatches) return true;
+      if (!string.IsNullOrEmpty(process)) {
+        uint pid;
+        GetWindowThreadProcessId(hWnd, out pid);
+        string name = "";
+        try { name = Process.GetProcessById((int)pid).ProcessName; } catch { }
+        string wanted = process.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+          ? process.Substring(0, process.Length - 4)
+          : process;
+        if (!string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase)) return true;
+      }
+      found.Add(hWnd.ToInt64());
+      return true;
+    }, IntPtr.Zero);
+    return found.ToArray();
+  }
+
+  public static IntPtr FindWindowByTitle(string title, string process, bool exact) {
+    long[] handles = FindWindowHandles(title, process, exact);
+    return handles.Length == 0 ? IntPtr.Zero : new IntPtr(handles[0]);
+  }
+
+  public static IntPtr FindWindowByTitle(string title) {
+    return FindWindowByTitle(title, "", false);
+  }
+
+  public static string GetState(IntPtr hWnd) {
+    if (IsIconic(hWnd)) return "minimized";
+    if (IsZoomed(hWnd)) return "maximized";
+    return "normal";
+  }
+
+  public static void Maximize(IntPtr hWnd) { ShowWindow(hWnd, SW_MAXIMIZE); }
+  public static void Minimize(IntPtr hWnd) { ShowWindow(hWnd, SW_MINIMIZE); }
+  public static void Restore(IntPtr hWnd) { ShowWindow(hWnd, SW_RESTORE); }
+
+  public static bool Close(IntPtr hWnd) {
+    return PostMessage(hWnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+  }
+
+  public static bool MoveWindowTo(IntPtr hWnd, int x, int y) {
+    return SetWindowPos(hWnd, IntPtr.Zero, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+  }
+
+  public static bool ResizeWindow(IntPtr hWnd, int width, int height) {
+    return SetWindowPos(hWnd, IntPtr.Zero, 0, 0, width, height, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
   }
 
   public static string Focus(IntPtr hWnd) {
@@ -326,7 +416,7 @@ function parseScreenBounds(raw: string): ScreenBounds | null {
   return { x: Number(match[1]), y: Number(match[2]), width: Number(match[3]), height: Number(match[4]) };
 }
 
-interface WindowRow {
+export interface WindowRow {
   handle?: string;
   process?: string;
   title?: string;
@@ -344,8 +434,19 @@ function parseWindowRows(raw: string): WindowRow[] {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
-function formatWindowList(rows: WindowRow[]): string {
-  if (rows.length === 0) return "(no visible windows)";
+/** Keep windows whose title, process name or handle contains `filter`. */
+export function filterWindowRows(rows: WindowRow[], filter: string): WindowRow[] {
+  const needle = filter.trim().toLowerCase();
+  if (!needle) return rows;
+  return rows.filter((row) =>
+    `${row.title ?? ""} ${row.process ?? ""} ${row.handle ?? ""}`.toLowerCase().includes(needle),
+  );
+}
+
+function formatWindowList(rows: WindowRow[], filter = ""): string {
+  if (rows.length === 0) {
+    return filter.trim() ? `(no windows match "${filter.trim()}")` : "(no visible windows)";
+  }
   const lines = ["handle | process | title | x,y widthxheight"];
   for (const row of rows) {
     const bounds = row.minimized
@@ -358,11 +459,43 @@ function formatWindowList(rows: WindowRow[]): string {
   return lines.join("\n");
 }
 
-/** PowerShell that finds a window by handle or title substring. */
-function windowTarget(handle?: string, title?: string): string {
-  return handle
-    ? `Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowHandle.ToInt64().ToString() -eq ${psQuote(handle)} } | Select-Object -First 1`
-    : `Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -and $_.MainWindowTitle.IndexOf(${psQuote(title!)}, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select-Object -First 1`;
+/**
+ * Desktop actions change the machine without leaving a file behind. Keep them in
+ * the same audit log as file changes, but never include typed text: the summary
+ * says how many characters were typed, not what they were.
+ */
+function recordUi(ctx: ToolContext, action: string, summary: string): void {
+  try {
+    ctx.record({ action, summary, paths: [], steps: [] });
+  } catch {
+    // The action already happened; a full disk or a broken audit file must not
+    // make it look as if the click or keystroke failed.
+  }
+}
+
+/**
+ * PowerShell that finds any visible top-level window by handle or title
+ * substring. It returns a process-like object so the focus code can keep using
+ * MainWindowHandle/MainWindowTitle/ProcessName/Id.
+ */
+function windowTarget(handle?: string, title?: string, process?: string, exact = false): string {
+  const lookup = handle
+    ? `[WinAgentUi]::FindWindowByHandle([long]${psQuote(handle)})`
+    : `[WinAgentUi]::FindWindowByTitle(${psQuote(title!)}, ${psQuote(process ?? "")}, ${exact ? "$true" : "$false"})`;
+  return `& {
+  $h = ${lookup}
+  if ($h -ne [IntPtr]::Zero) {
+    $targetPid = 0
+    [void][WinAgentUi]::GetWindowThreadProcessId($h, [ref]$targetPid)
+    $targetProcess = Get-Process -Id $targetPid -ErrorAction SilentlyContinue
+    [pscustomobject]@{
+      MainWindowHandle = $h
+      MainWindowTitle = [WinAgentUi]::GetTitle($h)
+      ProcessName = if ($targetProcess) { $targetProcess.ProcessName } else { "?" }
+      Id = $targetPid
+    }
+  }
+}`;
 }
 
 /**
@@ -371,10 +504,10 @@ function windowTarget(handle?: string, title?: string): string {
  * PowerShell can move the foreground back to the previous app, so the click or
  * keystroke would land in the wrong window.
  */
-function focusLines(handle?: string, title?: string): string[] {
+function focusLines(handle?: string, title?: string, process?: string, exact = false): string[] {
   if (!handle && !title) return [];
   return [
-    `$target = ${windowTarget(handle, title)}`,
+    `$target = ${windowTarget(handle, title, process, exact)}`,
     `if (-not $target) { throw ${psQuote(`window not found: ${handle ?? title}`)} }`,
     "$wasTopmost = [WinAgentUi]::IsTopmost($target.MainWindowHandle)",
     "$result = [WinAgentUi]::Focus($target.MainWindowHandle, $true)",
@@ -401,8 +534,14 @@ function focusLines(handle?: string, title?: string): string[] {
  * through the click/keystroke also works when a topmost window covers it; the
  * original topmost state is restored in `finally`, even if the action throws.
  */
-function withWindowFocus(handle: string | undefined, title: string | undefined, body: string[]): string {
-  const focus = focusLines(handle, title);
+function withWindowFocus(
+  handle: string | undefined,
+  title: string | undefined,
+  process: string | undefined,
+  exact: boolean,
+  body: string[],
+): string {
+  const focus = focusLines(handle, title, process, exact);
   if (focus.length === 0) return body.join("\n");
   return [
     ...focus,
@@ -441,8 +580,11 @@ export const uiTool: Tool = {
         "open (open a file, folder or URL in the default app), notify (show a popup message), " +
         "move (move the pointer to screen x,y), click (click at screen x,y), type (type text " +
         "into the active window), key (press a key combination), scroll (wheel up/down), " +
-        "window_list (visible windows with handles and bounds), window_focus (bring a window " +
-        "to the front), wait (pause for ms). click/type/key/scroll accept window or handle to " +
+        "window_list (all visible top-level windows with handles and bounds; optional filter), " +
+        "window_focus (bring any top-level window to the front), " +
+        "window_wait (wait until a window exists), window_state (maximize, minimize, restore, " +
+        "close, move or resize a window), wait (pause for ms). " +
+        "click/type/key/scroll accept window or handle to " +
         "focus that app in the same PowerShell call before acting. Screen coordinates are " +
         "pixels; screenshot reports the scale when its image is smaller than the screen.",
       parameters: {
@@ -450,7 +592,11 @@ export const uiTool: Tool = {
         properties: {
           action: { type: "string", enum: [...ACTIONS] },
           text: { type: "string", description: "Text for clipboard_set, notify or type." },
-          title: { type: "string", description: "Title for notify, or a window-title substring for window_focus." },
+          title: {
+            type: "string",
+            description:
+              "Title for notify, or a window-title substring for window_focus, window_wait or window_state.",
+          },
           window: {
             type: "string",
             description:
@@ -468,12 +614,20 @@ export const uiTool: Tool = {
           x: {
             type: "integer",
             description:
-              "Screen x coordinate for move, click or scroll; for type/key it is an optional point to click first.",
+              "Screen x coordinate for move, click or scroll; for type/key it is an optional point to click first; for window_state move it is the new left edge.",
           },
           y: {
             type: "integer",
             description:
-              "Screen y coordinate for move, click or scroll; for type/key it is an optional point to click first.",
+              "Screen y coordinate for move, click or scroll; for type/key it is an optional point to click first; for window_state move it is the new top edge.",
+          },
+          width: {
+            type: "integer",
+            description: "For window_state resize: new window width in screen pixels.",
+          },
+          height: {
+            type: "integer",
+            description: "For window_state resize: new window height in screen pixels.",
           },
           button: {
             type: "string",
@@ -495,11 +649,31 @@ export const uiTool: Tool = {
           handle: {
             type: "string",
             description:
-              "Window handle from window_list, for window_focus or to target click, type, key or scroll.",
+              "Window handle from window_list, for window_focus, window_wait, window_state or to target click, type, key or scroll.",
+          },
+          process: {
+            type: "string",
+            description:
+              "Optional process name to disambiguate a window (for example chrome). Used with title or window.",
+          },
+          exact: {
+            type: "boolean",
+            description:
+              "For window_focus, window_wait and window_state: match the window title exactly instead of a substring.",
+          },
+          state: {
+            type: "string",
+            enum: ["maximize", "minimize", "restore", "close", "move", "resize"],
+            description: "For window_state: what to do with the window.",
+          },
+          filter: {
+            type: "string",
+            description:
+              "For window_list: only windows whose title, process name or handle contains this text.",
           },
           ms: {
             type: "integer",
-            description: "Milliseconds to wait for wait (0-60000).",
+            description: "Milliseconds to wait for wait, or the timeout for window_wait (0-60000).",
           },
         },
         required: ["action"],
@@ -521,6 +695,7 @@ export const uiTool: Tool = {
         const text = arg(args, "text");
         if (ctx.dryRun) return `DRY RUN: would copy ${text.length} chars to clipboard.`;
         await runPs(`Set-Clipboard -Value ${psQuote(text)}`);
+        recordUi(ctx, "clipboard_set", `copied ${text.length} characters to the clipboard`);
         return `Copied ${text.length} characters to the clipboard.`;
       }
 
@@ -593,6 +768,7 @@ export const uiTool: Tool = {
         const target = arg(args, "target");
         if (ctx.dryRun) return `DRY RUN: would open ${target}.`;
         await runPs(`Start-Process ${psQuote(target)}`);
+        recordUi(ctx, "open", `opened ${target}`);
         return `Opened ${target}.`;
       }
 
@@ -603,6 +779,7 @@ export const uiTool: Tool = {
         await runPs(
           `(New-Object -ComObject WScript.Shell).Popup(${psQuote(text)}, 8, ${psQuote(title)}, 64) | Out-Null`,
         );
+        recordUi(ctx, "notify", `showed notification "${title}"`);
         return "Notification shown.";
       }
 
@@ -629,17 +806,24 @@ export const uiTool: Tool = {
         if (clicks < 1 || clicks > 3) throw new Error("clicks must be 1, 2 or 3");
         const handle = argOpt(args, "handle")?.trim();
         const window = argOpt(args, "window")?.trim();
-        const target = handle ? ` in window handle ${handle}` : window ? ` in window "${window}"` : "";
+        const process = argOpt(args, "process")?.trim();
+        const exact = argBool(args, "exact", false);
+        const target = handle
+          ? ` in window handle ${handle}`
+          : window
+            ? ` in window "${window}"${process ? ` (${process})` : ""}`
+            : "";
         const where = `${hasX ? `${Math.round(x)},${Math.round(y)}` : "the current pointer"}${target}`;
         if (ctx.dryRun) return `DRY RUN: would click ${button} ${clicks} time(s) at ${where}.`;
         if (!(await ctx.approve(`click ${button} ${clicks} time(s) at ${where}`))) return "Cancelled by user.";
         await runPs(
           winUiScript(
-            withWindowFocus(handle, window, [
+            withWindowFocus(handle, window, process, exact, [
               `[WinAgentUi]::Click(${hasX ? Math.round(x) : 0}, ${hasY ? Math.round(y) : 0}, ${hasX ? "$true" : "$false"}, ${psQuote(button)}, ${clicks})`,
             ]),
           ),
         );
+        recordUi(ctx, "click", `clicked ${button} ${clicks} time(s) at ${where}`);
         return `Clicked ${button} ${clicks} time(s) at ${where}.`;
       }
 
@@ -647,7 +831,13 @@ export const uiTool: Tool = {
         const text = arg(args, "text");
         const handle = argOpt(args, "handle")?.trim();
         const window = argOpt(args, "window")?.trim();
-        const target = handle ? `window handle ${handle}` : window ? `window "${window}"` : "the active window";
+        const process = argOpt(args, "process")?.trim();
+        const exact = argBool(args, "exact", false);
+        const target = handle
+          ? `window handle ${handle}`
+          : window
+            ? `window "${window}"${process ? ` (${process})` : ""}`
+            : "the active window";
         const x = argNum(args, "x", Number.NaN);
         const y = argNum(args, "y", Number.NaN);
         const hasX = Number.isFinite(x);
@@ -659,7 +849,8 @@ export const uiTool: Tool = {
         const body: string[] = [];
         if (hasX) body.push(`[WinAgentUi]::Click(${Math.round(x)}, ${Math.round(y)}, $true, 'left', 1)`);
         body.push(`[WinAgentUi]::TypeText(${psQuote(text)})`);
-        await runPs(winUiScript(withWindowFocus(handle, window, body)));
+        await runPs(winUiScript(withWindowFocus(handle, window, process, exact, body)));
+        recordUi(ctx, "type", `typed ${text.length} characters into ${target}${point}`);
         return `Typed ${text.length} characters into ${target}${point}.`;
       }
 
@@ -668,7 +859,13 @@ export const uiTool: Tool = {
         const keys = parseKeyCombo(combo);
         const handle = argOpt(args, "handle")?.trim();
         const window = argOpt(args, "window")?.trim();
-        const target = handle ? `window handle ${handle}` : window ? `window "${window}"` : "the active window";
+        const process = argOpt(args, "process")?.trim();
+        const exact = argBool(args, "exact", false);
+        const target = handle
+          ? `window handle ${handle}`
+          : window
+            ? `window "${window}"${process ? ` (${process})` : ""}`
+            : "the active window";
         const x = argNum(args, "x", Number.NaN);
         const y = argNum(args, "y", Number.NaN);
         const hasX = Number.isFinite(x);
@@ -680,7 +877,8 @@ export const uiTool: Tool = {
         const body: string[] = [];
         if (hasX) body.push(`[WinAgentUi]::Click(${Math.round(x)}, ${Math.round(y)}, $true, 'left', 1)`);
         body.push(`[WinAgentUi]::PressKeys([int[]]@(${keys.join(",")}))`);
-        await runPs(winUiScript(withWindowFocus(handle, window, body)));
+        await runPs(winUiScript(withWindowFocus(handle, window, process, exact, body)));
+        recordUi(ctx, "key", `pressed ${combo} in ${target}${point}`);
         return `Pressed ${combo} in ${target}${point}.`;
       }
 
@@ -696,7 +894,13 @@ export const uiTool: Tool = {
         const direction = amount > 0 ? "up" : "down";
         const handle = argOpt(args, "handle")?.trim();
         const window = argOpt(args, "window")?.trim();
-        const target = handle ? ` in window handle ${handle}` : window ? ` in window "${window}"` : "";
+        const process = argOpt(args, "process")?.trim();
+        const exact = argBool(args, "exact", false);
+        const target = handle
+          ? ` in window handle ${handle}`
+          : window
+            ? ` in window "${window}"${process ? ` (${process})` : ""}`
+            : "";
         const where = `${hasX ? ` at ${Math.round(x)},${Math.round(y)}` : ""}${target}`;
         if (ctx.dryRun) return `DRY RUN: would scroll ${direction} ${Math.abs(amount)} notch(es)${where}.`;
         if (!(await ctx.approve(`scroll ${direction} ${Math.abs(amount)} notch(es)${where}`))) {
@@ -706,61 +910,280 @@ export const uiTool: Tool = {
         if (hasX) body.push(`[WinAgentUi]::SetCursorPos(${Math.round(x)}, ${Math.round(y)}) | Out-Null`);
         else if (handle || window) body.push("[WinAgentUi]::Center($target.MainWindowHandle)");
         body.push(`[WinAgentUi]::Scroll(${amount})`);
-        await runPs(winUiScript(withWindowFocus(handle, window, body)));
+        await runPs(winUiScript(withWindowFocus(handle, window, process, exact, body)));
+        recordUi(ctx, "scroll", `scrolled ${direction} ${Math.abs(amount)} notch(es)${where}`);
         return `Scrolled ${direction} ${Math.abs(amount)} notch(es)${where}.`;
       }
 
       case "window_list": {
+        const filter = argOpt(args, "filter")?.trim() ?? "";
         const raw = await runPs(
           winUiScript(
             [
-              "$rows = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle } | ForEach-Object {",
+              "$rows = New-Object System.Collections.ArrayList",
+              "$procNames = @{}",
+              "$callback = [WinAgentUi+EnumWindowsProc]{",
+              "  param([IntPtr]$hWnd, [IntPtr]$lParam)",
+              "  if (-not [WinAgentUi]::IsWindowVisible($hWnd)) { return $true }",
+              "  $len = [WinAgentUi]::GetWindowTextLength($hWnd)",
+              "  if ($len -le 0) { return $true }",
+              "  $sb = New-Object System.Text.StringBuilder ($len + 1)",
+              "  [void][WinAgentUi]::GetWindowText($hWnd, $sb, $sb.Capacity)",
+              "  $title = $sb.ToString()",
+              "  if ([string]::IsNullOrWhiteSpace($title)) { return $true }",
               "  $r = New-Object WinAgentUi+RECT",
-              "  [void][WinAgentUi]::GetWindowRect($_.MainWindowHandle, [ref]$r)",
-              "  [pscustomobject]@{ handle = $_.MainWindowHandle.ToInt64().ToString(); process = $_.ProcessName; title = $_.MainWindowTitle; minimized = [WinAgentUi]::IsIconic($_.MainWindowHandle); x = $r.Left; y = $r.Top; width = $r.Right - $r.Left; height = $r.Bottom - $r.Top }",
-              "})",
-              "ConvertTo-Json -InputObject $rows -Compress",
+              "  [void][WinAgentUi]::GetWindowRect($hWnd, [ref]$r)",
+              "  $targetPid = 0",
+              "  [void][WinAgentUi]::GetWindowThreadProcessId($hWnd, [ref]$targetPid)",
+              "  if (-not $procNames.ContainsKey($targetPid)) {",
+              "    $proc = Get-Process -Id $targetPid -ErrorAction SilentlyContinue",
+              '    $procNames[$targetPid] = if ($proc) { $proc.ProcessName } else { "?" }',
+              "  }",
+              "  [void]$rows.Add([pscustomobject]@{",
+              "    handle = $hWnd.ToInt64().ToString()",
+              "    process = $procNames[$targetPid]",
+              "    title = $title",
+              "    minimized = [WinAgentUi]::IsIconic($hWnd)",
+              "    x = $r.Left",
+              "    y = $r.Top",
+              "    width = $r.Right - $r.Left",
+              "    height = $r.Bottom - $r.Top",
+              "  })",
+              "  return $true",
+              "}",
+              "[void][WinAgentUi]::EnumWindows($callback, [IntPtr]::Zero)",
+              "ConvertTo-Json -InputObject @($rows) -Compress",
             ].join("\n"),
           ),
         );
-        return formatWindowList(parseWindowRows(raw));
+        return formatWindowList(filterWindowRows(parseWindowRows(raw), filter), filter);
       }
 
       case "window_focus": {
         const handle = argOpt(args, "handle")?.trim();
         const title = argOpt(args, "title")?.trim();
+        const process = argOpt(args, "process")?.trim();
+        const exact = argBool(args, "exact", false);
         if (!handle && !title) throw new Error('window_focus needs "title" or "handle"');
-        const target = handle
-          ? `Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowHandle.ToInt64().ToString() -eq ${psQuote(handle)} } | Select-Object -First 1`
-          : `Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -and $_.MainWindowTitle.IndexOf(${psQuote(title!)}, [StringComparison]::OrdinalIgnoreCase) -ge 0 } | Select-Object -First 1`;
-        const label = handle ? `handle ${handle}` : `"${title}"`;
+        const label = handle
+          ? `handle ${handle}`
+          : `"${title}"${process ? ` (${process})` : ""}${exact ? " exact" : ""}`;
         if (ctx.dryRun) return `DRY RUN: would focus window ${label}.`;
         if (!(await ctx.approve(`focus window ${label}`))) return "Cancelled by user.";
+
+        const lookup = handle
+          ? [
+              `$h = [WinAgentUi]::FindWindowByHandle([long]${psQuote(handle)})`,
+              "$handles = @($h.ToInt64())",
+            ].join("\n")
+          : `$handles = @([WinAgentUi]::FindWindowHandles(${psQuote(title!)}, ${psQuote(process ?? "")}, ${exact ? "$true" : "$false"}))`;
         const raw = await runPs(
           winUiScript(
             [
-              `$target = ${target}`,
-              `if (-not $target) { throw ${psQuote(`window not found: ${handle ?? title}`)} }`,
-              "$result = [WinAgentUi]::Focus($target.MainWindowHandle)",
+              lookup,
+              `if ($handles.Count -eq 0) { throw ${psQuote(`window not found: ${handle ?? title}`)} }`,
+              "$h = [IntPtr]$handles[0]",
+              `if ($h -eq [IntPtr]::Zero) { throw ${psQuote(`window not found: ${handle ?? title}`)} }`,
+              "$targetPid = 0",
+              "[void][WinAgentUi]::GetWindowThreadProcessId($h, [ref]$targetPid)",
+              "$targetProcess = Get-Process -Id $targetPid -ErrorAction SilentlyContinue",
+              "$processName = if ($targetProcess) { $targetProcess.ProcessName } else { '?' }",
+              "$titleText = [WinAgentUi]::GetTitle($h)",
+              "$result = [WinAgentUi]::Focus($h)",
               "if ($result -ne 'focused') {",
               "  Start-Sleep -Milliseconds 400",
-              "  $result = [WinAgentUi]::Focus($target.MainWindowHandle)",
+              "  $result = [WinAgentUi]::Focus($h)",
               "  if ($result -ne 'focused') {",
               "    $shell = New-Object -ComObject WScript.Shell",
-              "    [void]$shell.AppActivate($target.Id)",
+              "    [void]$shell.AppActivate($targetPid)",
               "    Start-Sleep -Milliseconds 250",
-              "    if ([WinAgentUi]::IsForeground($target.MainWindowHandle)) { $result = 'focused' }",
+              "    if ([WinAgentUi]::IsForeground($h)) { $result = 'focused' }",
               "  }",
               "}",
-              "[pscustomobject]@{ handle = $target.MainWindowHandle.ToInt64().ToString(); process = $target.ProcessName; title = $target.MainWindowTitle; result = $result } | ConvertTo-Json -Compress",
+              "$candidates = New-Object System.Collections.ArrayList",
+              "if ($handles.Count -gt 1) {",
+              "  foreach ($candidate in $handles) {",
+              "    if ($candidates.Count -ge 10) { break }",
+              "    $candidatePid = 0",
+              "    [void][WinAgentUi]::GetWindowThreadProcessId([IntPtr]$candidate, [ref]$candidatePid)",
+              "    $candidateProcess = Get-Process -Id $candidatePid -ErrorAction SilentlyContinue",
+              "    $candidateName = if ($candidateProcess) { $candidateProcess.ProcessName } else { '?' }",
+              "    [void]$candidates.Add([pscustomobject]@{",
+              "      handle = ([IntPtr]$candidate).ToInt64().ToString()",
+              "      process = $candidateName",
+              "      title = [WinAgentUi]::GetTitle([IntPtr]$candidate)",
+              "    })",
+              "  }",
+              "}",
+              "[pscustomobject]@{",
+              "  handle = $h.ToInt64().ToString()",
+              "  process = $processName",
+              "  title = $titleText",
+              "  result = $result",
+              "  matchCount = $handles.Count",
+              "  candidates = @($candidates)",
+              "} | ConvertTo-Json -Compress -Depth 4",
             ].join("\n"),
           ),
         );
-        const row = JSON.parse(raw) as WindowRow & { result?: string };
+        const row = JSON.parse(raw) as WindowRow & {
+          result?: string;
+          matchCount?: number;
+          candidates?: WindowRow[] | WindowRow;
+        };
+        const candidates = Array.isArray(row.candidates)
+          ? row.candidates
+          : row.candidates
+            ? [row.candidates]
+            : [];
         const focused = row.result === "focused";
-        return `${focused ? "Focused" : "Could not focus"} window "${row.title ?? title ?? handle}" (${row.process ?? "?"}, handle ${row.handle ?? "?"}).${
-          focused ? "" : " Windows may refuse foreground switches; try again or click the window manually."
-        }`;
+        if (focused) {
+          recordUi(
+            ctx,
+            "window_focus",
+            `focused window "${row.title ?? title ?? handle}" (${row.process ?? "?"}, handle ${row.handle ?? "?"})`,
+          );
+        }
+        let text = `${focused ? "Focused" : "Could not focus"} window "${row.title ?? title ?? handle}" (${row.process ?? "?"}, handle ${row.handle ?? "?"}).`;
+        if (focused && candidates.length > 1) {
+          const shown = candidates
+            .slice(0, 5)
+            .map((candidate) => `${candidate.handle ?? "?"} ${candidate.process ?? "?"} "${candidate.title ?? ""}"`)
+            .join("; ");
+          text += ` ${row.matchCount ?? candidates.length} windows matched; focused the first. Use handle to choose another: ${shown}.`;
+        } else if (!focused) {
+          text += " Windows may refuse foreground switches; try again or click the window manually.";
+        }
+        return text;
+      }
+
+      case "window_wait": {
+        const handle = argOpt(args, "handle")?.trim();
+        const title = argOpt(args, "title")?.trim();
+        const process = argOpt(args, "process")?.trim();
+        const exact = argBool(args, "exact", false);
+        if (!handle && !title) throw new Error('window_wait needs "title" or "handle"');
+        const timeout = Math.round(argNum(args, "ms", 10_000));
+        if (timeout < 0 || timeout > 60_000) throw new Error("ms must be between 0 and 60000");
+        const label = handle
+          ? `handle ${handle}`
+          : `"${title}"${process ? ` (${process})` : ""}${exact ? " exact" : ""}`;
+        if (ctx.dryRun) return `DRY RUN: would wait up to ${timeout} ms for window ${label}.`;
+        const lookup = windowTarget(handle, title, process, exact);
+        const raw = await runPs(
+          winUiScript(
+            [
+              "$start = [DateTime]::UtcNow",
+              `$deadline = $start.AddMilliseconds(${timeout})`,
+              "$target = $null",
+              "do {",
+              `  $target = ${lookup}`,
+              "  if ($target) { break }",
+              "  if ([DateTime]::UtcNow -ge $deadline) { break }",
+              "  Start-Sleep -Milliseconds 200",
+              "} while ($true)",
+              `if (-not $target) { throw ${psQuote(`window not found within ${timeout} ms: ${handle ?? title}`)} }`,
+              "[pscustomobject]@{",
+              "  handle = $target.MainWindowHandle.ToInt64().ToString()",
+              "  process = $target.ProcessName",
+              "  title = $target.MainWindowTitle",
+              "  elapsed = [int]([DateTime]::UtcNow - $start).TotalMilliseconds",
+              "} | ConvertTo-Json -Compress",
+            ].join("\n"),
+          ),
+          { timeoutMs: timeout + 10_000 },
+        );
+        const row = JSON.parse(raw) as WindowRow & { elapsed?: number };
+        return `Found window "${row.title ?? title ?? handle}" (${row.process ?? "?"}, handle ${row.handle ?? "?"}) after ${row.elapsed ?? "?"} ms.`;
+      }
+
+      case "window_state": {
+        const states = ["maximize", "minimize", "restore", "close", "move", "resize"] as const;
+        const state = argEnum(args, "state", states);
+        const handle = argOpt(args, "handle")?.trim();
+        const title = argOpt(args, "title")?.trim();
+        const process = argOpt(args, "process")?.trim();
+        const exact = argBool(args, "exact", false);
+        if (!handle && !title) throw new Error('window_state needs "title" or "handle"');
+        const x = argNum(args, "x", Number.NaN);
+        const y = argNum(args, "y", Number.NaN);
+        const width = argNum(args, "width", Number.NaN);
+        const height = argNum(args, "height", Number.NaN);
+        if (state === "move" && (!Number.isFinite(x) || !Number.isFinite(y))) {
+          throw new Error("window_state move needs both x and y");
+        }
+        if (state === "resize" && (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0)) {
+          throw new Error("window_state resize needs positive width and height");
+        }
+        const where =
+          state === "move"
+            ? ` to ${Math.round(x)},${Math.round(y)}`
+            : state === "resize"
+              ? ` to ${Math.round(width)}x${Math.round(height)}`
+              : "";
+        const label = handle
+          ? `handle ${handle}`
+          : `"${title}"${process ? ` (${process})` : ""}${exact ? " exact" : ""}`;
+        if (ctx.dryRun) return `DRY RUN: would ${state} window ${label}${where}.`;
+        if (!(await ctx.approve(`${state} window ${label}${where}`))) return "Cancelled by user.";
+
+        let actionLine: string;
+        switch (state) {
+          case "maximize":
+            actionLine = "[WinAgentUi]::Maximize($h)";
+            break;
+          case "minimize":
+            actionLine = "[WinAgentUi]::Minimize($h)";
+            break;
+          case "restore":
+            actionLine = "[WinAgentUi]::Restore($h)";
+            break;
+          case "close":
+            actionLine = "[void][WinAgentUi]::Close($h)";
+            break;
+          case "move":
+            actionLine = `if (-not [WinAgentUi]::MoveWindowTo($h, ${Math.round(x)}, ${Math.round(y)})) { throw "could not move window" }`;
+            break;
+          case "resize":
+            actionLine = `if (-not [WinAgentUi]::ResizeWindow($h, ${Math.round(width)}, ${Math.round(height)})) { throw "could not resize window" }`;
+            break;
+        }
+        const raw = await runPs(
+          winUiScript(
+            [
+              `$target = ${windowTarget(handle, title, process, exact)}`,
+              `if (-not $target) { throw ${psQuote(`window not found: ${handle ?? title}`)} }`,
+              "$h = $target.MainWindowHandle",
+              "$titleText = [WinAgentUi]::GetTitle($h)",
+              actionLine,
+              "Start-Sleep -Milliseconds 250",
+              "$closed = -not [WinAgentUi]::IsWindow($h)",
+              "$r = New-Object WinAgentUi+RECT",
+              "[void][WinAgentUi]::GetWindowRect($h, [ref]$r)",
+              "[pscustomobject]@{",
+              "  handle = $h.ToInt64().ToString()",
+              "  process = $target.ProcessName",
+              "  title = $titleText",
+              "  state = [WinAgentUi]::GetState($h)",
+              "  closed = $closed",
+              "  x = $r.Left",
+              "  y = $r.Top",
+              "  width = $r.Right - $r.Left",
+              "  height = $r.Bottom - $r.Top",
+              "} | ConvertTo-Json -Compress",
+            ].join("\n"),
+          ),
+        );
+        const row = JSON.parse(raw) as WindowRow & { state?: string; closed?: boolean };
+        const summary = `${state} window "${row.title ?? title ?? handle}" (${row.process ?? "?"}, handle ${row.handle ?? "?"})${where}`;
+        recordUi(ctx, "window_state", summary);
+        if (state === "close") {
+          return row.closed
+            ? `Closed window "${row.title ?? title ?? handle}" (${row.process ?? "?"}, handle ${row.handle ?? "?"}).`
+            : `Requested close for window "${row.title ?? title ?? handle}" (${row.process ?? "?"}, handle ${row.handle ?? "?"}); it is still open (the app may be asking to save changes).`;
+        }
+        const verb = `${state[0].toUpperCase()}${state.slice(1)}d`;
+        return `${verb} window "${row.title ?? title ?? handle}" (${row.process ?? "?"}, handle ${row.handle ?? "?"})${row.state ? ` (${row.state})` : ""}${where}.`;
       }
 
       case "wait": {

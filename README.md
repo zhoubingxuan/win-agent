@@ -1136,8 +1136,10 @@ normal approval card:
 
 | Action | What it does |
 | --- | --- |
-| `window_list` | List visible top-level windows: handle, process, title and screen bounds. |
-| `window_focus` | Bring a window to the front by `title` substring or exact `handle`. Minimised windows are restored. |
+| `window_list` | List **all** visible top-level windows, including several windows owned by one process: handle, process, title and screen bounds. Optional `filter` keeps only windows whose title, process name or handle contains that text. |
+| `window_focus` | Bring any visible top-level window to the front by `title` substring or exact `handle`, optionally filtered by `process`. `exact` matches the whole title. If several windows match, it focuses the first and lists the other handles. Minimised windows are restored. |
+| `window_wait` | Wait up to `ms` (0–60000, default 10000) for a window to appear, by `title` or `handle`, optionally filtered by `process`. Returns the handle, process and title when found. |
+| `window_state` | `maximize`, `minimize`, `restore`, `close`, `move` (with `x`,`y`) or `resize` (with `width`,`height`) a window selected by `title` or `handle`, optionally filtered by `process`. |
 | `screenshot` | Capture the virtual screen; the result now says the screen size and the scale of the attached image. |
 | `move` | Move the pointer to screen `x`,`y`. |
 | `click` | Click at screen `x`,`y`; `button` is `left` / `right` / `middle`, `clicks` is 1–3 (use 2 for a double-click). Omit both coordinates to click where the pointer already is. |
@@ -1146,9 +1148,10 @@ normal approval card:
 | `scroll` | Turn the wheel; positive `amount` scrolls up, negative down. Optional `x`,`y` put the pointer there first; with a target window and no coordinates the pointer moves to its centre. |
 | `wait` | Pause for `ms` milliseconds (0–60000), e.g. while an app opens. |
 
-**The workflow that actually works:** `window_list` → `screenshot` → `type` / `key` /
-`click` with `window` or `handle` (and the field's `x`,`y` for `type`/`key`) →
-`screenshot` again to check. The action itself focuses the named window and clicks
+**The workflow that actually works:** `window_list` (add `filter` when the list is long)
+→ `screenshot` → `type` / `key` / `click` with `window` or `handle` (and the field's
+`x`,`y` for `type`/`key`) → `screenshot` again to check. The action itself focuses the
+named window and clicks
 the field in the same PowerShell call; doing `window_focus` separately is not enough,
 because starting the next hidden PowerShell can hand the foreground back to the
 previous app and the keystroke lands nowhere. Prefer `handle`: a title can gain an
@@ -1165,18 +1168,23 @@ specific control.
 
 ```json
 {"action":"window_list"}
+{"action":"window_list","filter":"notepad"}
+{"action":"window_wait","title":"Notepad","ms":5000}
 {"action":"window_focus","title":"Notepad"}
+{"action":"window_state","state":"maximize","title":"Notepad"}
+{"action":"window_state","state":"move","title":"Notepad","x":100,"y":100}
 {"action":"type","text":"Hello from win-agent","window":"Notepad","x":640,"y":420}
 {"action":"key","key":"ctrl+s","window":"Notepad","x":640,"y":420}
 {"action":"click","x":640,"y":420,"button":"left","clicks":1,"window":"Notepad"}
 ```
 
-`click`, `type`, `key`, `scroll` and `window_focus` ask for approval unless
-`autoApprove` is on; `dryRun` describes the action instead of doing it. `move` and
-`wait` are not state-changing and do not ask. The tool cannot type into a UAC secure
-desktop, and a non-elevated agent cannot drive an elevated window — Windows blocks
-that by design. If `window_focus` says it could not switch, click the window once
-yourself and try again.
+`click`, `type`, `key`, `scroll`, `window_focus` and `window_state` ask for approval
+unless `autoApprove` is on; `dryRun` describes the action instead of doing it. `move`,
+`wait` and `window_wait` are not state-changing and do not ask. Successful desktop actions are appended
+to `data/audit.jsonl` too; for `type`, the log records only the character count, never
+the text. The tool cannot type into a UAC secure desktop, and a non-elevated agent
+cannot drive an elevated window — Windows blocks that by design. If `window_focus`
+says it could not switch, click the window once yourself and try again.
 
 ---
 
@@ -1430,8 +1438,12 @@ Everything else is recorded but **not** undoable, and the log entry says so:
 - a registry value or task whose previous state could not be read,
 - anything bigger than 64 MB, where the copy would cost more than the change,
 - the actions with no inverse at all: starting/stopping a service or process,
-  `shutdown`, `ui`, the clipboard, firewall and network changes, `zip`,
+  `shutdown`, desktop `ui` actions, the clipboard, firewall and network changes, `zip`,
   `scheduled_tasks run`.
+
+Desktop `ui` actions (`click`, `type`, `key`, `scroll`, `window_focus`, `window_state`,
+`open`, `clipboard_set`, `notify`) are recorded with no undo step. Typed text is represented
+only by its character count, so the audit log does not become a keylogger.
 
 The two raw-script escape hatches — `powershell` and your own `custom` commands — are
 recorded too, with the script (or the command and its argument) quoted in the summary.
@@ -1732,7 +1744,7 @@ Custom commands run arbitrary PowerShell, so they always require approval
 | `web` | search, fetch, download — internet access (see [Web access](#web-access--the-web-tool)) |
 | `scheduled_tasks` | list, info, create, delete, run |
 | `registry` | get, list, set, delete |
-| `ui` | clipboard_get, clipboard_set, screenshot (saved to disk and attached to the model when image input is on), open, notify, move, click, type, key, scroll, window_list, window_focus, wait |
+| `ui` | clipboard_get, clipboard_set, screenshot (saved to disk and attached to the model when image input is on), open, notify, move, click, type, key, scroll, window_list, window_focus, window_wait, window_state, wait |
 | `skills` | list, load, read — procedures from `data/skills/`, loaded only when a task matches (see [Skills](#skills)) |
 | `todo` | set, list, done, doing, reopen, clear — the model's own checklist, shown live in the chat (see [The checklist](#the-checklist--what-the-model-owes-you)) |
 | `powershell` | raw script escape hatch (always confirmed; with the sandbox on the script is read first and refused if a path leaves the folder) |
@@ -1976,6 +1988,8 @@ test-mcp-server.mjs the other direction: JSON-RPC over stdio, tool calls, the ap
   test-api.mjs        the real HTTP server + a mock model, on a temp data folder
   test-audit.mjs      the change log and undo, against a temp folder (live on Windows)
   test-windows.mjs    live Windows checks: PowerShell, elevation, files, services
+  test-ui.mjs         ui schema, key parsing and window filtering (model-free)
+  test-ui-real.mjs    live WinForms check for window_focus, window_wait and window_state
   test-mcp-real.mjs   manual compatibility pass: real filesystem/everything/DeepWiki MCP
   test-model-profile.mjs  measured profiles, staleness and the dead-endpoint rule
   test-all.mjs        runs the suites in order (npm run test:all), one annotation on failure

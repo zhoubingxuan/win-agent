@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { resolveCommand } from "./exec.js";
 
@@ -255,23 +256,52 @@ function collector(): { push: (chunk: string) => void; text: () => string } {
 /** Run a PowerShell script and resolve with the raw result (never throws on non-zero exit). */
 export function runPowerShell(script: string, options: PsOptions = {}): Promise<PsResult> {
   const full = `${prologue()}; ${script}`;
-  const encoded = Buffer.from(full, "utf16le").toString("base64");
-  const argv = [
-    "-NoLogo",
-    "-NoProfile",
-    "-NonInteractive",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-EncodedCommand",
-    encoded,
-  ];
+  // -EncodedCommand is the safest transport, but the Windows command line is
+  // limited to about 32K characters. The UI helpers embed a C# type and can
+  // cross that limit, so long scripts go through a temporary .ps1 file instead.
+  // The UTF-8 BOM matters: Windows PowerShell 5.1 reads a BOM-less file as ANSI.
+  const useFile = full.length > 12_000;
+  const scriptFile = useFile
+    ? path.join(
+        os.tmpdir(),
+        `win-agent-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.ps1`,
+      )
+    : "";
+  if (useFile) fs.writeFileSync(scriptFile, `\uFEFF${full}`, "utf8");
+  const encoded = useFile ? "" : Buffer.from(full, "utf16le").toString("base64");
+  const argv = useFile
+    ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptFile]
+    : [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        encoded,
+      ];
+  const cleanup = (): void => {
+    if (!scriptFile) return;
+    try {
+      fs.rmSync(scriptFile, { force: true });
+    } catch {
+      // Best effort: the next run gets a new name.
+    }
+  };
 
   const timeoutMs = options.timeoutMs ?? 60_000;
   const { exe, found, tried } = resolvePowerShell();
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    const child = spawn(exe, argv, { windowsHide: true, cwd: options.cwd });
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(exe, argv, { windowsHide: true, cwd: options.cwd });
+    } catch (error) {
+      cleanup();
+      reject(error);
+      return;
+    }
     const out = collector();
     const err = collector();
     let timedOut = false;
@@ -290,6 +320,7 @@ export function runPowerShell(script: string, options: PsOptions = {}): Promise<
     });
     child.on("error", (error) => {
       clearTimeout(timer);
+      cleanup();
       if (settled) return;
       settled = true;
       const failure = error as NodeJS.ErrnoException;
@@ -306,6 +337,7 @@ export function runPowerShell(script: string, options: PsOptions = {}): Promise<
     });
     child.on("close", (code) => {
       clearTimeout(timer);
+      cleanup();
       if (settled) return;
       settled = true;
       const stdout = out.text();

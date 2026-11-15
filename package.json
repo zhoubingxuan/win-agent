@@ -21,6 +21,7 @@
     "test:secrets": "tsx scripts/test-secrets.mjs",
     "test:vision": "tsx scripts/test-vision.mjs",
     "test:ui": "tsx scripts/test-ui.mjs",
+    "test:ui:real": "tsx scripts/test-ui-real.mjs",
     "test:mcp:real": "tsx scripts/test-mcp-real.mjs",
     "test:mcp-server": "tsx scripts/test-mcp-server.mjs",
     "test:models": "tsx scripts/test-models.mjs",
